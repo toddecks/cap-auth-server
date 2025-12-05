@@ -1,6 +1,7 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
+const crypto = require("crypto");
 
 const app = express();
 app.use(cors());
@@ -18,6 +19,7 @@ app.get("/getTableauToken", (req, res) => {
     iss: CLIENT_ID,
     exp: now + 300,
     aud: "tableau",
+    jti: crypto.randomBytes(16).toString("hex"),
     sub: "todd@coilsteelprocessing.com",
     stid: "csp",
     scp: [
