@@ -5,6 +5,10 @@ const crypto = require("crypto");
 
 const app = express();
 app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: "GET",
+}));
 app.use(express.json());
 
 // Tableau Connected App Credentials
@@ -12,7 +16,7 @@ const CLIENT_ID = "b06194b0-af65-43d0-907d-bcfd33ddd1ed";
 const SECRET = "wb86WFtB3DDaA+mLoxfBzfkcN63zYGUk7GjCAfNskXxY=";
 
 // Endpoint to generate Tableau Embed Token
-app.get("/getTableauToken", (req, res) => {
+app.get("/getToken", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
 
   const payload = {
@@ -35,6 +39,7 @@ app.get("/getTableauToken", (req, res) => {
 });
 
 // Start server
-app.listen(3000, () => {
-  console.log("Tableau Auth Server running on http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Tableau Auth Server running on port ${PORT}`);
 });
