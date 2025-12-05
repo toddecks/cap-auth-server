@@ -4,10 +4,9 @@ const cors = require("cors");
 const crypto = require("crypto");
 
 const app = express();
-app.use(cors());
 app.use(cors({
   origin: "*",
-  methods: "GET",
+  methods: ["GET"],
 }));
 app.use(express.json());
 
@@ -15,8 +14,12 @@ app.use(express.json());
 const CLIENT_ID = "b06194b0-af65-43d0-907d-bcfd33ddd1ed";
 const SECRET = "wb86WFtB3DDaA+mLoxfBzfkcN63zYGUk7GjCAfNskXxY=";
 
+app.get("/", (req, res) => {
+  res.send("Token server running");
+});
+
 // Endpoint to generate Tableau Embed Token
-app.get("/getToken", (req, res) => {
+app.get("/getTableauToken", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
 
   const payload = {
