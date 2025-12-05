@@ -24,6 +24,7 @@ app.get("/getTableauToken", (req, res) => {
     stid: "csp",
     scp: [
       "tableau:views:embed",
+      "tableau:workbooks:view",
       "tableau:metadata:read"
     ]
   };
