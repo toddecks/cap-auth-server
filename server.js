@@ -22,13 +22,14 @@ app.get("/", (req, res) => {
 // Endpoint to generate Tableau Embed Token
 app.get("/getTableauToken", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
+  const tableauUser = req.query.user || "todd@coilsteelprocessing.com";
 
   const payload = {
     iss: CLIENT_ID,
     exp: now + 300,
     aud: "tableau",
     jti: crypto.randomUUID(),
-    sub: "todd@coilsteelprocessing.com",
+    sub: tableauUser,
     scp: ["tableau:views:embed"]
   };
 
