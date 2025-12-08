@@ -11,8 +11,9 @@ app.use(cors({
 app.use(express.json());
 
 // Tableau Connected App Credentials
-const CLIENT_ID = "b06194b0-af65-43d0-907d-bcfd33ddd1ed";
-const SECRET = "wb86WFtB3DDaA+mLoxfBzfkcN63zYGUk7GjCAfNskXxY=";
+const CLIENT_ID = "966451f7-3322-4cd6-8e74-7d30e0acda54";
+const SECRET_ID = "990a94b9-d8b8-499b-b337-fd56b73aeffa";
+const SECRET_VALUE = "OkmYUPAwi/IHZiICQ4thL0IstO58wsUVoQL0jA/kIAw=";
 
 app.get("/", (req, res) => {
   res.send("Token server running");
@@ -26,17 +27,18 @@ app.get("/getTableauToken", (req, res) => {
     iss: CLIENT_ID,
     exp: now + 300,
     aud: "tableau",
-    jti: crypto.randomBytes(16).toString("hex"),
+    jti: crypto.randomUUID(),
     sub: "todd@coilsteelprocessing.com",
-    stid: "csp",
-    scp: [
-      "tableau:views:embed",
-      "tableau:workbooks:view",
-      "tableau:metadata:read"
-    ]
+    scp: ["tableau:views:embed"]
   };
 
-  const token = jwt.sign(payload, SECRET, { algorithm: "HS256" });
+  const header = {
+    kid: SECRET_ID,
+    alg: "HS256",
+    iss: CLIENT_ID
+  };
+
+  const token = jwt.sign(payload, SECRET_VALUE, { algorithm: "HS256", header });
 
   res.json({ token });
 });
