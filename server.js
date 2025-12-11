@@ -63,19 +63,31 @@ app.post("/api/create-user", async (req, res) => {
   const cleanEmail = String(email).trim().toLowerCase();
 
   try {
-    // 1️⃣ Create the user
+    // 1️⃣ Create the user in Supabase Auth
+    const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password,
+      email_confirm: true,
+    });
+
+    if (authError || !authUser?.user) {
+      console.error("Auth user creation failed:", authError);
+      return res.status(400).json({ message: authError?.message || "Error creating auth user." });
+    }
+
+    // 2️⃣ Insert user record in 'users' table
     const { data: user, error: userError } = await supabase
       .from("users")
-      .insert({ email: cleanEmail, password })
+      .insert({ id: authUser.user.id, email: cleanEmail })
       .select()
       .single();
 
     if (userError || !user) {
-      console.error("User creation failed:", userError);
-      return res.status(400).json({ message: userError?.message || "Error creating user." });
+      console.error("User insert failed:", userError);
+      return res.status(400).json({ message: userError?.message || "Error inserting user record." });
     }
 
-    // 2️⃣ Assign roles
+    // 3️⃣ Assign roles
     const roleRows = roles.map((role_id) => ({
       user_id: user.id,
       role_id: Number(role_id),
