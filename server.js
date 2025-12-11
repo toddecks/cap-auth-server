@@ -78,7 +78,11 @@ app.post("/api/create-user", async (req, res) => {
     // 2️⃣ Insert user record in 'users' table
     const { data: user, error: userError } = await supabase
       .from("users")
-      .insert({ id: authUser.user.id, email: cleanEmail })
+      .insert({
+        id: authUser.user.id,
+        email: cleanEmail,
+        password
+      })
       .select()
       .single();
 
