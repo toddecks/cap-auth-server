@@ -1,7 +1,10 @@
+require("dotenv").config();
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
+const OpenAI = require("openai");
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const app = express();
 app.use(cors({
@@ -109,6 +112,23 @@ app.post("/api/create-user", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in create-user:", err);
     return res.status(500).json({ message: "Unexpected server error." });
+  }
+});
+
+app.post("/api/ai-chart", async (req, res) => {
+  try {
+    const prompt = req.body.prompt || "";
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are the CSP BI Assistant. Help users explore data but do not output SQL." },
+        { role: "user", content: prompt }
+      ]
+    });
+    res.json({ response: completion.choices[0].message.content });
+  } catch (err) {
+    console.error("AI endpoint error:", err);
+    res.status(500).json({ error: "AI request failed" });
   }
 });
 
