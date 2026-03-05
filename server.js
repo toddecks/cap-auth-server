@@ -83,8 +83,7 @@ app.post("/api/create-user", async (req, res) => {
       .from("users")
       .insert({
         id: authUser.user.id,
-        email: cleanEmail,
-        password
+        email: cleanEmail
       })
       .select()
       .single();
