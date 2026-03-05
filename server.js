@@ -4,7 +4,11 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
 const OpenAI = require("openai");
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAIClient() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  return new OpenAI({ apiKey: key });
+}
 
 const app = express();
 app.use(cors({
@@ -197,6 +201,8 @@ app.put("/api/users/:id/roles", async (req, res) => {
 
 app.post("/api/ai-chart", async (req, res) => {
   try {
+    const openai = getOpenAIClient();
+    if (!openai) return res.status(503).json({ error: "AI not configured on this server." });
     const prompt = req.body.prompt || "";
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
