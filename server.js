@@ -13,7 +13,7 @@ function getOpenAIClient() {
 const app = express();
 app.use(cors({
   origin: "*",
-  methods: ["GET"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));
 app.use(express.json());
 
@@ -196,6 +196,116 @@ app.put("/api/users/:id/roles", async (req, res) => {
   } catch (err) {
     console.error("Update roles error:", err);
     return res.status(500).json({ error: "Failed to update roles" });
+  }
+});
+
+const buildTempPassword = (length = 12) => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+  let value = "";
+  for (let i = 0; i < length; i += 1) {
+    const idx = Math.floor(Math.random() * chars.length);
+    value += chars[idx];
+  }
+  return value;
+};
+
+const getUserAuthMetadata = async (id) => {
+  const { data, error } = await supabase.auth.admin.getUserById(id);
+  if (error || !data?.user) {
+    throw new Error(error?.message || "User not found in auth.");
+  }
+  return data.user.user_metadata || {};
+};
+
+app.post("/api/users/:id/reset-password-temp", async (req, res) => {
+  const { id } = req.params;
+  const provided = String(req.body?.tempPassword || "").trim();
+  const tempPassword = provided || buildTempPassword(14);
+
+  if (tempPassword.length < 8) {
+    return res.status(400).json({ error: "Temporary password must be at least 8 characters." });
+  }
+
+  try {
+    const existingMetadata = await getUserAuthMetadata(id);
+    const nextMetadata = { ...existingMetadata, force_password_change: true };
+
+    const { error } = await supabase.auth.admin.updateUserById(id, {
+      password: tempPassword,
+      user_metadata: nextMetadata
+    });
+
+    if (error) {
+      console.error("Temp password reset failed:", error);
+      return res.status(400).json({ error: error.message || "Failed to reset password." });
+    }
+
+    return res.json({
+      success: true,
+      tempPassword,
+      forcePasswordChange: true
+    });
+  } catch (err) {
+    console.error("Temp password endpoint error:", err);
+    return res.status(500).json({ error: err.message || "Failed to reset temporary password." });
+  }
+});
+
+app.post("/api/users/:id/force-password-change", async (req, res) => {
+  const { id } = req.params;
+  const force = req.body?.force !== false;
+
+  try {
+    const existingMetadata = await getUserAuthMetadata(id);
+    const nextMetadata = { ...existingMetadata, force_password_change: !!force };
+
+    const { error } = await supabase.auth.admin.updateUserById(id, {
+      user_metadata: nextMetadata
+    });
+
+    if (error) {
+      console.error("Force password change update failed:", error);
+      return res.status(400).json({ error: error.message || "Failed to update force-change flag." });
+    }
+
+    return res.json({ success: true, force_password_change: !!force });
+  } catch (err) {
+    console.error("Force password change endpoint error:", err);
+    return res.status(500).json({ error: err.message || "Failed to update force-change flag." });
+  }
+});
+
+app.post("/api/users/:id/send-reset-email", async (req, res) => {
+  const { id } = req.params;
+  const redirectTo =
+    String(req.body?.redirectTo || "").trim() ||
+    "https://csp-bi-website.onrender.com/change-password.html";
+
+  try {
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("email")
+      .eq("id", id)
+      .single();
+
+    if (userError || !user?.email) {
+      console.error("Reset email lookup failed:", userError);
+      return res.status(404).json({ error: "User email not found." });
+    }
+
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
+      redirectTo
+    });
+
+    if (resetError) {
+      console.error("Reset email send failed:", resetError);
+      return res.status(400).json({ error: resetError.message || "Failed to send reset email." });
+    }
+
+    return res.json({ success: true, email: user.email });
+  } catch (err) {
+    console.error("Send reset email endpoint error:", err);
+    return res.status(500).json({ error: err.message || "Failed to send reset email." });
   }
 });
 
