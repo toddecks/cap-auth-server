@@ -279,7 +279,7 @@ app.post("/api/users/:id/send-reset-email", async (req, res) => {
   const { id } = req.params;
   const redirectTo =
     String(req.body?.redirectTo || "").trim() ||
-    "https://csp-bi-website.onrender.com/change-password.html";
+    "https://csp-bi-website.onrender.com/reset-password.html";
 
   try {
     const { data: user, error: userError } = await supabase
