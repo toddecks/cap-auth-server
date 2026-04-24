@@ -55,10 +55,615 @@ app.get("/getTableauToken", (req, res) => {
 // Allows admin users to create new users and assign roles via Supabase
 const { createClient } = require("@supabase/supabase-js");
 
-const SUPABASE_URL = "https://pxydsxadvmuffniluokk.supabase.co";
-const SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4eWRzeGFkdm11ZmZuaWx1b2trIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM0Nzg3MiwiZXhwIjoyMDgwOTIzODcyfQ.jTtNfZUlS6Ue0W7SWpmQLDLRerNGP7tlPxzZlJfuxPc";
+const AUTH_SUPABASE_URL = "https://pxydsxadvmuffniluokk.supabase.co";
+const AUTH_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4eWRzeGFkdm11ZmZuaWx1b2trIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM0Nzg3MiwiZXhwIjoyMDgwOTIzODcyfQ.jTtNfZUlS6Ue0W7SWpmQLDLRerNGP7tlPxzZlJfuxPc";
+const CHART_SUPABASE_URL = "https://wtjrucerrbzwxnwhqgma.supabase.co";
+const CHART_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0anJ1Y2VycmJ6d3hud2hxZ21hIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzcwMTY4MCwiZXhwIjoyMDgzMjc3NjgwfQ.GtYd5FL1KVhTyhEUshfiCCsytwLbEf1YSf4T1XObFUo";
 
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
+const chartSupabase = createClient(CHART_SUPABASE_URL, CHART_SERVICE_ROLE_KEY);
+const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
+const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
+const PRO_MAINTENANCE_TEAMS_WEBHOOK_URL = String(process.env.PRO_MAINTENANCE_TEAMS_WEBHOOK_URL || "").trim();
+const PRO_MAINTENANCE_ACK_BASE_URL = String(process.env.PRO_MAINTENANCE_ACK_BASE_URL || "").trim();
+
+const sanitizePlainObject = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => typeof key === "string" && key.trim())
+  );
+};
+
+const coerceText = (value, maxLen = 500) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim().slice(0, maxLen);
+};
+
+const coerceNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildMaintenanceOrderCode = () =>
+  `MO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+const getExternalBaseUrl = (req) => {
+  if (PRO_MAINTENANCE_ACK_BASE_URL) return PRO_MAINTENANCE_ACK_BASE_URL;
+  return `${req.protocol}://${req.get("host")}`;
+};
+
+const buildSubmissionEmail = ({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes }) => {
+  const dimensionLines = Object.entries(dimensions || {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => `<li><strong>${key}</strong>: ${String(value)}</li>`)
+    .join("");
+  const metricLines = Object.entries(metrics || {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => `<li><strong>${key}</strong>: ${String(value)}</li>`)
+    .join("");
+
+  return `
+    <div style="font-family:Arial,sans-serif;color:#233658;line-height:1.5;">
+      <h2 style="margin:0 0 16px;">${formLabel} submitted</h2>
+      <p style="margin:0 0 10px;"><strong>Submitted by:</strong> ${submittedBy || "Unknown user"}</p>
+      <p style="margin:0 0 16px;"><strong>Submitted at:</strong> ${submittedAt}</p>
+      ${dimensionLines ? `<h3 style="margin:20px 0 8px;">Dimensions</h3><ul style="margin:0 0 12px 18px;padding:0;">${dimensionLines}</ul>` : ""}
+      ${metricLines ? `<h3 style="margin:20px 0 8px;">Metrics</h3><ul style="margin:0 0 12px 18px;padding:0;">${metricLines}</ul>` : ""}
+      ${notes ? `<h3 style="margin:20px 0 8px;">Notes</h3><p style="margin:0;">${notes}</p>` : ""}
+    </div>
+  `;
+};
+
+const ANALYZE_BATCH_SIZE = 1000;
+const startOfDay = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate());
+const addDays = (value, days) => {
+  const next = new Date(value);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+const startOfMonth = (value) => new Date(value.getFullYear(), value.getMonth(), 1);
+const weekStartMonday = (value) => {
+  const base = startOfDay(value);
+  const day = base.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(base, offset);
+};
+const toYmd = (value) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+const parseDateValue = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const toNumberSafe = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value ?? "").replace(/[^0-9.+-]/g, "");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const roundMetric = (value, digits = 1) => {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+};
+const pctDelta = (current, baseline) => {
+  if (!Number.isFinite(current) || !Number.isFinite(baseline) || baseline === 0) return null;
+  return ((current - baseline) / baseline) * 100;
+};
+const average = (values) => {
+  const valid = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
+  if (!valid.length) return null;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+};
+const sumBy = (rows, getter) => (Array.isArray(rows) ? rows : []).reduce((sum, row) => sum + (Number(getter(row)) || 0), 0);
+const countTruthy = (rows, getter) => (Array.isArray(rows) ? rows : []).reduce((sum, row) => sum + (getter(row) ? 1 : 0), 0);
+const normalizeLabel = (value, fallback = "Unknown") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+};
+const topEntries = (map, limit = 5, sortGetter = (value) => value) =>
+  Array.from(map.entries())
+    .sort((a, b) => (sortGetter(b[1]) - sortGetter(a[1])) || String(a[0]).localeCompare(String(b[0])))
+    .slice(0, limit)
+    .map(([key, value]) => ({ key, value }));
+
+async function fetchChartRows(table, select, {
+  gte = null,
+  gteColumn = null,
+  lt = null,
+  ltColumn = null,
+  orderBy = null,
+  ascending = true,
+  limit = 50000
+} = {}) {
+  const rows = [];
+  let from = 0;
+
+  while (from < limit) {
+    const to = Math.min(from + ANALYZE_BATCH_SIZE - 1, limit - 1);
+    let query = chartSupabase.from(table).select(select);
+    if (gte && gteColumn) query = query.gte(gteColumn, gte);
+    if (lt && ltColumn) query = query.lt(ltColumn, lt);
+    if (orderBy) query = query.order(orderBy, { ascending });
+
+    const { data, error } = await query.range(from, to);
+    if (error) throw error;
+
+    const page = Array.isArray(data) ? data : [];
+    rows.push(...page);
+    if (page.length < ANALYZE_BATCH_SIZE) break;
+    from += ANALYZE_BATCH_SIZE;
+  }
+
+  return rows;
+}
+
+function buildOperationalSnapshot({ productionRows, shippingRows, isoRows, focus = "" }) {
+  const now = new Date();
+  const today = startOfDay(now);
+  const currentWeekStart = weekStartMonday(now);
+  const lastCompletedWeekStart = addDays(currentWeekStart, -7);
+  const priorFourWeekStart = addDays(lastCompletedWeekStart, -28);
+  const trailing14Start = addDays(today, -14);
+  const previous14Start = addDays(today, -28);
+  const currentMonthStart = startOfMonth(now);
+  const previousMonthStart = startOfMonth(addDays(currentMonthStart, -1));
+
+  const normalizeProdDate = (row) => parseDateValue(row.processing_start_date);
+  const normalizeShipDate = (row) => parseDateValue(row.ship_date);
+  const normalizeIsoDate = (row) => parseDateValue(row.date_entered || row.complaint_date || row.date_opened);
+
+  const prodCurrentWeek = productionRows.filter((row) => {
+    const date = normalizeProdDate(row);
+    return date && date >= lastCompletedWeekStart && date < currentWeekStart;
+  });
+  const prodPriorFourWeeks = productionRows.filter((row) => {
+    const date = normalizeProdDate(row);
+    return date && date >= priorFourWeekStart && date < lastCompletedWeekStart;
+  });
+  const prodTrailing14 = productionRows.filter((row) => {
+    const date = normalizeProdDate(row);
+    return date && date >= trailing14Start && date < now;
+  });
+  const prodPrevious14 = productionRows.filter((row) => {
+    const date = normalizeProdDate(row);
+    return date && date >= previous14Start && date < trailing14Start;
+  });
+
+  const productionWeekTons = sumBy(prodCurrentWeek, (row) => toNumberSafe(row.tag_tons));
+  const productionPriorWeeklyAvg = sumBy(prodPriorFourWeeks, (row) => toNumberSafe(row.tag_tons)) / 4;
+  const productionCurrentTph = average(prodTrailing14.map((row) => toNumberSafe(row.tons_per_hour)));
+  const productionPreviousTph = average(prodPrevious14.map((row) => toNumberSafe(row.tons_per_hour)));
+  const productionCurrentDaysToClose = average(prodTrailing14.map((row) => toNumberSafe(row.days_to_close)));
+  const productionPreviousDaysToClose = average(prodPrevious14.map((row) => toNumberSafe(row.days_to_close)));
+
+  const machine14Current = new Map();
+  const machine14Previous = new Map();
+  prodTrailing14.forEach((row) => {
+    const key = normalizeLabel(row.machine_label, "Unassigned");
+    machine14Current.set(key, (machine14Current.get(key) || 0) + toNumberSafe(row.tag_tons));
+  });
+  prodPrevious14.forEach((row) => {
+    const key = normalizeLabel(row.machine_label, "Unassigned");
+    machine14Previous.set(key, (machine14Previous.get(key) || 0) + toNumberSafe(row.tag_tons));
+  });
+
+  const shippingCurrentWeek = shippingRows.filter((row) => {
+    const date = normalizeShipDate(row);
+    return date && date >= lastCompletedWeekStart && date < currentWeekStart;
+  });
+  const shippingPriorFourWeeks = shippingRows.filter((row) => {
+    const date = normalizeShipDate(row);
+    return date && date >= priorFourWeekStart && date < lastCompletedWeekStart;
+  });
+  const shippingTrailing14 = shippingRows.filter((row) => {
+    const date = normalizeShipDate(row);
+    return date && date >= trailing14Start && date < now;
+  });
+  const shippingPrevious14 = shippingRows.filter((row) => {
+    const date = normalizeShipDate(row);
+    return date && date >= previous14Start && date < trailing14Start;
+  });
+
+  const shippingWeekTons = sumBy(shippingCurrentWeek, (row) => toNumberSafe(row.weight) / 2000);
+  const shippingPriorWeeklyAvg = sumBy(shippingPriorFourWeeks, (row) => toNumberSafe(row.weight) / 2000) / 4;
+  const shippingCurrentLoadCount = shippingCurrentWeek.length;
+  const shippingPriorLoadAvg = shippingPriorFourWeeks.length / 4;
+  const shippingCancelCurrent = countTruthy(shippingCurrentWeek, (row) => row.cancel_load === true || String(row.cancel_load).toLowerCase() === "true");
+  const shippingCancelPrevious = countTruthy(shippingPriorFourWeeks, (row) => row.cancel_load === true || String(row.cancel_load).toLowerCase() === "true") / 4;
+
+  const shippingCustomerCurrent = new Map();
+  const shippingCustomerPrevious = new Map();
+  shippingTrailing14.forEach((row) => {
+    const key = normalizeLabel(row.customer_no || row.ship_to_customer_name, "Unknown customer");
+    shippingCustomerCurrent.set(key, (shippingCustomerCurrent.get(key) || 0) + (toNumberSafe(row.weight) / 2000));
+  });
+  shippingPrevious14.forEach((row) => {
+    const key = normalizeLabel(row.customer_no || row.ship_to_customer_name, "Unknown customer");
+    shippingCustomerPrevious.set(key, (shippingCustomerPrevious.get(key) || 0) + (toNumberSafe(row.weight) / 2000));
+  });
+
+  const productionCustomerCurrentMonth = new Map();
+  const productionCustomerPreviousMonth = new Map();
+  productionRows.forEach((row) => {
+    const date = normalizeProdDate(row);
+    if (!date) return;
+    const key = normalizeLabel(row.customer_number, "Unknown customer");
+    if (date >= currentMonthStart && date < now) {
+      productionCustomerCurrentMonth.set(key, (productionCustomerCurrentMonth.get(key) || 0) + toNumberSafe(row.tag_tons));
+      return;
+    }
+    if (date >= previousMonthStart && date < currentMonthStart) {
+      productionCustomerPreviousMonth.set(key, (productionCustomerPreviousMonth.get(key) || 0) + toNumberSafe(row.tag_tons));
+    }
+  });
+
+  const isoTrailing30 = isoRows.filter((row) => {
+    const date = normalizeIsoDate(row);
+    return date && date >= addDays(today, -30) && date < now;
+  });
+  const isoPrevious30 = isoRows.filter((row) => {
+    const date = normalizeIsoDate(row);
+    return date && date >= addDays(today, -60) && date < addDays(today, -30);
+  });
+  const isoCostTrailing30 = sumBy(isoTrailing30, (row) => toNumberSafe(row.cost));
+  const isoCostPrevious30 = sumBy(isoPrevious30, (row) => toNumberSafe(row.cost));
+  const isoOpenTrailing30 = countTruthy(isoTrailing30, (row) => !String(row.status || "").toLowerCase().includes("closed"));
+
+  const findings = [];
+  const addFinding = (severity, area, title, detail, metrics = {}) => {
+    findings.push({ severity, area, title, detail, metrics });
+  };
+
+  const prodWeekDelta = pctDelta(productionWeekTons, productionPriorWeeklyAvg);
+  if (prodWeekDelta !== null && prodWeekDelta <= -15) {
+    addFinding(
+      prodWeekDelta <= -25 ? "high" : "medium",
+      "production",
+      "Production tons dropped versus recent baseline",
+      `Last completed week produced ${roundMetric(productionWeekTons, 0)} tons versus a prior 4-week average of ${roundMetric(productionPriorWeeklyAvg, 0)} tons.`,
+      { productionWeekTons: roundMetric(productionWeekTons, 0), priorAverageTons: roundMetric(productionPriorWeeklyAvg, 0), deltaPct: roundMetric(prodWeekDelta, 1) }
+    );
+  }
+
+  const tphDelta = pctDelta(productionCurrentTph, productionPreviousTph);
+  if (tphDelta !== null && tphDelta <= -10) {
+    addFinding(
+      tphDelta <= -20 ? "high" : "medium",
+      "production",
+      "Tons per hour efficiency is down",
+      `Trailing 14-day average TPH is ${roundMetric(productionCurrentTph, 2)} versus ${roundMetric(productionPreviousTph, 2)} in the prior 14 days.`,
+      { currentTph: roundMetric(productionCurrentTph, 2), previousTph: roundMetric(productionPreviousTph, 2), deltaPct: roundMetric(tphDelta, 1) }
+    );
+  }
+
+  const daysToCloseDelta = pctDelta(productionCurrentDaysToClose, productionPreviousDaysToClose);
+  if (productionCurrentDaysToClose && (productionCurrentDaysToClose >= 5 || (daysToCloseDelta !== null && daysToCloseDelta >= 15))) {
+    addFinding(
+      daysToCloseDelta !== null && daysToCloseDelta >= 25 ? "high" : "medium",
+      "production",
+      "Days-to-close is elevated",
+      `Trailing 14-day average days-to-close is ${roundMetric(productionCurrentDaysToClose, 1)} versus ${roundMetric(productionPreviousDaysToClose, 1)} previously.`,
+      { currentDaysToClose: roundMetric(productionCurrentDaysToClose, 1), previousDaysToClose: roundMetric(productionPreviousDaysToClose, 1), deltaPct: roundMetric(daysToCloseDelta ?? 0, 1) }
+    );
+  }
+
+  const machineDrops = [];
+  machine14Previous.forEach((previousTons, machine) => {
+    const currentTons = machine14Current.get(machine) || 0;
+    const delta = pctDelta(currentTons, previousTons);
+    if (previousTons >= 50 && delta !== null && delta <= -20) {
+      machineDrops.push({ machine, currentTons, previousTons, delta });
+    }
+  });
+  machineDrops
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 3)
+    .forEach((entry) => {
+      addFinding(
+        entry.delta <= -35 ? "high" : "medium",
+        "production",
+        `Machine output drop on ${entry.machine}`,
+        `${entry.machine} produced ${roundMetric(entry.currentTons, 0)} tons in the last 14 days versus ${roundMetric(entry.previousTons, 0)} in the prior 14 days.`,
+        { machine: entry.machine, currentTons: roundMetric(entry.currentTons, 0), previousTons: roundMetric(entry.previousTons, 0), deltaPct: roundMetric(entry.delta, 1) }
+      );
+    });
+
+  const shipWeekDelta = pctDelta(shippingWeekTons, shippingPriorWeeklyAvg);
+  if (shipWeekDelta !== null && shipWeekDelta <= -15) {
+    addFinding(
+      shipWeekDelta <= -25 ? "high" : "medium",
+      "shipping",
+      "Shipping tons dropped versus recent baseline",
+      `Last completed shipping week moved ${roundMetric(shippingWeekTons, 0)} tons versus a prior 4-week weekly average of ${roundMetric(shippingPriorWeeklyAvg, 0)} tons.`,
+      { shippingWeekTons: roundMetric(shippingWeekTons, 0), priorAverageTons: roundMetric(shippingPriorWeeklyAvg, 0), deltaPct: roundMetric(shipWeekDelta, 1) }
+    );
+  }
+
+  const shipLoadDelta = pctDelta(shippingCurrentLoadCount, shippingPriorLoadAvg);
+  if (shipLoadDelta !== null && shipLoadDelta <= -15) {
+    addFinding(
+      shipLoadDelta <= -25 ? "high" : "medium",
+      "shipping",
+      "Shipped load count is down",
+      `Last completed week shipped ${shippingCurrentLoadCount} loads versus an average of ${roundMetric(shippingPriorLoadAvg, 1)} loads across the prior four weeks.`,
+      { shippingLoadCount: shippingCurrentLoadCount, priorAverageLoads: roundMetric(shippingPriorLoadAvg, 1), deltaPct: roundMetric(shipLoadDelta, 1) }
+    );
+  }
+
+  const cancelDelta = pctDelta(shippingCancelCurrent, shippingCancelPrevious);
+  if (shippingCancelCurrent >= 3 && (shippingCancelCurrent > shippingCancelPrevious + 1 || (cancelDelta !== null && cancelDelta >= 20))) {
+    addFinding(
+      "medium",
+      "shipping",
+      "Shipping cancellations increased",
+      `Last completed week recorded ${shippingCancelCurrent} cancelled loads versus ${roundMetric(shippingCancelPrevious, 1)} per week across the prior four weeks.`,
+      { currentCancelledLoads: shippingCancelCurrent, priorAverageCancelledLoads: roundMetric(shippingCancelPrevious, 1), deltaPct: roundMetric(cancelDelta ?? 0, 1) }
+    );
+  }
+
+  const customerDrops = [];
+  shippingCustomerPrevious.forEach((previousTons, customer) => {
+    const currentTons = shippingCustomerCurrent.get(customer) || 0;
+    const delta = pctDelta(currentTons, previousTons);
+    if (previousTons >= 20 && delta !== null && delta <= -30) {
+      customerDrops.push({ customer, currentTons, previousTons, delta });
+    }
+  });
+  customerDrops
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 4)
+    .forEach((entry) => {
+      addFinding(
+        entry.delta <= -50 ? "high" : "medium",
+        "customer-activity",
+        `Customer shipping activity dropped for ${entry.customer}`,
+        `${entry.customer} shipped ${roundMetric(entry.currentTons, 0)} tons in the last 14 days versus ${roundMetric(entry.previousTons, 0)} in the prior 14 days.`,
+        { customer: entry.customer, currentTons: roundMetric(entry.currentTons, 0), previousTons: roundMetric(entry.previousTons, 0), deltaPct: roundMetric(entry.delta, 1) }
+      );
+    });
+
+  const productionCustomerDrops = [];
+  productionCustomerPreviousMonth.forEach((previousTons, customer) => {
+    const currentTons = productionCustomerCurrentMonth.get(customer) || 0;
+    const delta = pctDelta(currentTons, previousTons);
+    if (previousTons >= 40 && delta !== null && delta <= -30) {
+      productionCustomerDrops.push({ customer, currentTons, previousTons, delta });
+    }
+  });
+  productionCustomerDrops
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 4)
+    .forEach((entry) => {
+      addFinding(
+        entry.delta <= -50 ? "high" : "medium",
+        "customer-activity",
+        `Production demand dropped for ${entry.customer}`,
+        `${entry.customer} has ${roundMetric(entry.currentTons, 0)} tons month-to-date versus ${roundMetric(entry.previousTons, 0)} tons last month-to-date.`,
+        { customer: entry.customer, currentMonthTons: roundMetric(entry.currentTons, 0), previousMonthTons: roundMetric(entry.previousTons, 0), deltaPct: roundMetric(entry.delta, 1) }
+      );
+    });
+
+  const complaintDelta = pctDelta(isoTrailing30.length, isoPrevious30.length);
+  if (isoTrailing30.length >= 3 && (complaintDelta !== null && complaintDelta >= 20)) {
+    addFinding(
+      complaintDelta >= 40 ? "high" : "medium",
+      "quality",
+      "Complaint volume increased",
+      `ISO complaints are ${isoTrailing30.length} in the last 30 days versus ${isoPrevious30.length} in the prior 30 days.`,
+      { complaintsTrailing30: isoTrailing30.length, complaintsPrevious30: isoPrevious30.length, deltaPct: roundMetric(complaintDelta, 1) }
+    );
+  }
+
+  const isoCostDelta = pctDelta(isoCostTrailing30, isoCostPrevious30);
+  if (isoCostTrailing30 >= 1000 && (isoCostDelta !== null && isoCostDelta >= 20)) {
+    addFinding(
+      isoCostDelta >= 40 ? "high" : "medium",
+      "quality",
+      "Refund cost increased",
+      `Complaint-related cost is $${roundMetric(isoCostTrailing30, 0)} in the last 30 days versus $${roundMetric(isoCostPrevious30, 0)} previously.`,
+      { costTrailing30: roundMetric(isoCostTrailing30, 0), costPrevious30: roundMetric(isoCostPrevious30, 0), deltaPct: roundMetric(isoCostDelta, 1) }
+    );
+  }
+
+  if (isoOpenTrailing30 >= 3) {
+    addFinding(
+      "medium",
+      "quality",
+      "Open complaint backlog present",
+      `${isoOpenTrailing30} complaints created in the last 30 days are still open.`,
+      { openComplaintsTrailing30: isoOpenTrailing30 }
+    );
+  }
+
+  const topShippingCustomers = topEntries(shippingCustomerCurrent, 5, (value) => value).map((entry) => ({
+    customer: entry.key,
+    tons: roundMetric(entry.value, 0)
+  }));
+  const topProductionMachines = topEntries(machine14Current, 5, (value) => value).map((entry) => ({
+    machine: entry.key,
+    tons: roundMetric(entry.value, 0)
+  }));
+
+  return {
+    focus: String(focus || "").trim(),
+    generatedAt: new Date().toISOString(),
+    snapshots: {
+      production: {
+        lastCompletedWeekTons: roundMetric(productionWeekTons, 0),
+        prior4WeekAverageTons: roundMetric(productionPriorWeeklyAvg, 0),
+        trailing14AvgTph: roundMetric(productionCurrentTph ?? 0, 2),
+        previous14AvgTph: roundMetric(productionPreviousTph ?? 0, 2),
+        trailing14AvgDaysToClose: roundMetric(productionCurrentDaysToClose ?? 0, 1),
+        previous14AvgDaysToClose: roundMetric(productionPreviousDaysToClose ?? 0, 1),
+        topMachinesTrailing14: topProductionMachines
+      },
+      shipping: {
+        lastCompletedWeekTons: roundMetric(shippingWeekTons, 0),
+        prior4WeekAverageTons: roundMetric(shippingPriorWeeklyAvg, 0),
+        lastCompletedWeekLoads: shippingCurrentLoadCount,
+        prior4WeekAverageLoads: roundMetric(shippingPriorLoadAvg, 1),
+        lastCompletedWeekCancelledLoads: shippingCancelCurrent,
+        prior4WeekAverageCancelledLoads: roundMetric(shippingCancelPrevious, 1),
+        topCustomersTrailing14: topShippingCustomers
+      },
+      quality: {
+        complaintsTrailing30: isoTrailing30.length,
+        complaintsPrevious30: isoPrevious30.length,
+        refundCostTrailing30: roundMetric(isoCostTrailing30, 0),
+        refundCostPrevious30: roundMetric(isoCostPrevious30, 0),
+        openComplaintsTrailing30: isoOpenTrailing30
+      }
+    },
+    findings: findings.slice(0, 12)
+  };
+}
+
+function formatFallbackAnalysis(snapshot) {
+  const findings = Array.isArray(snapshot?.findings) ? snapshot.findings : [];
+  if (!findings.length) {
+    return [
+      "No major operational faults were detected from the current snapshot.",
+      "",
+      "Current checks reviewed:",
+      `- Production last completed week tons: ${snapshot?.snapshots?.production?.lastCompletedWeekTons ?? 0}`,
+      `- Shipping last completed week tons: ${snapshot?.snapshots?.shipping?.lastCompletedWeekTons ?? 0}`,
+      `- Complaints last 30 days: ${snapshot?.snapshots?.quality?.complaintsTrailing30 ?? 0}`
+    ].join("\n");
+  }
+
+  return findings.map((item, index) =>
+    `${index + 1}. [${String(item.severity || "info").toUpperCase()}] ${item.title}\n${item.detail}`
+  ).join("\n\n");
+}
+
+const sendSubmissionNotification = async ({
+  formLabel,
+  submittedBy,
+  submittedAt,
+  dimensions,
+  metrics,
+  notes,
+  recipients
+}) => {
+  const targetRecipients = Array.isArray(recipients) && recipients.length > 0
+    ? recipients.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
+    : PRO_FORMS_RECIPIENTS;
+
+  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL || targetRecipients.length === 0) {
+    return {
+      sent: false,
+      reason: "Email notifications skipped because RESEND_API_KEY, PRO_FORMS_FROM_EMAIL, or recipients were not configured."
+    };
+  }
+
+  if (typeof fetch !== "function") {
+    return {
+      sent: false,
+      reason: "Global fetch is not available in this Node runtime."
+    };
+  }
+
+  const subject = `[CSP Pro] ${formLabel} submitted`;
+  const html = buildSubmissionEmail({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes });
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: PRO_FORMS_FROM_EMAIL,
+      to: targetRecipients,
+      subject,
+      html
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Email provider rejected the notification request.");
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  return {
+    sent: true,
+    recipients: targetRecipients,
+    providerId: payload?.id || null
+  };
+};
+
+const sendTeamsMaintenanceNotification = async ({ req, order }) => {
+  if (!PRO_MAINTENANCE_TEAMS_WEBHOOK_URL) {
+    return {
+      sent: false,
+      reason: "Teams notification skipped because PRO_MAINTENANCE_TEAMS_WEBHOOK_URL is not configured."
+    };
+  }
+
+  if (typeof fetch !== "function") {
+    return {
+      sent: false,
+      reason: "Global fetch is not available in this Node runtime."
+    };
+  }
+
+  const ackUrl = `${getExternalBaseUrl(req)}/api/pro/maintenance-orders/${encodeURIComponent(order.public_token)}/acknowledge`;
+  const facts = [
+    { name: "Order", value: order.order_code },
+    { name: "Asset", value: order.asset_name || "Unknown asset" },
+    { name: "Issue", value: order.source_item_label || order.issue_category || "Inspection failure" },
+    { name: "Reported By", value: order.reported_by_name || order.reported_by_email || "Unknown" },
+    { name: "Reported At", value: order.reported_at || new Date().toISOString() },
+    { name: "Priority", value: order.priority || "high" }
+  ];
+
+  const response = await fetch(PRO_MAINTENANCE_TEAMS_WEBHOOK_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      "@type": "MessageCard",
+      "@context": "https://schema.org/extensions",
+      summary: `Open maintenance order ${order.order_code}`,
+      themeColor: "C0392B",
+      title: `[CSP Pro] Open maintenance order ${order.order_code}`,
+      sections: [
+        {
+          activityTitle: order.form_label || order.form_key || "Production form failure",
+          activitySubtitle: order.source_item_key || "",
+          facts,
+          text: order.issue_notes || "No failure notes were provided."
+        }
+      ],
+      potentialAction: [
+        {
+          "@type": "OpenUri",
+          name: "Acknowledge issue",
+          targets: [{ os: "default", uri: ackUrl }]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Teams rejected the maintenance notification.");
+  }
+
+  return {
+    sent: true,
+    acknowledgeUrl: ackUrl
+  };
+};
 
 app.post("/api/create-user", async (req, res) => {
   const { email, password, roles } = req.body || {};
@@ -279,7 +884,7 @@ app.post("/api/users/:id/send-reset-email", async (req, res) => {
   const { id } = req.params;
   const redirectTo =
     String(req.body?.redirectTo || "").trim() ||
-    "https://csp-bi-website.onrender.com/reset-password.html";
+    "https://bi.coilsteelprocessing.com/reset-password.html";
 
   try {
     const { data: user, error: userError } = await supabase
@@ -309,6 +914,287 @@ app.post("/api/users/:id/send-reset-email", async (req, res) => {
   }
 });
 
+app.get("/api/pro/maintenance-orders/:publicToken/acknowledge", async (req, res) => {
+  const publicToken = coerceText(req.params.publicToken, 160);
+
+  if (!publicToken) {
+    return res.status(400).send("Missing maintenance order token.");
+  }
+
+  try {
+    const { data: order, error: lookupError } = await chartSupabase
+      .from("pro_maintenance_orders")
+      .select("id,order_code,status,asset_name,source_item_label")
+      .eq("public_token", publicToken)
+      .maybeSingle();
+
+    if (lookupError) {
+      throw lookupError;
+    }
+
+    if (!order) {
+      return res.status(404).send("Maintenance order not found.");
+    }
+
+    if (order.status === "open") {
+      const { error: updateError } = await chartSupabase
+        .from("pro_maintenance_orders")
+        .update({
+          status: "acknowledged",
+          acknowledged_at: new Date().toISOString(),
+          acknowledged_by: coerceText(req.query.by || "Maintenance Team", 160),
+          acknowledged_via: "teams_link"
+        })
+        .eq("id", order.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+    }
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Maintenance Order Acknowledged</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 32px 20px; background: #f4f7fb; color: #172742; }
+          .card { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid #d7e1ef; border-radius: 18px; padding: 28px; box-shadow: 0 18px 36px rgba(15,31,55,0.08); }
+          h1 { margin: 0 0 12px; font-size: 28px; }
+          p { margin: 0 0 10px; line-height: 1.55; }
+          .meta { margin-top: 18px; padding: 16px; border-radius: 14px; background: #f7faff; border: 1px solid #d7e1ef; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Maintenance order acknowledged</h1>
+          <p><strong>${order.order_code}</strong> is now marked as acknowledged${order.asset_name ? ` for ${order.asset_name}` : ""}.</p>
+          <div class="meta">
+            <p><strong>Status:</strong> acknowledged</p>
+            <p><strong>Issue:</strong> ${order.source_item_label || "Inspection failure"}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error("Maintenance order acknowledge route error:", err);
+    return res.status(500).send("Unable to acknowledge maintenance order.");
+  }
+});
+
+app.post("/api/pro/maintenance-orders/:publicToken/acknowledge", async (req, res) => {
+  const publicToken = coerceText(req.params.publicToken, 160);
+  const acknowledgedBy = coerceText(req.body?.acknowledgedBy || req.body?.acknowledged_by || "Maintenance Team", 160);
+
+  if (!publicToken) {
+    return res.status(400).json({ error: "Missing maintenance order token." });
+  }
+
+  try {
+    const { data: order, error: updateError } = await chartSupabase
+      .from("pro_maintenance_orders")
+      .update({
+        status: "acknowledged",
+        acknowledged_at: new Date().toISOString(),
+        acknowledged_by: acknowledgedBy,
+        acknowledged_via: coerceText(req.body?.acknowledgedVia || req.body?.acknowledged_via || "api", 120)
+      })
+      .eq("public_token", publicToken)
+      .select("id,order_code,status,acknowledged_at,acknowledged_by")
+      .maybeSingle();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    if (!order) {
+      return res.status(404).json({ error: "Maintenance order not found." });
+    }
+
+    return res.json({ success: true, order });
+  } catch (err) {
+    console.error("Maintenance order acknowledge API error:", err);
+    return res.status(500).json({ error: err.message || "Unable to acknowledge maintenance order." });
+  }
+});
+
+app.post("/api/pro/forms/submit", async (req, res) => {
+  const body = req.body || {};
+  const formKey = coerceText(body.formKey || body.form_key, 120);
+  const formLabel = coerceText(body.formLabel || body.form_label || formKey, 160);
+  const submittedBy = coerceText(body.submittedBy || body.submitted_by_email, 320).toLowerCase();
+  const submittedAt = new Date().toISOString();
+  const dimensions = sanitizePlainObject(body.dimensions);
+  const metrics = sanitizePlainObject(body.metrics);
+  const payload = sanitizePlainObject(body.payload);
+  const notes = coerceText(body.notes, 5000);
+  const rawChartRows = Array.isArray(body.chartRows) ? body.chartRows : [];
+  const rawMaintenanceOrders = Array.isArray(body.maintenanceOrders) ? body.maintenanceOrders : [];
+  const recipients = Array.isArray(body.notificationRecipients)
+    ? body.notificationRecipients
+    : Array.isArray(body.recipients)
+      ? body.recipients
+      : [];
+
+  if (!formKey) {
+    return res.status(400).json({ error: "formKey is required." });
+  }
+
+  if (!submittedBy) {
+    return res.status(400).json({ error: "submittedBy is required." });
+  }
+
+  try {
+    const submissionRow = {
+      form_key: formKey,
+      form_label: formLabel || formKey,
+      submitted_at: submittedAt,
+      submitted_by_email: submittedBy,
+      submission_date: coerceText(dimensions.submission_date || dimensions.production_date || "", 20) || null,
+      shift: coerceText(dimensions.shift, 80) || null,
+      department: coerceText(dimensions.department, 120) || null,
+      line: coerceText(dimensions.line, 120) || null,
+      payload,
+      dimensions,
+      metrics,
+      notes: notes || null
+    };
+
+    const { data: submission, error: submissionError } = await chartSupabase
+      .from("pro_form_submissions")
+      .insert(submissionRow)
+      .select("id")
+      .single();
+
+    if (submissionError || !submission?.id) {
+      console.error("Pro submission insert failed:", submissionError);
+      return res.status(400).json({ error: submissionError?.message || "Failed to store form submission." });
+    }
+
+    const chartRows = rawChartRows
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({
+        submission_id: submission.id,
+        form_key: formKey,
+        chart_name: coerceText(row.chart_name || row.chartName, 160),
+        chart_date: coerceText(row.chart_date || row.chartDate || dimensions.submission_date || dimensions.production_date || "", 20) || null,
+        chart_shift: coerceText(row.chart_shift || row.chartShift || dimensions.shift, 80) || null,
+        chart_department: coerceText(row.chart_department || row.chartDepartment || dimensions.department, 120) || null,
+        chart_line: coerceText(row.chart_line || row.chartLine || dimensions.line, 120) || null,
+        chart_series: coerceText(row.chart_series || row.chartSeries, 120) || null,
+        chart_metric: coerceText(row.chart_metric || row.chartMetric, 120) || null,
+        chart_bucket: coerceText(row.chart_bucket || row.chartBucket, 160) || null,
+        chart_value: coerceNumber(row.chart_value ?? row.chartValue),
+        payload: sanitizePlainObject(row.payload),
+        submitted_at: submittedAt,
+        submitted_by_email: submittedBy
+      }))
+      .filter((row) => row.chart_name && row.chart_metric && row.chart_value !== null);
+
+    if (chartRows.length > 0) {
+      const { error: chartRowsError } = await chartSupabase
+        .from("pro_form_chart_rows")
+        .insert(chartRows);
+
+      if (chartRowsError) {
+        console.error("Pro chart rows insert failed:", chartRowsError);
+        return res.status(400).json({ error: chartRowsError.message || "Failed to store chart rows." });
+      }
+    }
+
+    const maintenanceOrders = rawMaintenanceOrders
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({
+        submission_id: submission.id,
+        form_key: formKey,
+        form_label: formLabel || formKey,
+        order_code: buildMaintenanceOrderCode(),
+        public_token: crypto.randomUUID(),
+        status: coerceText(row.status, 40) || "open",
+        priority: coerceText(row.priority, 40) || "high",
+        asset_name: coerceText(row.asset_name || row.assetName || dimensions.asset_name || dimensions.crane_name, 160) || null,
+        issue_category: coerceText(row.issue_category || row.issueCategory || "inspection_failure", 160) || null,
+        source_item_key: coerceText(row.source_item_key || row.sourceItemKey, 160) || null,
+        source_item_label: coerceText(row.source_item_label || row.sourceItemLabel, 500) || null,
+        issue_notes: coerceText(row.issue_notes || row.issueNotes, 5000) || null,
+        reported_at: submittedAt,
+        reported_by_email: submittedBy,
+        reported_by_name: coerceText(row.reported_by_name || row.reportedByName || dimensions.inspector_name, 160) || null,
+        submission_date: coerceText(row.submission_date || row.submissionDate || dimensions.submission_date || "", 20) || null,
+        metadata: sanitizePlainObject(row.metadata)
+      }))
+      .filter((row) => row.source_item_label || row.issue_notes);
+
+    let insertedMaintenanceOrders = [];
+    if (maintenanceOrders.length > 0) {
+      const { data: orderRows, error: orderError } = await chartSupabase
+        .from("pro_maintenance_orders")
+        .insert(maintenanceOrders)
+        .select("id,order_code,public_token,status,priority,asset_name,source_item_key,source_item_label,issue_notes,reported_at,reported_by_email,reported_by_name,form_key,form_label");
+
+      if (orderError) {
+        console.error("Pro maintenance order insert failed:", orderError);
+        return res.status(400).json({ error: orderError.message || "Failed to store maintenance orders." });
+      }
+
+      insertedMaintenanceOrders = orderRows || [];
+    }
+
+    let notification = { sent: false, reason: "No notification attempt was made." };
+    try {
+      notification = await sendSubmissionNotification({
+        formLabel: formLabel || formKey,
+        submittedBy,
+        submittedAt,
+        dimensions,
+        metrics,
+        notes,
+        recipients
+      });
+    } catch (notificationError) {
+      console.error("Pro submission notification failed:", notificationError);
+      notification = {
+        sent: false,
+        reason: notificationError.message || "Notification send failed."
+      };
+    }
+
+    const maintenanceNotifications = [];
+    for (const order of insertedMaintenanceOrders) {
+      try {
+        const teamsNotification = await sendTeamsMaintenanceNotification({ req, order });
+        maintenanceNotifications.push({
+          orderCode: order.order_code,
+          ...teamsNotification
+        });
+      } catch (teamsError) {
+        console.error("Teams maintenance notification failed:", teamsError);
+        maintenanceNotifications.push({
+          orderCode: order.order_code,
+          sent: false,
+          reason: teamsError.message || "Teams notification failed."
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      submissionId: submission.id,
+      chartRowsInserted: chartRows.length,
+      maintenanceOrdersCreated: insertedMaintenanceOrders.length,
+      maintenanceOrders: insertedMaintenanceOrders,
+      notification,
+      maintenanceNotifications
+    });
+  } catch (err) {
+    console.error("Pro forms submit endpoint error:", err);
+    return res.status(500).json({ error: err.message || "Failed to submit form." });
+  }
+});
+
 app.post("/api/ai-chart", async (req, res) => {
   try {
     const openai = getOpenAIClient();
@@ -325,6 +1211,175 @@ app.post("/api/ai-chart", async (req, res) => {
   } catch (err) {
     console.error("AI endpoint error:", err);
     res.status(500).json({ error: "AI request failed" });
+  }
+});
+
+app.post("/api/ai-analyze", async (req, res) => {
+  try {
+    const focus = String(req.body.focus || "").trim();
+
+    const today = startOfDay(new Date());
+    const productionWindowStart = toYmd(addDays(today, -120));
+    const shippingWindowStart = toYmd(addDays(today, -120));
+    const isoWindowStart = toYmd(addDays(today, -210));
+
+    const [productionRows, shippingRows, isoRows] = await Promise.all([
+      fetchChartRows(
+        "psdata_production_tags_api",
+        "processing_start_date,tag_tons,tons_per_hour,days_to_close,machine_label,customer_number",
+        {
+          gteColumn: "processing_start_date",
+          gte: productionWindowStart,
+          orderBy: "processing_start_date",
+          ascending: false,
+          limit: 40000
+        }
+      ),
+      fetchChartRows(
+        "psdata_loads_api",
+        "shipDate,ship_date,weight,customer_no,ship_to_customer_name,carrier_number,cancel_load,bol_number,master_bol_number",
+        {
+          gteColumn: "shipDate",
+          gte: shippingWindowStart,
+          orderBy: "shipDate",
+          ascending: false,
+          limit: 40000
+        }
+      ),
+      fetchChartRows(
+        "v_iso_complaints",
+        "log_number,date_entered,date_closed,status,customer,complaint_type,cost",
+        {
+          gteColumn: "date_entered",
+          gte: isoWindowStart,
+          orderBy: "date_entered",
+          ascending: false,
+          limit: 15000
+        }
+      )
+    ]);
+
+    const snapshot = buildOperationalSnapshot({
+      productionRows,
+      shippingRows,
+      isoRows,
+      focus
+    });
+
+    let summary = formatFallbackAnalysis(snapshot);
+    const openai = getOpenAIClient();
+
+    if (openai) {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are the CSP BI operations analyst. Review operational data and identify inefficiencies, productivity concerns, customer demand drops, and quality faults. Be concrete, concise, and actionable. Do not mention SQL or speculate beyond the metrics provided."
+          },
+          {
+            role: "user",
+            content: [
+              focus ? `Focus area: ${focus}` : "Focus area: overall operations",
+              "Write a concise analysis with:",
+              "1. a short overall takeaway sentence",
+              "2. up to 6 bullets ordered by severity",
+              "3. a closing sentence on what to watch next",
+              "",
+              `Operational snapshot:\n${JSON.stringify(snapshot, null, 2)}`
+            ].join("\n")
+          }
+        ]
+      });
+
+      const aiText = completion?.choices?.[0]?.message?.content;
+      if (String(aiText || "").trim()) {
+        summary = aiText.trim();
+      }
+    }
+
+    return res.json({
+      summary,
+      findings: snapshot.findings,
+      snapshot: snapshot.snapshots,
+      focus: snapshot.focus,
+      generatedAt: snapshot.generatedAt
+    });
+  } catch (err) {
+    console.error("AI analyze endpoint error:", err);
+    return res.status(500).json({ error: err.message || "AI analysis request failed." });
+  }
+});
+
+// Production chart data endpoint for frontend chart rebuild pages
+app.get("/api/chart-data", async (req, res) => {
+  const allowedTables = new Set(["psdata_loads", "psdata_loads_api", "psdata_iso_complaints"]);
+  const table = String(req.query.table || "psdata_loads_api").trim();
+  const shipDateColumn = table === "psdata_loads_api" ? "shipDate" : "ship_date";
+  const limitRaw = Number(req.query.limit || 3000);
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 3000, 50), 250000);
+  const select = String(req.query.select || "*").trim() || "*";
+  const order = String(req.query.order || "").trim();
+  const shipDateGte = String(req.query.ship_date_gte || "").trim();
+  const shipDateLt = String(req.query.ship_date_lt || "").trim();
+  const shipDateLte = String(req.query.ship_date_lte || "").trim();
+
+  if (!allowedTables.has(table)) {
+    return res.status(400).json({ error: `Table not allowed: ${table}` });
+  }
+
+  try {
+    const batchSize = 1000;
+    const rows = [];
+    let from = 0;
+
+    while (from < limit) {
+      const to = Math.min(from + batchSize - 1, limit - 1);
+      let query = chartSupabase.from(table).select(select);
+
+      if (table !== "psdata_iso_complaints") {
+        if (shipDateGte) query = query.gte(shipDateColumn, shipDateGte);
+        if (shipDateLt) query = query.lt(shipDateColumn, shipDateLt);
+        if (shipDateLte) query = query.lte(shipDateColumn, shipDateLte);
+      }
+
+      if (order) {
+        const [fieldRaw, dirRaw = "asc"] = order.split(".");
+        const field = String(fieldRaw || "").trim();
+        const ascending = String(dirRaw || "asc").trim().toLowerCase() !== "desc";
+        if (/^[a-z_][a-z0-9_]*$/i.test(field)) {
+          query = query.order(field, { ascending });
+        }
+      }
+
+      const { data, error } = await query.range(from, to);
+
+      if (error) {
+        console.error("Chart data query failed:", error);
+        return res.status(400).json({ error: error.message || "Chart data query failed." });
+      }
+
+      const page = Array.isArray(data) ? data : [];
+      rows.push(...page);
+      if (page.length < batchSize) break;
+      from += batchSize;
+    }
+
+    return res.json({
+      table,
+      limit,
+      order: order || null,
+      ship_date_gte: shipDateGte || null,
+      ship_date_lt: shipDateLt || null,
+      ship_date_lte: shipDateLte || null,
+      count: rows.length,
+      rows
+    });
+  } catch (err) {
+    console.error("Chart data endpoint error:", err);
+    return res.status(500).json({ error: err.message || "Chart data endpoint failed." });
   }
 });
 
