@@ -62,6 +62,65 @@ const CHART_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ
 
 const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
 const chartSupabase = createClient(CHART_SUPABASE_URL, CHART_SERVICE_ROLE_KEY);
+const ROLE_DEFINITIONS = [
+  { id: 1, name: "admin" },
+  { id: 2, name: "shipping" },
+  { id: 3, name: "receiving" },
+  { id: 4, name: "production" },
+  { id: 5, name: "sales" },
+  { id: 6, name: "finance" },
+  { id: 8, name: "maintenance" },
+  { id: 9, name: "bonus_report" },
+  { id: 10, name: "ai_assistant" },
+  { id: 11, name: "shipping_overview" },
+  { id: 12, name: "shipping_performance" },
+  { id: 13, name: "customer_summary" },
+  { id: 14, name: "inventory" },
+  { id: 15, name: "iso" },
+  { id: 16, name: "alarm_logs" }
+];
+const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
+const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
+
+const normalizeRoleName = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+const ensureKnownRoles = async () => {
+  const { error } = await supabase
+    .from("roles")
+    .upsert(ROLE_DEFINITIONS, { onConflict: "id" });
+
+  if (error) {
+    throw new Error(`Failed to ensure roles: ${error.message}`);
+  }
+};
+
+const resolveRoleIds = async (requestedRoles) => {
+  await ensureKnownRoles();
+
+  const ids = new Set();
+  (Array.isArray(requestedRoles) ? requestedRoles : []).forEach((role) => {
+    if (typeof role === "number" && ROLE_BY_ID.has(role)) {
+      ids.add(role);
+      return;
+    }
+
+    const parsedId = Number(role);
+    if (Number.isInteger(parsedId) && ROLE_BY_ID.has(parsedId)) {
+      ids.add(parsedId);
+      return;
+    }
+
+    const normalizedName = normalizeRoleName(role);
+    const roleDef = ROLE_BY_NAME.get(normalizedName);
+    if (roleDef) ids.add(roleDef.id);
+  });
+
+  return Array.from(ids);
+};
 const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -87,6 +146,117 @@ const coerceNumber = (value) => {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const coerceInteger = (value) => {
+  const parsed = coerceNumber(value);
+  return parsed === null ? null : Math.trunc(parsed);
+};
+
+const coerceDateText = (value) => coerceText(value, 20) || null;
+
+const getArray = (value) => (Array.isArray(value) ? value : []);
+
+const buildFormSpecificSubmission = ({ submissionId, formKey, submittedAt, submittedBy, dimensions, metrics, payload, notes }) => {
+  const base = {
+    submission_id: submissionId,
+    submitted_at: submittedAt,
+    submitted_by_email: submittedBy,
+    payload
+  };
+
+  if (formKey === "shift_report") {
+    return {
+      table: "pro_shift_report_submissions",
+      row: {
+        ...base,
+        report_date: coerceDateText(dimensions.report_date || dimensions.submission_date || payload.reportDate),
+        operator: coerceText(dimensions.operator || payload.operator, 160) || null,
+        shift: coerceText(dimensions.shift || payload.shift, 80) || null,
+        hours_worked: coerceNumber(metrics.hours_worked ?? payload.hoursWorked) || 0,
+        tons: coerceNumber(metrics.tons ?? payload.tons) || 0,
+        linear_feet: coerceNumber(metrics.linear_feet ?? payload.linearFeet) || 0,
+        stroke_count: coerceInteger(metrics.stroke_count ?? payload.strokeCount) || 0,
+        total_coils_ran: coerceInteger(metrics.total_coils_ran ?? payload.totalCoilsRan) || 0,
+        had_downtime: coerceText(dimensions.had_downtime || payload.hadDowntime, 40) || null,
+        planned_downtime_minutes: coerceInteger(metrics.planned_downtime_minutes ?? payload.plannedDowntimeMinutes) || 0,
+        planned_downtime_details: coerceText(payload.plannedDowntimeDetails, 1000) || null,
+        unplanned_downtime_minutes: coerceInteger(metrics.unplanned_downtime_minutes ?? payload.unplannedDowntimeMinutes) || 0,
+        unplanned_downtime_details: coerceText(payload.unplannedDowntimeDetails, 1000) || null,
+        skipped_orders: getArray(payload.skippedOrders),
+        maintenance_times: getArray(payload.maintenanceTimes),
+        maintenance_reason: coerceText(payload.maintenanceReason, 1000) || null,
+        maintenance_tech: coerceText(dimensions.maintenance_tech || payload.maintenanceTech, 160) || null,
+        additional_comments: notes || coerceText(payload.additionalComments, 5000) || null
+      }
+    };
+  }
+
+  if (formKey === "forklift_inspection") {
+    return {
+      table: "pro_forklift_inspection_submissions",
+      row: {
+        ...base,
+        inspection_date: coerceDateText(dimensions.inspection_date || dimensions.submission_date || payload.inspectionDate),
+        first_name: coerceText(payload.firstName, 120) || null,
+        last_name: coerceText(payload.lastName, 120) || null,
+        inspector_name: coerceText(dimensions.inspector_name, 160) || null,
+        location: coerceText(dimensions.location || payload.location, 120) || null,
+        forklift_number: coerceText(dimensions.forklift_number || payload.forkliftNumber, 120) || null,
+        asset_name: coerceText(dimensions.asset_name, 160) || null,
+        total_checks: coerceInteger(metrics.total_checks) || 0,
+        passed_checks: coerceInteger(metrics.passed_checks) || 0,
+        failed_checks: coerceInteger(metrics.failed_checks) || 0,
+        maintenance_orders_opened: coerceInteger(metrics.maintenance_orders_opened) || 0,
+        attention_notes: notes || coerceText(payload.attentionNotes, 5000) || null,
+        checks: getArray(payload.checks)
+      }
+    };
+  }
+
+  if (formKey === "crane_inspection") {
+    return {
+      table: "pro_crane_inspection_submissions",
+      row: {
+        ...base,
+        inspection_date: coerceDateText(dimensions.inspection_date || dimensions.submission_date || payload.inspectionDate),
+        first_name: coerceText(payload.firstName, 120) || null,
+        last_name: coerceText(payload.lastName, 120) || null,
+        inspector_name: coerceText(dimensions.inspector_name, 160) || null,
+        crane_name: coerceText(dimensions.crane_name || payload.craneName, 160) || null,
+        total_checks: coerceInteger(metrics.total_checks) || 0,
+        passed_checks: coerceInteger(metrics.passed_checks) || 0,
+        failed_checks: coerceInteger(metrics.failed_checks) || 0,
+        maintenance_orders_opened: coerceInteger(metrics.maintenance_orders_opened) || 0,
+        general_comments: notes || coerceText(payload.generalComments, 5000) || null,
+        answers: getArray(payload.answers)
+      }
+    };
+  }
+
+  if (formKey === "operational_inspection") {
+    return {
+      table: "pro_operational_inspection_submissions",
+      row: {
+        ...base,
+        check_date: coerceDateText(dimensions.check_date || dimensions.submission_date || payload.checkDate),
+        first_name: coerceText(payload.firstName, 120) || null,
+        last_name: coerceText(payload.lastName, 120) || null,
+        inspector_name: coerceText(dimensions.inspector_name, 160) || null,
+        area: coerceText(dimensions.area, 120) || null,
+        asset_name: coerceText(dimensions.asset_name, 160) || null,
+        current_psi: coerceNumber(metrics.current_psi ?? dimensions.current_psi ?? payload.currentPsi) || 0,
+        total_checks: coerceInteger(metrics.total_checks) || 0,
+        clear_checks: coerceInteger(metrics.clear_checks) || 0,
+        issue_checks: coerceInteger(metrics.issue_checks) || 0,
+        maintenance_orders_opened: coerceInteger(metrics.maintenance_orders_opened) || 0,
+        general_notes: notes || coerceText(payload.generalNotes, 5000) || null,
+        checks: getArray(payload.checks)
+      }
+    };
+  }
+
+  return null;
 };
 
 const buildMaintenanceOrderCode = () =>
@@ -675,6 +845,11 @@ app.post("/api/create-user", async (req, res) => {
   const cleanEmail = String(email).trim().toLowerCase();
 
   try {
+    const resolvedRoleIds = await resolveRoleIds(roles);
+    if (resolvedRoleIds.length === 0) {
+      return res.status(400).json({ message: "No valid roles were selected." });
+    }
+
     // 1️⃣ Create the user in Supabase Auth
     const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
       email: cleanEmail,
@@ -703,9 +878,9 @@ app.post("/api/create-user", async (req, res) => {
     }
 
     // 3️⃣ Assign roles
-    const roleRows = roles.map((role_id) => ({
+    const roleRows = resolvedRoleIds.map((role_id) => ({
       user_id: user.id,
-      role_id: Number(role_id),
+      role_id,
     }));
 
     const { error: rolesError } = await supabase.from("user_roles").insert(roleRows);
@@ -715,7 +890,7 @@ app.post("/api/create-user", async (req, res) => {
       return res.status(400).json({ message: rolesError.message });
     }
 
-    console.log(`✅ Created user ${email} with roles ${roles.join(", ")}`);
+    console.log(`✅ Created user ${email} with roles ${resolvedRoleIds.join(", ")}`);
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error("Unexpected error in create-user:", err);
@@ -784,13 +959,15 @@ app.put("/api/users/:id/roles", async (req, res) => {
   }
 
   try {
+    const resolvedRoleIds = await resolveRoleIds(roles);
+
     // Remove existing roles
     await supabase.from("user_roles").delete().eq("user_id", id);
 
     // Insert new roles
-    const roleRows = roles.map((role_id) => ({
+    const roleRows = resolvedRoleIds.map((role_id) => ({
       user_id: id,
-      role_id: Number(role_id),
+      role_id,
     }));
 
     if (roleRows.length > 0) {
@@ -1074,6 +1251,28 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       return res.status(400).json({ error: submissionError?.message || "Failed to store form submission." });
     }
 
+    const formSpecificSubmission = buildFormSpecificSubmission({
+      submissionId: submission.id,
+      formKey,
+      submittedAt,
+      submittedBy,
+      dimensions,
+      metrics,
+      payload,
+      notes
+    });
+
+    if (formSpecificSubmission) {
+      const { error: formSpecificError } = await chartSupabase
+        .from(formSpecificSubmission.table)
+        .insert(formSpecificSubmission.row);
+
+      if (formSpecificError) {
+        console.error("Pro form-specific insert failed:", formSpecificError);
+        return res.status(400).json({ error: formSpecificError.message || "Failed to store form-specific submission." });
+      }
+    }
+
     const chartRows = rawChartRows
       .filter((row) => row && typeof row === "object")
       .map((row) => ({
@@ -1183,6 +1382,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
     return res.json({
       success: true,
       submissionId: submission.id,
+      formSpecificTable: formSpecificSubmission?.table || null,
       chartRowsInserted: chartRows.length,
       maintenanceOrdersCreated: insertedMaintenanceOrders.length,
       maintenanceOrders: insertedMaintenanceOrders,
