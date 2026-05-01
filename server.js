@@ -3,6 +3,8 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const OpenAI = require("openai");
 function getOpenAIClient() {
   const key = process.env.OPENAI_API_KEY;
@@ -275,6 +277,36 @@ const escapeHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const EMAIL_TEMPLATES_DIR = path.join(__dirname, "email-templates");
+const emailTemplateCache = new Map();
+
+const readEmailTemplate = (name) => {
+  const fileName = `${name}.html`;
+  const filePath = path.join(EMAIL_TEMPLATES_DIR, fileName);
+  if (!filePath.startsWith(EMAIL_TEMPLATES_DIR)) return "";
+  const shouldCacheTemplates = process.env.NODE_ENV === "production";
+  if (shouldCacheTemplates && emailTemplateCache.has(fileName)) return emailTemplateCache.get(fileName);
+
+  try {
+    const template = fs.readFileSync(filePath, "utf8");
+    if (shouldCacheTemplates) emailTemplateCache.set(fileName, template);
+    return template;
+  } catch (error) {
+    console.warn(`Email template ${fileName} could not be loaded:`, error.message);
+    if (shouldCacheTemplates) emailTemplateCache.set(fileName, "");
+    return "";
+  }
+};
+
+const renderStoredTemplate = (name, values) => {
+  const template = readEmailTemplate(name);
+  if (!template) return "";
+
+  return template
+    .replace(/\{\{\{\s*([a-zA-Z0-9_]+)\s*\}\}\}/g, (_, key) => String(values?.[key] ?? ""))
+    .replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => escapeHtml(values?.[key] ?? ""));
+};
+
 const formatEmailLabel = (value) =>
   String(value || "")
     .replace(/_/g, " ")
@@ -326,24 +358,40 @@ const buildItemList = (title, items, emptyText = "") => {
   `;
 };
 
-const buildEmailShell = ({ eyebrow, title, summary, submittedBy, submittedAt, body }) => `
-  <div style="margin:0;padding:0;background:#eff4fb;">
-    <div style="max-width:720px;margin:0 auto;padding:24px 14px;font-family:Arial,sans-serif;color:#233658;line-height:1.5;">
-      <div style="background:#172742;color:#ffffff;border-radius:10px 10px 0 0;padding:20px 24px;">
-        <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f1a91e;font-weight:700;">${escapeHtml(eyebrow || "CSP Pro")}</div>
-        <h2 style="margin:8px 0 0;font-size:24px;line-height:1.2;">${escapeHtml(title)}</h2>
-      </div>
-      <div style="background:#ffffff;border:1px solid #d7e1ef;border-top:0;border-radius:0 0 10px 10px;padding:22px 24px;">
-        ${summary ? `<p style="margin:0 0 18px;color:#233658;font-size:15px;">${escapeHtml(summary)}</p>` : ""}
-        ${buildEmailTable("Submission", [
-          { label: "Submitted by", value: submittedBy || "Unknown user" },
-          { label: "Submitted at", value: submittedAt }
-        ])}
-        ${body || ""}
+const buildEmailShell = ({ eyebrow, title, summary, submittedBy, submittedAt, body }) => {
+  const submissionTable = buildEmailTable("Submission", [
+    { label: "Submitted by", value: submittedBy || "Unknown user" },
+    { label: "Submitted at", value: submittedAt }
+  ]);
+  const summaryBlock = summary
+    ? `<p style="margin:0 0 18px;color:#233658;font-size:15px;">${escapeHtml(summary)}</p>`
+    : "";
+  const stored = renderStoredTemplate("layout", {
+    eyebrow: eyebrow || "CSP Pro",
+    title,
+    summary_block: summaryBlock,
+    submission_table: submissionTable,
+    body: body || ""
+  });
+
+  if (stored) return stored;
+
+  return `
+    <div style="margin:0;padding:0;background:#eff4fb;">
+      <div style="max-width:720px;margin:0 auto;padding:24px 14px;font-family:Arial,sans-serif;color:#233658;line-height:1.5;">
+        <div style="background:#172742;color:#ffffff;border-radius:10px 10px 0 0;padding:20px 24px;">
+          <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f1a91e;font-weight:700;">${escapeHtml(eyebrow || "CSP Pro")}</div>
+          <h2 style="margin:8px 0 0;font-size:24px;line-height:1.2;">${escapeHtml(title)}</h2>
+        </div>
+        <div style="background:#ffffff;border:1px solid #d7e1ef;border-top:0;border-radius:0 0 10px 10px;padding:22px 24px;">
+          ${summaryBlock}
+          ${submissionTable}
+          ${body || ""}
+        </div>
       </div>
     </div>
-  </div>
-`;
+  `;
+};
 
 const buildGenericSubmissionEmail = ({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes }) => {
   const dimensionLines = Object.entries(dimensions || {})
@@ -366,20 +414,15 @@ const buildGenericSubmissionEmail = ({ formLabel, submittedBy, submittedAt, dime
   });
 };
 
-const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, notes, payload }) => buildEmailShell({
-  eyebrow: "Shift Report",
-  title: `Shift report submitted for ${formatEmailValue(dimensions.report_date || dimensions.submission_date)}`,
-  summary: `${formatEmailValue(dimensions.operator, "An operator")} submitted ${formatEmailNumber(metrics.tons)} tons on ${formatEmailValue(dimensions.shift, "the selected shift")}.`,
-  submittedBy,
-  submittedAt,
-  body: [
-    buildEmailTable("Shift Details", [
+const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, notes, payload }) => {
+  const values = {
+    shift_details_table: buildEmailTable("Shift Details", [
       { label: "Report date", value: dimensions.report_date || dimensions.submission_date },
       { label: "Operator", value: dimensions.operator },
       { label: "Shift", value: dimensions.shift },
       { label: "Had downtime", value: dimensions.had_downtime }
     ]),
-    buildEmailTable("Production Metrics", [
+    production_metrics_table: buildEmailTable("Production Metrics", [
       { label: "Hours worked", value: formatEmailNumber(metrics.hours_worked) },
       { label: "Tons", value: formatEmailNumber(metrics.tons) },
       { label: "Linear feet", value: formatEmailNumber(metrics.linear_feet) },
@@ -387,21 +430,31 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
       { label: "Total coils ran", value: formatEmailNumber(metrics.total_coils_ran) },
       { label: "Total downtime", value: formatEmailNumber(metrics.total_downtime_minutes, " min") }
     ]),
-    buildEmailTable("Downtime", [
+    downtime_table: buildEmailTable("Downtime", [
       { label: "Planned downtime", value: formatEmailNumber(metrics.planned_downtime_minutes, " min") },
       { label: "Planned details", value: payload.plannedDowntimeDetails },
       { label: "Unplanned downtime", value: formatEmailNumber(metrics.unplanned_downtime_minutes, " min") },
       { label: "Unplanned details", value: payload.unplannedDowntimeDetails },
       { label: "Maintenance tech", value: dimensions.maintenance_tech }
     ]),
-    buildItemList(
+    skipped_orders_list: buildItemList(
       "Skipped Orders",
       getArray(payload.skippedOrders).map((row) => `${row.skippedOrderNumber || "Order"}: ${row.skippedOrderReason || "No reason provided"}`),
       "No skipped orders recorded."
     ),
-    notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Comments</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
-  ].join("")
-});
+    comments_block: notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Comments</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
+  };
+  const body = renderStoredTemplate("shift_report", values) || Object.values(values).join("");
+
+  return buildEmailShell({
+    eyebrow: "Shift Report",
+    title: `Shift report submitted for ${formatEmailValue(dimensions.report_date || dimensions.submission_date)}`,
+    summary: `${formatEmailValue(dimensions.operator, "An operator")} submitted ${formatEmailNumber(metrics.tons)} tons on ${formatEmailValue(dimensions.shift, "the selected shift")}.`,
+    submittedBy,
+    submittedAt,
+    body
+  });
+};
 
 const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes, payload, itemField, issueCountKey, issueLabel }) => {
   const items = getArray(payload[itemField]);
@@ -409,34 +462,38 @@ const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions,
   const clearCount = metrics.passed_checks ?? metrics.clear_checks ?? 0;
   const issueCount = metrics[issueCountKey] ?? issueItems.length;
 
+  const bodyValues = {
+    inspection_details_table: buildEmailTable("Inspection Details", [
+      { label: "Date", value: dimensions.inspection_date || dimensions.check_date || dimensions.submission_date },
+      { label: "Inspector", value: dimensions.inspector_name },
+      { label: "Asset", value: dimensions.asset_name || dimensions.crane_name || dimensions.area },
+      { label: "Location", value: dimensions.location },
+      { label: "Forklift number", value: dimensions.forklift_number },
+      { label: "Current PSI", value: dimensions.current_psi }
+    ]),
+    results_table: buildEmailTable("Results", [
+      { label: "Total checks", value: formatEmailNumber(metrics.total_checks) },
+      { label: "Clear/pass checks", value: formatEmailNumber(clearCount) },
+      { label: issueLabel, value: formatEmailNumber(issueCount) },
+      { label: "Maintenance orders opened", value: formatEmailNumber(metrics.maintenance_orders_opened) }
+    ]),
+    problem_items_list: buildItemList(
+      "Problem Items",
+      issueItems.map((item) => `${item.label || item.key}: ${item.notes || `Response: ${item.status || ""}`}`),
+      "No problem items reported."
+    ),
+    notes_block: notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Notes</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
+  };
+  const templateName = formLabel.toLowerCase().replace(/\s+/g, "_");
+  const body = renderStoredTemplate(templateName, bodyValues) || Object.values(bodyValues).join("");
+
   return buildEmailShell({
     eyebrow: formLabel,
     title: `${formLabel} submitted`,
     summary: `${formatEmailNumber(issueCount)} ${issueLabel} reported out of ${formatEmailNumber(metrics.total_checks)} checks.`,
     submittedBy,
     submittedAt,
-    body: [
-      buildEmailTable("Inspection Details", [
-        { label: "Date", value: dimensions.inspection_date || dimensions.check_date || dimensions.submission_date },
-        { label: "Inspector", value: dimensions.inspector_name },
-        { label: "Asset", value: dimensions.asset_name || dimensions.crane_name || dimensions.area },
-        { label: "Location", value: dimensions.location },
-        { label: "Forklift number", value: dimensions.forklift_number },
-        { label: "Current PSI", value: dimensions.current_psi }
-      ]),
-      buildEmailTable("Results", [
-        { label: "Total checks", value: formatEmailNumber(metrics.total_checks) },
-        { label: "Clear/pass checks", value: formatEmailNumber(clearCount) },
-        { label: issueLabel, value: formatEmailNumber(issueCount) },
-        { label: "Maintenance orders opened", value: formatEmailNumber(metrics.maintenance_orders_opened) }
-      ]),
-      buildItemList(
-        issueCount > 0 ? "Problem Items" : "Problem Items",
-        issueItems.map((item) => `${item.label || item.key}: ${item.notes || `Response: ${item.status || ""}`}`),
-        "No problem items reported."
-      ),
-      notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Notes</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
-    ].join("")
+    body
   });
 };
 
