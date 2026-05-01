@@ -1,13 +1,102 @@
-<div style="margin:0;padding:0;background:#eff4fb;">
-  <div style="max-width:720px;margin:0 auto;padding:24px 14px;font-family:Arial,sans-serif;color:#233658;line-height:1.5;">
-    <div style="background:#172742;color:#ffffff;border-radius:10px 10px 0 0;padding:20px 24px;">
-      <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f1a91e;font-weight:700;">{{eyebrow}}</div>
-      <h2 style="margin:8px 0 0;font-size:24px;line-height:1.2;">{{title}}</h2>
-    </div>
-    <div style="background:#ffffff;border:1px solid #d7e1ef;border-top:0;border-radius:0 0 10px 10px;padding:22px 24px;">
-      {{{summary_block}}}
-      {{{submission_table}}}
-      {{{body}}}
-    </div>
-  </div>
-</div>
+<style type="text/css">
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    background-color: #eff4fb;
+  }
+  table {
+    border-spacing: 0;
+    border-collapse: collapse;
+  }
+  td {
+    padding: 0;
+  }
+  img {
+    display: block;
+    border: 0;
+    max-width: 100%;
+    height: auto;
+  }
+  a {
+    text-decoration: none;
+  }
+  @media only screen and (max-width: 600px) {
+    .container {
+      width: 100% !important;
+    }
+    .outer-pad {
+      padding: 0 !important;
+    }
+    .mobile-pad {
+      padding-left: 15px !important;
+      padding-right: 15px !important;
+    }
+    .email-title {
+      font-size: 21px !important;
+      line-height: 1.2 !important;
+    }
+    .kpi-cell {
+      display: inline-block !important;
+      width: 50% !important;
+      box-sizing: border-box !important;
+      padding-left: 4px !important;
+      padding-right: 4px !important;
+    }
+    .metric-label,
+    .metric-bar,
+    .metric-value {
+      display: block !important;
+      width: auto !important;
+      text-align: left !important;
+    }
+    .metric-bar {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+    }
+    .detail-table td {
+      display: block !important;
+      width: auto !important;
+      text-align: left !important;
+    }
+  }
+</style>
+<!--[if mso]>
+<style type="text/css">
+  table { border-collapse: collapse; }
+  td { padding: 0; }
+  .email-title { font-size: 24px; }
+  .container { width: 600px; }
+</style>
+<![endif]-->
+
+<table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" align="center" style="background-color:#eff4fb;width:100%;">
+  <tr>
+    <td class="outer-pad" align="center" style="padding:20px 0;">
+      <table class="container" role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #d7e1ef;">
+        <tr>
+          <td style="background-color:#172742;padding:20px;text-align:left;">
+            <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f1a91e;font-weight:bold;line-height:1.4;">{{eyebrow}}</div>
+            <div class="email-title" style="margin-top:8px;color:#ffffff;font-size:24px;font-weight:bold;line-height:1.2;">{{title}}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#f1a91e;color:#172742;font-size:15px;font-weight:bold;line-height:1.45;text-align:left;padding:14px 20px;">
+            {{{summary_block}}}
+          </td>
+        </tr>
+        <tr>
+          <td class="mobile-pad" style="padding:20px;background-color:#ffffff;">
+            {{{submission_table}}}
+            {{{body}}}
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#d3d2d2;text-align:center;font-size:16px;color:#ffffff;padding:18px;font-weight:bold;">
+            coilsteelprocessing.com
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

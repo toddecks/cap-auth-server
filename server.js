@@ -18,6 +18,7 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 // Tableau Connected App Credentials
 const CLIENT_ID = "966451f7-3322-4cd6-8e74-7d30e0acda54";
@@ -339,7 +340,7 @@ const buildEmailTable = (title, rows) => {
   if (!rowMarkup) return "";
   return `
     <h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">${escapeHtml(title)}</h3>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #d7e1ef;border-radius:8px;overflow:hidden;">
+    <table class="detail-table" role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #d7e1ef;border-radius:8px;overflow:hidden;">
       ${rowMarkup}
     </table>
   `;
@@ -358,13 +359,108 @@ const buildItemList = (title, items, emptyText = "") => {
   `;
 };
 
+const clampPercent = (value) => Math.max(0, Math.min(100, value));
+
+const buildEmailBarChart = (title, rows, { maxValue = null, color = "#2f61d3" } = {}) => {
+  const cleanRows = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      label: row.label,
+      value: Number(row.value) || 0,
+      display: row.display || formatEmailNumber(row.value)
+    }))
+    .filter((row) => row.label && row.value >= 0);
+
+  if (!cleanRows.length) return "";
+
+  const max = Number(maxValue) > 0
+    ? Number(maxValue)
+    : Math.max(...cleanRows.map((row) => row.value), 1);
+
+  const rowMarkup = cleanRows.map((row) => {
+    const width = clampPercent((row.value / max) * 100);
+    return `
+      <tr>
+        <td class="metric-label" style="padding:8px 0;width:118px;color:#61708a;font-size:13px;vertical-align:middle;">${escapeHtml(row.label)}</td>
+        <td class="metric-bar" style="padding:8px 10px;vertical-align:middle;">
+          <div style="background:#edf2fa;border-radius:999px;height:12px;line-height:12px;overflow:hidden;">
+            <div style="background:${color};width:${width}%;height:12px;line-height:12px;">&nbsp;</div>
+          </div>
+        </td>
+        <td class="metric-value" style="padding:8px 0;width:78px;color:#172742;font-size:13px;font-weight:700;text-align:right;vertical-align:middle;">${escapeHtml(row.display)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">${escapeHtml(title)}</h3>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+      ${rowMarkup}
+    </table>
+  `;
+};
+
+const buildInspectionResultChart = ({ clearCount, issueCount, clearLabel = "Clear", issueLabel = "Issues" }) => {
+  const clear = Number(clearCount) || 0;
+  const issues = Number(issueCount) || 0;
+  const total = Math.max(clear + issues, 1);
+  const clearWidth = clampPercent((clear / total) * 100);
+  const issueWidth = clampPercent((issues / total) * 100);
+
+  return `
+    <h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Result Breakdown</h3>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+      <tr>
+        <td colspan="2" style="padding:0 0 10px;">
+          <div style="background:#edf2fa;border-radius:999px;height:16px;line-height:16px;overflow:hidden;">
+            <div style="display:inline-block;background:#067647;width:${clearWidth}%;height:16px;line-height:16px;">&nbsp;</div><div style="display:inline-block;background:#b42318;width:${issueWidth}%;height:16px;line-height:16px;">&nbsp;</div>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="color:#067647;font-size:13px;font-weight:700;">${escapeHtml(clearLabel)}: ${formatEmailNumber(clear)}</td>
+        <td style="color:#b42318;font-size:13px;font-weight:700;text-align:right;">${escapeHtml(issueLabel)}: ${formatEmailNumber(issues)}</td>
+      </tr>
+    </table>
+  `;
+};
+
+const buildKpiGrid = (items) => {
+  const cleanItems = (Array.isArray(items) ? items : []).filter((item) => item && item.label);
+  if (!cleanItems.length) return "";
+
+  const cells = cleanItems.map((item) => `
+    <td class="kpi-cell" width="25%" style="padding:0 6px 12px;vertical-align:top;">
+      <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width:100%;background-color:#f7faff;border:1px solid #d7e1ef;border-radius:14px;">
+        <tr>
+          <td style="padding:13px 12px;min-height:86px;">
+            <div style="font-size:10px;line-height:1.2;letter-spacing:.08em;text-transform:uppercase;color:#61708a;font-weight:bold;">${escapeHtml(item.label)}</div>
+            <div style="margin-top:6px;font-size:24px;line-height:1.05;color:${escapeHtml(item.color || "#172742")};font-weight:bold;">${escapeHtml(item.value)}</div>
+            ${item.note ? `<div style="margin-top:5px;font-size:11px;line-height:1.25;color:#61708a;">${escapeHtml(item.note)}</div>` : ""}
+          </td>
+        </tr>
+      </table>
+    </td>
+  `);
+
+  const rows = [];
+  for (let index = 0; index < cells.length; index += 4) {
+    rows.push(`<tr>${cells.slice(index, index + 4).join("")}</tr>`);
+  }
+
+  return `
+    <table class="kpi-grid" role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:2px -6px 10px;">
+      ${rows.join("")}
+    </table>
+  `;
+};
+
 const buildEmailShell = ({ eyebrow, title, summary, submittedBy, submittedAt, body }) => {
   const submissionTable = buildEmailTable("Submission", [
     { label: "Submitted by", value: submittedBy || "Unknown user" },
     { label: "Submitted at", value: submittedAt }
   ]);
   const summaryBlock = summary
-    ? `<p style="margin:0 0 18px;color:#233658;font-size:15px;">${escapeHtml(summary)}</p>`
+    ? `<span style="color:#172742;font-size:15px;font-weight:bold;line-height:1.45;">${escapeHtml(summary)}</span>`
     : "";
   const stored = renderStoredTemplate("layout", {
     eyebrow: eyebrow || "CSP Pro",
@@ -416,6 +512,22 @@ const buildGenericSubmissionEmail = ({ formLabel, submittedBy, submittedAt, dime
 
 const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, notes, payload }) => {
   const values = {
+    kpi_grid: buildKpiGrid([
+      { label: "Tons", value: formatEmailNumber(metrics.tons), note: dimensions.shift || "Shift" },
+      { label: "Linear Feet", value: formatEmailNumber(metrics.linear_feet), note: "Reported output" },
+      { label: "Coils", value: formatEmailNumber(metrics.total_coils_ran), note: "Total ran" },
+      {
+        label: "Downtime",
+        value: formatEmailNumber(metrics.total_downtime_minutes, "m"),
+        note: "Planned + unplanned",
+        color: Number(metrics.total_downtime_minutes) > 0 ? "#b42318" : "#067647"
+      }
+    ]),
+    production_chart: buildEmailBarChart("Production Snapshot", [
+      { label: "Tons", value: metrics.tons, display: formatEmailNumber(metrics.tons) },
+      { label: "Coils", value: metrics.total_coils_ran, display: formatEmailNumber(metrics.total_coils_ran) },
+      { label: "Downtime", value: metrics.total_downtime_minutes, display: formatEmailNumber(metrics.total_downtime_minutes, " min") }
+    ], { color: "#f1a91e" }),
     shift_details_table: buildEmailTable("Shift Details", [
       { label: "Report date", value: dimensions.report_date || dimensions.submission_date },
       { label: "Operator", value: dimensions.operator },
@@ -463,6 +575,28 @@ const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions,
   const issueCount = metrics[issueCountKey] ?? issueItems.length;
 
   const bodyValues = {
+    kpi_grid: buildKpiGrid([
+      { label: "Total Checks", value: formatEmailNumber(metrics.total_checks), note: "Submitted" },
+      { label: "Clear/Pass", value: formatEmailNumber(clearCount), note: "Good responses", color: "#067647" },
+      {
+        label: issueLabel,
+        value: formatEmailNumber(issueCount),
+        note: issueCount > 0 ? "Needs attention" : "No issues",
+        color: issueCount > 0 ? "#b42318" : "#067647"
+      },
+      {
+        label: "Orders",
+        value: formatEmailNumber(metrics.maintenance_orders_opened),
+        note: "Maintenance opened",
+        color: Number(metrics.maintenance_orders_opened) > 0 ? "#b42318" : "#172742"
+      }
+    ]),
+    result_chart: buildInspectionResultChart({
+      clearCount,
+      issueCount,
+      clearLabel: "Clear/Pass",
+      issueLabel
+    }),
     inspection_details_table: buildEmailTable("Inspection Details", [
       { label: "Date", value: dimensions.inspection_date || dimensions.check_date || dimensions.submission_date },
       { label: "Inspector", value: dimensions.inspector_name },
@@ -1161,7 +1295,7 @@ const sendTeamsMaintenanceNotification = async ({ req, order }) => {
     };
   }
 
-  const ackUrl = `${getExternalBaseUrl(req)}/api/pro/maintenance-orders/${encodeURIComponent(order.public_token)}/acknowledge`;
+  const formUrl = `${getExternalBaseUrl(req)}/api/pro/maintenance-orders/${encodeURIComponent(order.public_token)}/form`;
   const facts = [
     { name: "Order", value: order.order_code },
     { name: "Asset", value: order.asset_name || "Unknown asset" },
@@ -1193,8 +1327,8 @@ const sendTeamsMaintenanceNotification = async ({ req, order }) => {
       potentialAction: [
         {
           "@type": "OpenUri",
-          name: "Acknowledge issue",
-          targets: [{ os: "default", uri: ackUrl }]
+          name: "Open maintenance form",
+          targets: [{ os: "default", uri: formUrl }]
         }
       ]
     })
@@ -1207,8 +1341,101 @@ const sendTeamsMaintenanceNotification = async ({ req, order }) => {
 
   return {
     sent: true,
-    acknowledgeUrl: ackUrl
+    maintenanceFormUrl: formUrl
   };
+};
+
+const renderMaintenanceOrderForm = (order, { message = "", error = "" } = {}) => {
+  const isCompleted = order.status === "completed";
+  const title = isCompleted ? "Maintenance Order Completed" : "Maintenance Response";
+  const statusColor = isCompleted ? "#067647" : order.status === "acknowledged" ? "#b7791f" : "#b42318";
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>${escapeHtml(title)}</title>
+      <style>
+        :root { --navy:#172742; --steel:#233658; --gold:#f1a91e; --line:#d7e1ef; --mist:#eff4fb; --error:#b42318; --success:#067647; }
+        * { box-sizing: border-box; }
+        body { margin:0; font-family: Arial, sans-serif; background: var(--mist); color: var(--navy); }
+        .wrap { max-width: 820px; margin: 0 auto; padding: 24px 14px 42px; }
+        .header { background: var(--navy); color: #fff; padding: 22px; border-radius: 14px 14px 0 0; }
+        .header small { display:block; color: var(--gold); text-transform: uppercase; letter-spacing: .14em; font-weight: 700; font-size: 11px; }
+        .header h1 { margin: 8px 0 0; font-size: 28px; line-height: 1.15; }
+        .panel { background: #fff; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 14px 14px; padding: 22px; }
+        .status { display:inline-block; padding: 6px 10px; border-radius: 999px; background: #f7faff; color: ${statusColor}; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; font-size: 11px; }
+        .grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+        .card { border:1px solid var(--line); border-radius: 12px; padding: 13px; background:#f7faff; }
+        .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color:#61708a; font-weight:700; margin-bottom:5px; }
+        .value { font-size: 15px; font-weight: 800; color: var(--steel); line-height: 1.35; }
+        label { display:block; margin: 14px 0 6px; font-weight: 800; color: var(--steel); }
+        input, textarea, select { width:100%; border:1px solid #cfd8e8; border-radius: 8px; padding: 11px 12px; font: inherit; color: var(--navy); background:#fff; }
+        textarea { min-height: 108px; resize: vertical; }
+        .actions { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+        button { border:0; border-radius: 8px; padding: 12px 16px; font-weight: 800; cursor:pointer; }
+        .complete { background: var(--success); color:#fff; }
+        .ack { background: var(--gold); color: var(--navy); }
+        .msg { margin: 0 0 16px; padding: 12px; border-radius: 10px; font-weight: 700; }
+        .msg.success { background:#ecfdf3; color:#067647; border:1px solid #abefc6; }
+        .msg.error { background:#fef3f2; color:#b42318; border:1px solid #fecdca; }
+        @media (max-width: 640px) {
+          .wrap { padding: 0 0 28px; }
+          .header, .panel { border-radius: 0; }
+          .grid { grid-template-columns: 1fr; }
+          .actions button { width: 100%; }
+        }
+      </style>
+    </head>
+    <body>
+      <main class="wrap">
+        <section class="header">
+          <small>CSP Pro Maintenance</small>
+          <h1>${escapeHtml(order.order_code || "Maintenance Order")}</h1>
+        </section>
+        <section class="panel">
+          ${message ? `<p class="msg success">${escapeHtml(message)}</p>` : ""}
+          ${error ? `<p class="msg error">${escapeHtml(error)}</p>` : ""}
+          <span class="status">${escapeHtml(order.status || "open")}</span>
+          <div class="grid">
+            <div class="card"><div class="label">Asset</div><div class="value">${formatEmailValue(order.asset_name, "Unknown asset")}</div></div>
+            <div class="card"><div class="label">Issue</div><div class="value">${formatEmailValue(order.source_item_label || order.issue_category, "Inspection failure")}</div></div>
+            <div class="card"><div class="label">Reported By</div><div class="value">${formatEmailValue(order.reported_by_name || order.reported_by_email, "Unknown")}</div></div>
+            <div class="card"><div class="label">Reported At</div><div class="value">${formatEmailValue(order.reported_at, "-")}</div></div>
+          </div>
+          <div class="card">
+            <div class="label">Failure Notes</div>
+            <div class="value">${formatEmailValue(order.issue_notes, "No notes provided.")}</div>
+          </div>
+
+          <form method="post" action="/api/pro/maintenance-orders/${encodeURIComponent(order.public_token)}/form">
+            <label for="completedBy">Maintenance Tech</label>
+            <input id="completedBy" name="completedBy" type="text" value="${escapeHtml(order.completed_by || order.acknowledged_by || "")}" required />
+
+            <label for="correctiveAction">Corrective Action</label>
+            <textarea id="correctiveAction" name="correctiveAction" placeholder="What was done to correct or inspect the issue?">${escapeHtml(order.corrective_action || "")}</textarea>
+
+            <label for="completionNotes">Maintenance Notes</label>
+            <textarea id="completionNotes" name="completionNotes" placeholder="Add details, follow-up needs, or reason for acknowledge-only.">${escapeHtml(order.completion_notes || "")}</textarea>
+
+            <label for="partsUsed">Parts Used</label>
+            <input id="partsUsed" name="partsUsed" type="text" value="${escapeHtml(order.parts_used || "")}" placeholder="None, fuse, sensor, hose..." />
+
+            <label for="downtimeMinutes">Maintenance Downtime Minutes</label>
+            <input id="downtimeMinutes" name="downtimeMinutes" type="number" min="0" step="1" value="${escapeHtml(order.downtime_minutes || 0)}" />
+
+            <div class="actions">
+              <button class="complete" type="submit" name="action" value="complete">Complete Order</button>
+              <button class="ack" type="submit" name="action" value="acknowledge">Acknowledge Only</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </body>
+    </html>
+  `;
 };
 
 app.post("/api/create-user", async (req, res) => {
@@ -1535,6 +1762,91 @@ app.get("/api/pro/maintenance-orders/:publicToken/acknowledge", async (req, res)
   } catch (err) {
     console.error("Maintenance order acknowledge route error:", err);
     return res.status(500).send("Unable to acknowledge maintenance order.");
+  }
+});
+
+app.get("/api/pro/maintenance-orders/:publicToken/form", async (req, res) => {
+  const publicToken = coerceText(req.params.publicToken, 160);
+
+  if (!publicToken) {
+    return res.status(400).send("Missing maintenance order token.");
+  }
+
+  try {
+    const { data: order, error } = await chartSupabase
+      .from("pro_maintenance_orders")
+      .select("*")
+      .eq("public_token", publicToken)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!order) return res.status(404).send("Maintenance order not found.");
+
+    return res.status(200).type("html").send(renderMaintenanceOrderForm(order));
+  } catch (err) {
+    console.error("Maintenance order form route error:", err);
+    return res.status(500).send("Unable to load maintenance order form.");
+  }
+});
+
+app.post("/api/pro/maintenance-orders/:publicToken/form", async (req, res) => {
+  const publicToken = coerceText(req.params.publicToken, 160);
+  const action = coerceText(req.body?.action, 40);
+  const completedBy = coerceText(req.body?.completedBy || req.body?.completed_by || "Maintenance Team", 160);
+  const correctiveAction = coerceText(req.body?.correctiveAction || req.body?.corrective_action, 5000);
+  const completionNotes = coerceText(req.body?.completionNotes || req.body?.completion_notes, 5000);
+  const partsUsed = coerceText(req.body?.partsUsed || req.body?.parts_used, 1000);
+  const downtimeMinutes = coerceInteger(req.body?.downtimeMinutes || req.body?.downtime_minutes) || 0;
+  const now = new Date().toISOString();
+
+  if (!publicToken) {
+    return res.status(400).send("Missing maintenance order token.");
+  }
+
+  try {
+    const updateRow = action === "complete"
+      ? {
+          status: "completed",
+          acknowledged_at: now,
+          acknowledged_by: completedBy,
+          acknowledged_via: "maintenance_form",
+          completed_at: now,
+          completed_by: completedBy,
+          completed_via: "maintenance_form",
+          corrective_action: correctiveAction || null,
+          completion_notes: completionNotes || null,
+          parts_used: partsUsed || null,
+          downtime_minutes: downtimeMinutes
+        }
+      : {
+          status: "acknowledged",
+          acknowledged_at: now,
+          acknowledged_by: completedBy,
+          acknowledged_via: "maintenance_form",
+          corrective_action: correctiveAction || null,
+          completion_notes: completionNotes || null,
+          parts_used: partsUsed || null,
+          downtime_minutes: downtimeMinutes
+        };
+
+    const { data: order, error } = await chartSupabase
+      .from("pro_maintenance_orders")
+      .update(updateRow)
+      .eq("public_token", publicToken)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!order) return res.status(404).send("Maintenance order not found.");
+
+    return res.status(200).type("html").send(renderMaintenanceOrderForm(order, {
+      message: action === "complete"
+        ? "Maintenance order completed."
+        : "Maintenance order acknowledged."
+    }));
+  } catch (err) {
+    console.error("Maintenance order form submit error:", err);
+    return res.status(500).send("Unable to save maintenance response.");
   }
 });
 
