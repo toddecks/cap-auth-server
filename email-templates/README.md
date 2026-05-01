@@ -15,8 +15,18 @@ Files:
 - `crane_inspection.html` controls the Crane Inspection body.
 - `operational_inspection.html` controls the Operational Inspection body.
 
-Preview locally:
+Do not open `shift_report.html`, `forklift_inspection.html`, `crane_inspection.html`, or `operational_inspection.html` directly in a browser. Those files are partial templates, so a browser will only show placeholders like `{{{shift_details_table}}}`.
+
+Preview the rendered templates locally:
+
+```bash
+npm run preview:emails
+```
+
+Then open:
 
 ```text
 http://localhost:3000/api/pro/forms/email-preview
 ```
+
+Because the server reloads templates on each request in development, you can edit a template file and refresh the preview page to see the change.

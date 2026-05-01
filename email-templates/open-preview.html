@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSP Pro Email Template Preview</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      color: #172742;
+      background: #eff4fb;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 34px 18px;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid #d7e1ef;
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 14px 32px rgba(15, 31, 55, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+
+    p {
+      margin: 0 0 16px;
+      color: #61708a;
+      line-height: 1.5;
+    }
+
+    code {
+      background: #f5f8fd;
+      border: 1px solid #d7e1ef;
+      border-radius: 6px;
+      padding: 2px 6px;
+      color: #233658;
+    }
+
+    a {
+      color: #2f61d3;
+      font-weight: 700;
+    }
+
+    li {
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <h1>CSP Pro Email Preview</h1>
+      <p>Start the backend preview server first:</p>
+      <p><code>npm run preview:emails</code></p>
+      <p>Then open the rendered templates below. Edit files in this folder and refresh the rendered preview page.</p>
+      <ul>
+        <li><a href="http://localhost:3000/api/pro/forms/email-preview">All previews</a></li>
+        <li><a href="http://localhost:3000/api/pro/forms/email-preview/shift_report">Shift Report</a></li>
+        <li><a href="http://localhost:3000/api/pro/forms/email-preview/forklift_inspection">Forklift Inspection</a></li>
+        <li><a href="http://localhost:3000/api/pro/forms/email-preview/crane_inspection">Crane Inspection</a></li>
+        <li><a href="http://localhost:3000/api/pro/forms/email-preview/operational_inspection">Operational Inspection</a></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
