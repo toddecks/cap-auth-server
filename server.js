@@ -976,6 +976,119 @@ const sendSubmissionNotification = async ({
   };
 };
 
+const EMAIL_PREVIEW_SAMPLES = {
+  shift_report: {
+    formKey: "shift_report",
+    formLabel: "Shift Report",
+    submittedBy: "operator@coilsteelprocessing.com",
+    dimensions: {
+      submission_date: "2026-05-01",
+      report_date: "2026-05-01",
+      operator: "Operator 1",
+      shift: "1st",
+      had_downtime: "Yes",
+      maintenance_tech: "Maintenance Tech 1"
+    },
+    metrics: {
+      hours_worked: 8,
+      tons: 124.35,
+      linear_feet: 18500,
+      stroke_count: 420,
+      total_coils_ran: 18,
+      planned_downtime_minutes: 15,
+      unplanned_downtime_minutes: 22,
+      total_downtime_minutes: 37
+    },
+    notes: "Line ran well after the coil change. Watch the entry sensor on the next shift.",
+    payload: {
+      plannedDowntimeDetails: "Scheduled coil change.",
+      unplannedDowntimeDetails: "Entry sensor adjustment.",
+      maintenanceTech: "Maintenance Tech 1",
+      skippedOrders: [
+        { skippedOrderNumber: "WO-10482", skippedOrderReason: "Material not staged." }
+      ]
+    }
+  },
+  forklift_inspection: {
+    formKey: "forklift_inspection",
+    formLabel: "Forklift Inspection",
+    submittedBy: "inspector@coilsteelprocessing.com",
+    dimensions: {
+      submission_date: "2026-05-01",
+      inspection_date: "2026-05-01",
+      inspector_name: "Alex Inspector",
+      location: "Plant 1",
+      forklift_number: "FL-07",
+      asset_name: "Plant 1 Forklift FL-07"
+    },
+    metrics: {
+      total_checks: 12,
+      passed_checks: 11,
+      failed_checks: 1,
+      maintenance_orders_opened: 1
+    },
+    notes: "Do not use until maintenance checks the brake pedal.",
+    payload: {
+      checks: [
+        { key: "horn", label: "Horn", status: "Pass", notes: "" },
+        { key: "brakes", label: "Brakes", status: "Fail", notes: "Brake pedal feels soft." }
+      ]
+    }
+  },
+  crane_inspection: {
+    formKey: "crane_inspection",
+    formLabel: "Crane Inspection",
+    submittedBy: "inspector@coilsteelprocessing.com",
+    dimensions: {
+      submission_date: "2026-05-01",
+      inspection_date: "2026-05-01",
+      inspector_name: "Alex Inspector",
+      crane_name: "Crane 3",
+      asset_name: "Crane 3"
+    },
+    metrics: {
+      total_checks: 10,
+      passed_checks: 9,
+      failed_checks: 1,
+      maintenance_orders_opened: 1
+    },
+    notes: "Operator notified supervisor after inspection.",
+    payload: {
+      answers: [
+        { key: "controls", label: "Controls", status: "Pass", notes: "" },
+        { key: "hook_condition", label: "Hook condition", status: "Fail", notes: "Safety latch is sticking." }
+      ]
+    }
+  },
+  operational_inspection: {
+    formKey: "operational_inspection",
+    formLabel: "Operational Inspection",
+    submittedBy: "operator@coilsteelprocessing.com",
+    dimensions: {
+      submission_date: "2026-05-01",
+      check_date: "2026-05-01",
+      inspector_name: "Alex Operator",
+      area: "RBI",
+      asset_name: "RBI",
+      current_psi: 108
+    },
+    metrics: {
+      total_checks: 8,
+      clear_checks: 7,
+      issue_checks: 1,
+      current_psi: 108,
+      maintenance_orders_opened: 1
+    },
+    notes: "Pressure is still within operating range, but lower than usual.",
+    payload: {
+      checks: [
+        { key: "air_pressure", label: "Air pressure", status: "Yes", isIssue: false, notes: "" },
+        { key: "leaks", label: "Visible leaks", status: "Yes", isIssue: true, notes: "Small leak near regulator." }
+      ]
+    }
+  }
+};
+
 const sendTeamsMaintenanceNotification = async ({ req, order }) => {
   if (!PRO_MAINTENANCE_TEAMS_WEBHOOK_URL) {
     return {
@@ -1601,6 +1714,61 @@ app.post("/api/pro/forms/submit", async (req, res) => {
     console.error("Pro forms submit endpoint error:", err);
     return res.status(500).json({ error: err.message || "Failed to submit form." });
   }
+});
+
+app.get("/api/pro/forms/email-preview/:formKey", (req, res) => {
+  const formKey = coerceText(req.params.formKey, 120);
+  const sample = EMAIL_PREVIEW_SAMPLES[formKey];
+
+  if (!sample) {
+    return res.status(404).send(`
+      <div style="font-family:Arial,sans-serif;padding:24px;color:#172742;">
+        <h2>Email preview not found</h2>
+        <p>Use one of these form keys:</p>
+        <ul>
+          ${Object.keys(EMAIL_PREVIEW_SAMPLES).map((key) => `<li><code>${escapeHtml(key)}</code></li>`).join("")}
+        </ul>
+      </div>
+    `);
+  }
+
+  const html = buildSubmissionEmail({
+    ...sample,
+    submittedAt: new Date().toISOString()
+  });
+
+  return res
+    .status(200)
+    .type("html")
+    .send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(sample.formLabel)} Email Preview</title></head><body style="margin:0;">${html}</body></html>`);
+});
+
+app.get("/api/pro/forms/email-preview", (req, res) => {
+  const links = Object.entries(EMAIL_PREVIEW_SAMPLES)
+    .map(([key, sample]) => `
+      <li style="margin:0 0 10px;">
+        <a href="/api/pro/forms/email-preview/${escapeHtml(key)}" style="color:#2f61d3;font-weight:700;">${escapeHtml(sample.formLabel)}</a>
+        <code style="margin-left:8px;color:#61708a;">${escapeHtml(key)}</code>
+      </li>
+    `)
+    .join("");
+
+  return res.status(200).type("html").send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>CSP Pro Email Previews</title>
+      </head>
+      <body style="margin:0;background:#eff4fb;font-family:Arial,sans-serif;color:#172742;">
+        <main style="max-width:720px;margin:0 auto;padding:32px 18px;">
+          <h1 style="margin:0 0 10px;">CSP Pro Email Previews</h1>
+          <p style="margin:0 0 22px;color:#61708a;">Open a template below to view the sample email HTML used by the backend.</p>
+          <ul style="margin:0;padding-left:20px;">${links}</ul>
+        </main>
+      </body>
+    </html>
+  `);
 });
 
 app.post("/api/ai-chart", async (req, res) => {
