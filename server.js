@@ -124,6 +124,27 @@ const resolveRoleIds = async (requestedRoles) => {
 
   return Array.from(ids);
 };
+
+const getBearerToken = (req) => {
+  const header = String(req.headers.authorization || "");
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+};
+
+const fetchUserRoleRows = async (userId) => {
+  const { data, error } = await supabase
+    .from("user_roles")
+    .select("role_id, roles(name)")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+};
+
+const roleNamesFromRows = (rows) =>
+  (Array.isArray(rows) ? rows : [])
+    .map((row) => row?.roles?.name)
+    .filter(Boolean);
 const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -1503,6 +1524,35 @@ app.post("/api/create-user", async (req, res) => {
 
 // --- USER MANAGEMENT ENDPOINTS ---
 
+app.get("/api/auth/roles", async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Missing Supabase access token." });
+    }
+
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    const user = userData?.user;
+    if (userError || !user?.id) {
+      return res.status(401).json({ error: userError?.message || "Invalid or expired Supabase session." });
+    }
+
+    const roleRows = await fetchUserRoleRows(user.id);
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      user: {
+        id: user.id,
+        email: user.email || ""
+      },
+      roles: roleNamesFromRows(roleRows),
+      user_roles: roleRows
+    });
+  } catch (err) {
+    console.error("Auth role endpoint error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to load roles." });
+  }
+});
+
 // Get all users with roles
 app.get("/api/users", async (req, res) => {
   try {
@@ -1511,8 +1561,6 @@ app.get("/api/users", async (req, res) => {
       .select(`
         id,
         email,
-        last_login,
-        csv_download_count,
         user_roles (
           role_id,
           roles (name)
@@ -1524,7 +1572,11 @@ app.get("/api/users", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    return res.json(data || []);
+    return res.json((Array.isArray(data) ? data : []).map((user) => ({
+      ...user,
+      last_login: user.last_login || null,
+      csv_download_count: user.csv_download_count || 0
+    })));
   } catch (err) {
     console.error("User endpoint error:", err);
     return res.status(500).json({ error: "Failed to fetch users" });
