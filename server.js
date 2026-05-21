@@ -1,10 +1,16 @@
-require("dotenv").config();
+const path = require("path");
+const dotenv = require("dotenv");
+
+dotenv.config();
+if (!process.env.OPENAI_API_KEY) {
+  dotenv.config({ path: path.resolve(__dirname, "../../cap-ai-server/ai-server/.env") });
+}
+
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
-const path = require("path");
 const OpenAI = require("openai");
 function getOpenAIClient() {
   const key = process.env.OPENAI_API_KEY;
@@ -12,18 +18,26 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey: key });
 }
 
+function getRequiredEnv(name) {
+  const value = String(process.env[name] || "").trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 const app = express();
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: "90mb" }));
+app.use(express.urlencoded({ extended: false, limit: "90mb" }));
 
 // Tableau Connected App Credentials
-const CLIENT_ID = "966451f7-3322-4cd6-8e74-7d30e0acda54";
-const SECRET_ID = "990a94b9-d8b8-499b-b337-fd56b73aeffa";
-const SECRET_VALUE = "OkmYUPAwi/IHZiICQ4thL0IstO58wsUVoQL0jA/kIAw=";
+const TABLEAU_CLIENT_ID = getRequiredEnv("TABLEAU_CLIENT_ID");
+const TABLEAU_SECRET_ID = getRequiredEnv("TABLEAU_SECRET_ID");
+const TABLEAU_SECRET_VALUE = getRequiredEnv("TABLEAU_SECRET_VALUE");
 
 app.get("/", (req, res) => {
   res.send("Token server running");
@@ -35,7 +49,7 @@ app.get("/getTableauToken", (req, res) => {
   const tableauUser = req.query.user || "todd@coilsteelprocessing.com";
 
   const payload = {
-    iss: CLIENT_ID,
+    iss: TABLEAU_CLIENT_ID,
     exp: now + 300,
     aud: "tableau",
     jti: crypto.randomUUID(),
@@ -44,12 +58,12 @@ app.get("/getTableauToken", (req, res) => {
   };
 
   const header = {
-    kid: SECRET_ID,
+    kid: TABLEAU_SECRET_ID,
     alg: "HS256",
-    iss: CLIENT_ID
+    iss: TABLEAU_CLIENT_ID
   };
 
-  const token = jwt.sign(payload, SECRET_VALUE, { algorithm: "HS256", header });
+  const token = jwt.sign(payload, TABLEAU_SECRET_VALUE, { algorithm: "HS256", header });
 
   res.json({ token });
 });
@@ -58,10 +72,10 @@ app.get("/getTableauToken", (req, res) => {
 // Allows admin users to create new users and assign roles via Supabase
 const { createClient } = require("@supabase/supabase-js");
 
-const AUTH_SUPABASE_URL = "https://pxydsxadvmuffniluokk.supabase.co";
-const AUTH_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4eWRzeGFkdm11ZmZuaWx1b2trIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTM0Nzg3MiwiZXhwIjoyMDgwOTIzODcyfQ.jTtNfZUlS6Ue0W7SWpmQLDLRerNGP7tlPxzZlJfuxPc";
-const CHART_SUPABASE_URL = "https://wtjrucerrbzwxnwhqgma.supabase.co";
-const CHART_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0anJ1Y2VycmJ6d3hud2hxZ21hIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzcwMTY4MCwiZXhwIjoyMDgzMjc3NjgwfQ.GtYd5FL1KVhTyhEUshfiCCsytwLbEf1YSf4T1XObFUo";
+const AUTH_SUPABASE_URL = getRequiredEnv("AUTH_SUPABASE_URL");
+const AUTH_SERVICE_ROLE_KEY = getRequiredEnv("AUTH_SUPABASE_SERVICE_ROLE_KEY");
+const CHART_SUPABASE_URL = getRequiredEnv("CHART_SUPABASE_URL");
+const CHART_SERVICE_ROLE_KEY = getRequiredEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
 
 const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
 const chartSupabase = createClient(CHART_SUPABASE_URL, CHART_SERVICE_ROLE_KEY);
@@ -70,17 +84,19 @@ const ROLE_DEFINITIONS = [
   { id: 2, name: "shipping" },
   { id: 3, name: "receiving" },
   { id: 4, name: "production" },
-  { id: 5, name: "sales" },
+  { id: 5, name: "live" },
   { id: 6, name: "finance" },
+  { id: 7, name: "inventory" },
   { id: 8, name: "maintenance" },
   { id: 9, name: "bonus_report" },
   { id: 10, name: "ai_assistant" },
   { id: 11, name: "shipping_overview" },
   { id: 12, name: "shipping_performance" },
   { id: 13, name: "customer_summary" },
-  { id: 14, name: "inventory" },
   { id: 15, name: "iso" },
-  { id: 16, name: "alarm_logs" }
+  { id: 16, name: "alarm_logs" },
+  { id: 17, name: "quote_calculator" },
+  { id: 18, name: "work_order_pricing" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
@@ -145,6 +161,7 @@ const roleNamesFromRows = (rows) =>
   (Array.isArray(rows) ? rows : [])
     .map((row) => row?.roles?.name)
     .filter(Boolean);
+
 const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -1938,6 +1955,204 @@ app.post("/api/pro/maintenance-orders/:publicToken/acknowledge", async (req, res
   }
 });
 
+const TODD_REQUEST_SELECT = "id,project,requested_by,requested_by_email,date_requested,date_needed,priority,priority_rank,status,notes,created_at,updated_at,completed_at,metadata";
+const TODD_PRIORITIES = new Set(["hot", "urgent", "high", "normal", "low"]);
+const TODD_STATUSES = new Set(["not_started", "in_progress", "waiting", "on_hold", "long_term", "done"]);
+const TODD_WORK_REQUEST_ADMIN_EMAILS = new Set(
+  String(process.env.TODD_WORK_REQUEST_ADMIN_EMAILS || "todd@coilsteelprocessing.com,josh@coilsteelprocessing.com")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function normalizeToddPriority(value) {
+  const priority = coerceText(value, 20).toLowerCase().replace(/\s+/g, "_");
+  return TODD_PRIORITIES.has(priority) ? priority : "normal";
+}
+
+function normalizeToddStatus(value) {
+  const status = coerceText(value, 30).toLowerCase().replace(/[\s-]+/g, "_");
+  return TODD_STATUSES.has(status) ? status : "not_started";
+}
+
+async function getToddRequestViewerEmail(req) {
+  const authHeader = coerceText(req.headers.authorization, 1000);
+  const bearerToken = authHeader.match(/^bearer\s+(.+)$/i)?.[1];
+  if (bearerToken) {
+    const { data, error } = await supabase.auth.getUser(bearerToken);
+    if (!error && data?.user?.email) return String(data.user.email).trim().toLowerCase();
+  }
+  return "";
+}
+
+async function requireToddRequestAdmin(req, res) {
+  const email = await getToddRequestViewerEmail(req);
+  if (email && TODD_WORK_REQUEST_ADMIN_EMAILS.has(email)) return email;
+  res.status(403).json({ error: "This request list is only available to Todd and Josh." });
+  return "";
+}
+
+app.get("/api/todd-requests", async (req, res) => {
+  const viewerEmail = await requireToddRequestAdmin(req, res);
+  if (!viewerEmail) return;
+
+  try {
+    const includeDone = String(req.query.includeDone || req.query.include_done || "true").toLowerCase() !== "false";
+    let query = chartSupabase
+      .from("todd_work_requests")
+      .select(TODD_REQUEST_SELECT)
+      .order("priority_rank", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (!includeDone) query = query.neq("status", "done");
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return res.json({ requests: data || [] });
+  } catch (err) {
+    console.error("Todd requests list error:", err);
+    return res.status(500).json({ error: err.message || "Unable to load work requests." });
+  }
+});
+
+app.post("/api/todd-requests", async (req, res) => {
+  const body = req.body || {};
+  const project = coerceText(body.project, 300);
+  const requestedBy = coerceText(body.requestedBy || body.requested_by, 160);
+  const requestedByEmail = coerceText(body.requestedByEmail || body.requested_by_email, 320).toLowerCase();
+  const dateRequested = coerceDateText(body.dateRequested || body.date_requested) || new Date().toISOString().slice(0, 10);
+  const dateNeeded = coerceDateText(body.dateNeeded || body.date_needed);
+  const priority = normalizeToddPriority(body.priority);
+  const notes = coerceText(body.notes, 5000);
+
+  if (!project) return res.status(400).json({ error: "Project is required." });
+  if (!requestedBy) return res.status(400).json({ error: "Person that requested is required." });
+
+  try {
+    const { data: maxRows, error: maxError } = await chartSupabase
+      .from("todd_work_requests")
+      .select("priority_rank")
+      .order("priority_rank", { ascending: false })
+      .limit(1);
+
+    if (maxError) throw maxError;
+    const nextRank = (Number(maxRows?.[0]?.priority_rank || 0) || 0) + 100;
+    const now = new Date().toISOString();
+    const insertRow = {
+      project,
+      requested_by: requestedBy,
+      requested_by_email: requestedByEmail || null,
+      date_requested: dateRequested,
+      date_needed: dateNeeded,
+      priority,
+      priority_rank: nextRank,
+      status: "not_started",
+      notes: notes || null,
+      created_at: now,
+      updated_at: now,
+      metadata: sanitizePlainObject(body.metadata)
+    };
+
+    const { data, error } = await chartSupabase
+      .from("todd_work_requests")
+      .insert(insertRow)
+      .select(TODD_REQUEST_SELECT)
+      .single();
+
+    if (error) throw error;
+    return res.status(201).json({ request: data });
+  } catch (err) {
+    console.error("Todd request create error:", err);
+    return res.status(500).json({ error: err.message || "Unable to save work request." });
+  }
+});
+
+app.put("/api/todd-requests/:id", async (req, res) => {
+  const viewerEmail = await requireToddRequestAdmin(req, res);
+  if (!viewerEmail) return;
+
+  const id = coerceInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: "Valid request id is required." });
+
+  const body = req.body || {};
+  const updateRow = {
+    updated_at: new Date().toISOString()
+  };
+
+  if (Object.prototype.hasOwnProperty.call(body, "project")) updateRow.project = coerceText(body.project, 300);
+  if (Object.prototype.hasOwnProperty.call(body, "requestedBy") || Object.prototype.hasOwnProperty.call(body, "requested_by")) {
+    updateRow.requested_by = coerceText(body.requestedBy || body.requested_by, 160);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "requestedByEmail") || Object.prototype.hasOwnProperty.call(body, "requested_by_email")) {
+    updateRow.requested_by_email = coerceText(body.requestedByEmail || body.requested_by_email, 320).toLowerCase() || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "dateRequested") || Object.prototype.hasOwnProperty.call(body, "date_requested")) {
+    updateRow.date_requested = coerceDateText(body.dateRequested || body.date_requested);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "dateNeeded") || Object.prototype.hasOwnProperty.call(body, "date_needed")) {
+    updateRow.date_needed = coerceDateText(body.dateNeeded || body.date_needed);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "priority")) updateRow.priority = normalizeToddPriority(body.priority);
+  if (Object.prototype.hasOwnProperty.call(body, "notes")) updateRow.notes = coerceText(body.notes, 5000) || null;
+  if (Object.prototype.hasOwnProperty.call(body, "status")) {
+    updateRow.status = normalizeToddStatus(body.status);
+    updateRow.completed_at = updateRow.status === "done" ? updateRow.updated_at : null;
+  }
+
+  try {
+    const { data, error } = await chartSupabase
+      .from("todd_work_requests")
+      .update(updateRow)
+      .eq("id", id)
+      .select(TODD_REQUEST_SELECT)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Work request not found." });
+    return res.json({ request: data });
+  } catch (err) {
+    console.error("Todd request update error:", err);
+    return res.status(500).json({ error: err.message || "Unable to update work request." });
+  }
+});
+
+app.post("/api/todd-requests/reorder", async (req, res) => {
+  const viewerEmail = await requireToddRequestAdmin(req, res);
+  if (!viewerEmail) return;
+
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(coerceInteger).filter(Boolean)
+    : [];
+
+  if (!ids.length) return res.status(400).json({ error: "ids array is required." });
+
+  try {
+    const now = new Date().toISOString();
+    const updates = ids.map((id, index) =>
+      chartSupabase
+        .from("todd_work_requests")
+        .update({ priority_rank: (index + 1) * 100, updated_at: now })
+        .eq("id", id)
+    );
+
+    const results = await Promise.all(updates);
+    const failed = results.find((result) => result.error);
+    if (failed?.error) throw failed.error;
+
+    const { data, error } = await chartSupabase
+      .from("todd_work_requests")
+      .select(TODD_REQUEST_SELECT)
+      .order("priority_rank", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    return res.json({ requests: data || [] });
+  } catch (err) {
+    console.error("Todd request reorder error:", err);
+    return res.status(500).json({ error: err.message || "Unable to reorder work requests." });
+  }
+});
+
 app.post("/api/pro/forms/submit", async (req, res) => {
   const body = req.body || {};
   const formKey = coerceText(body.formKey || body.form_key, 120);
@@ -2208,6 +2423,514 @@ app.post("/api/ai-chart", async (req, res) => {
   } catch (err) {
     console.error("AI endpoint error:", err);
     res.status(500).json({ error: "AI request failed" });
+  }
+});
+
+const QUOTE_EXTRACTION_MODEL = process.env.OPENAI_QUOTE_MODEL || "gpt-4o";
+const MIN_AUTO_QUOTE_WEIGHT = 1000;
+const MAX_AUTO_QUOTE_WEIGHT = 120000;
+
+function parseJsonObject(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return {};
+    try {
+      return JSON.parse(match[0]);
+    } catch (nestedErr) {
+      return {};
+    }
+  }
+}
+
+function positiveNumberFromValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.+-]/g, "");
+    if (!cleaned) return null;
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeWeightCandidates(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const parsed = positiveNumberFromValue(item.value ?? item.weight ?? item.pounds ?? item.lbs ?? item.originalCoilQty ?? item.qty ?? item.quantity);
+        if (!parsed) return null;
+        return {
+          value: parsed,
+          label: cleanTextValue(item.label || item.section || item.source || item.text),
+          evidence: cleanTextValue(item.evidence || item.sourceText || item.text || item.label)
+        };
+      }
+      const parsed = positiveNumberFromValue(item);
+      return parsed ? { value: parsed, label: "", evidence: "" } : null;
+    })
+    .filter(Boolean);
+}
+
+function cleanTextValue(value) {
+  return String(value ?? "").trim();
+}
+
+function digitsOnly(value) {
+  return cleanTextValue(value).replace(/\D/g, "");
+}
+
+function candidateHasExactWeightEvidence(candidate, sharedEvidence = "") {
+  if (!candidate?.value) return false;
+  const weightDigits = String(Math.round(Number(candidate.value)));
+  if (!weightDigits) return false;
+  const evidenceDigits = digitsOnly([candidate.label, candidate.evidence, sharedEvidence].filter(Boolean).join(" "));
+  return evidenceDigits.includes(weightDigits);
+}
+
+function resolveQuoteWeight(data, warnings, mode = "quote") {
+  const isWorkOrder = mode === "workOrder";
+  const weightEvidence = cleanTextValue(data.weightEvidence || data.weightSource || data.weightBasis);
+  const directCandidates = [
+    { value: positiveNumberFromValue(data.masterCoilWeight), label: "masterCoilWeight" },
+    { value: positiveNumberFromValue(data.weight), label: "weight" },
+    { value: positiveNumberFromValue(data.pounds), label: "pounds" }
+  ].filter((item) => item.value);
+  const visibleCandidates = normalizeWeightCandidates(data.weightCandidates);
+  const qtyCandidates = [
+    { value: positiveNumberFromValue(data.originalCoilQty), label: "originalCoilQty" },
+    { value: positiveNumberFromValue(data.qty), label: "qty" },
+    { value: positiveNumberFromValue(data.quantity), label: "quantity" }
+  ].filter((item) => item.value && item.value >= MIN_AUTO_QUOTE_WEIGHT);
+  if (directCandidates.length && !weightEvidence && !visibleCandidates.length && !qtyCandidates.length) {
+    warnings.push("Weight was not populated because no visible source text/evidence was provided by the extraction.");
+    return "";
+  }
+  const allCandidates = [...qtyCandidates, ...visibleCandidates, ...directCandidates];
+  const usable = allCandidates.find((item) => item.value >= MIN_AUTO_QUOTE_WEIGHT && item.value <= MAX_AUTO_QUOTE_WEIGHT);
+
+  if (usable) {
+    if (isWorkOrder && Math.round(usable.value) === 45000 && !candidateHasExactWeightEvidence(usable, weightEvidence)) {
+      pushUniqueWarning(warnings, "Weight was not populated because 45,000 looked like an assumed/default value and no exact visible weight evidence was provided.");
+      return "";
+    }
+    if (qtyCandidates.includes(usable)) {
+      warnings.push(`Weight was populated from ${usable.label}; verify the Qty column is the original coil weight.`);
+    }
+    return usable.value;
+  }
+
+  const rejected = allCandidates.find((item) => item.value > MAX_AUTO_QUOTE_WEIGHT);
+  if (rejected) {
+    warnings.push(`Weight ${Math.round(rejected.value).toLocaleString("en-US")} was not populated because it is outside the automatic quote range; verify the production coil LBS manually.`);
+    return "";
+  }
+
+  return "";
+}
+
+function normalizeIdentifierValue(value) {
+  return cleanTextValue(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function isWorkOrderLikeTagValue(value, referenceValues = []) {
+  const normalized = normalizeIdentifierValue(value);
+  if (!normalized) return false;
+  if (referenceValues.some((reference) => normalizeIdentifierValue(reference) === normalized)) return true;
+  return /^(?:PO|WO|SO|PP|PR)\d{4,}$/.test(normalized);
+}
+
+function pushUniqueWarning(warnings, warning) {
+  if (!warnings.includes(warning)) warnings.push(warning);
+}
+
+function isInternalCspCustomerName(value) {
+  const normalized = cleanTextValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return false;
+  return [
+    "csp",
+    "csp coil steel prs",
+    "csp coil steel processing",
+    "coil steel prs",
+    "coil steel processing",
+    "warehouse process"
+  ].includes(normalized);
+}
+
+function firstArrayValue(...values) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length) return value;
+  }
+  return [];
+}
+
+function firstScalarValue(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      const first = value.find((item) => item !== undefined && item !== null && cleanTextValue(item) !== "");
+      if (first !== undefined) return first;
+    } else if (value !== undefined && value !== null && cleanTextValue(value) !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function arrayItem(values, index) {
+  return Array.isArray(values) && values[index] !== undefined && values[index] !== null ? values[index] : "";
+}
+
+function normalizeExtractedCoil(coil = {}) {
+  const shortTons = positiveNumberFromValue(coil.shortTons ?? coil.shortTonsRfq ?? coil.shortTonsPerRfq);
+  const weight = positiveNumberFromValue(coil.weight ?? coil.pounds ?? coil.lbs) || (shortTons ? shortTons * 2000 : "");
+  return {
+    weight,
+    gauge: firstScalarValue(coil.gauge, coil.gaugeMin, coil.gaugeMax),
+    width: firstScalarValue(coil.width),
+    length: firstScalarValue(coil.length),
+    grade: firstScalarValue(coil.grade, coil.alloyGrade),
+    coating: firstScalarValue(coil.coating, coil.coatingWeight),
+    materialType: firstScalarValue(coil.materialType),
+    finishedGoodType: firstScalarValue(coil.finishedGoodType),
+    quality: firstScalarValue(coil.quality, coil.qualityType),
+    shortTons: shortTons || "",
+    maxLift: firstScalarValue(coil.maxLift),
+    liftUnitIndicator: firstScalarValue(coil.liftUnitIndicator)
+  };
+}
+
+function coilsFromParallelExtractionArrays(data = {}) {
+  const gauges = firstArrayValue(data.gauges, data.gauge, data.gaugeMin, data.gaugeMins);
+  const widths = firstArrayValue(data.widths, data.width);
+  const lengths = firstArrayValue(data.lengths, data.length);
+  const grades = firstArrayValue(data.grades, data.grade, data.alloyGrade, data.alloyGrades);
+  const coatings = firstArrayValue(data.coatings, data.coating, data.coatingWeight, data.coatingWeights);
+  const materialTypes = firstArrayValue(data.materialTypes, data.materialType);
+  const finishedGoodTypes = firstArrayValue(data.finishedGoodTypes, data.finishedGoodType);
+  const qualities = firstArrayValue(data.qualities, data.quality, data.qualityType, data.qualityTypes);
+  const weights = firstArrayValue(data.weights, data.weight, data.pounds, data.lbs);
+  const shortTons = firstArrayValue(data.shortTons, data.shortTonsRfq, data.shortTonsPerRfq);
+  const maxLifts = firstArrayValue(data.maxLifts, data.maxLift);
+  const liftUnits = firstArrayValue(data.liftUnitIndicators, data.liftUnitIndicator);
+  const rowCount = Math.max(
+    gauges.length,
+    widths.length,
+    lengths.length,
+    grades.length,
+    coatings.length,
+    materialTypes.length,
+    finishedGoodTypes.length,
+    qualities.length,
+    weights.length,
+    shortTons.length,
+    maxLifts.length,
+    liftUnits.length
+  );
+  if (rowCount < 2) return [];
+  return Array.from({ length: rowCount }, (_, index) => normalizeExtractedCoil({
+    weight: arrayItem(weights, index),
+    gauge: arrayItem(gauges, index),
+    width: arrayItem(widths, index),
+    length: arrayItem(lengths, index),
+    grade: arrayItem(grades, index),
+    coating: arrayItem(coatings, index),
+    materialType: arrayItem(materialTypes, index),
+    finishedGoodType: arrayItem(finishedGoodTypes, index),
+    quality: arrayItem(qualities, index),
+    shortTons: arrayItem(shortTons, index),
+    maxLift: arrayItem(maxLifts, index),
+    liftUnitIndicator: arrayItem(liftUnits, index)
+  })).filter((coil) => coil.gauge || coil.width || coil.length || coil.weight);
+}
+
+function normalizeQuoteExtraction(value, mode = "quote") {
+  const isWorkOrder = mode === "workOrder";
+  const data = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const packaging = data.packaging && typeof data.packaging === "object" && !Array.isArray(data.packaging)
+    ? data.packaging
+    : {};
+  const warnings = Array.isArray(data.warnings) ? data.warnings.map(String).filter(Boolean) : [];
+  const normalizedWeight = resolveQuoteWeight(data, warnings, mode);
+  let customer = cleanTextValue(data.customer);
+  let customerLogoText = cleanTextValue(data.customerLogoText);
+  const customerEvidence = cleanTextValue(data.customerEvidence || data.customerSource || data.customerBasis);
+  const weightEvidence = cleanTextValue(data.weightEvidence || data.weightSource || data.weightBasis);
+  const productionPoNumber = cleanTextValue(data.productionPoNumber || data.productionPo || data.jobPoNumber);
+  const packagingPoNumber = cleanTextValue(data.packagingPoNumber || data.packagingPo);
+  const poLikeValues = [
+    productionPoNumber,
+    packagingPoNumber,
+    cleanTextValue(data.poNumber),
+    cleanTextValue(data.poRef),
+    cleanTextValue(data.workOrder)
+  ].filter(Boolean);
+  let cspTag = cleanTextValue(data.cspTag);
+  let tag = cleanTextValue(data.tag);
+  const coilIds = Array.isArray(data.coilIds)
+    ? data.coilIds.map(cleanTextValue).filter(Boolean)
+    : [];
+  const coilCount = positiveNumberFromValue(data.coilCount) || (coilIds.length ? coilIds.length : "");
+  const directCoils = (Array.isArray(data.coils) ? data.coils : [])
+    .map((coil) => normalizeExtractedCoil(coil && typeof coil === "object" && !Array.isArray(coil) ? coil : {}))
+    .filter((coil) => coil.gauge || coil.width || coil.length || coil.weight);
+  const parallelCoils = coilsFromParallelExtractionArrays(data);
+  const extractedCoils = parallelCoils.length > directCoils.length ? parallelCoils : directCoils;
+
+  if (isWorkOrder) {
+    if (cspTag || tag) {
+      pushUniqueWarning(warnings, "CSP Tag # was left blank because it must be entered manually for work-order uploads.");
+    }
+    cspTag = "";
+    tag = "";
+  } else if (isWorkOrderLikeTagValue(cspTag, poLikeValues)) {
+    cspTag = "";
+    pushUniqueWarning(warnings, "CSP Tag # was not populated because the extracted value matched or appeared to be a PO/work-order number.");
+  }
+  if (isWorkOrderLikeTagValue(tag, poLikeValues)) {
+    tag = "";
+    pushUniqueWarning(warnings, "Tag was ignored because the extracted value matched or appeared to be a PO/work-order number.");
+  }
+
+  if (isInternalCspCustomerName(customer)) {
+    customer = "";
+    warnings.push("Customer was not populated because the visible name appears to be CSP/internal header text.");
+  }
+  if (isInternalCspCustomerName(customerLogoText)) {
+    customerLogoText = "";
+    warnings.push("Customer logo text was ignored because it appears to be CSP/internal header text.");
+  }
+  if (!customer && !customerLogoText) {
+    warnings.push("Customer name was not explicitly visible; verify manually.");
+  }
+  if ((customer || customerLogoText) && !customerEvidence) {
+    customer = "";
+    customerLogoText = "";
+    warnings.push("Customer name was not populated because no visible customer evidence was provided by the extraction.");
+  }
+
+  return {
+    customer,
+    customerLogoText,
+    customerEvidence,
+    customerAddress: data.customerAddress || "",
+    productionPoNumber,
+    packagingPoNumber,
+    poNumber: productionPoNumber || data.poNumber || data.poRef || data.workOrder || "",
+    poRef: productionPoNumber || data.poRef || data.poNumber || data.workOrder || "",
+    workOrder: data.workOrder || "",
+    quoteDate: data.quoteDate || data.reqDate || data.poDate || "",
+    reqDate: data.reqDate || data.quoteDate || "",
+    poDate: data.poDate || "",
+    process: data.process === "stretched" ? "stretched" : data.process === "leveled" ? "leveled" : "",
+    line: data.line === "rbi" ? "rbi" : data.line === "herr" ? "herr" : "",
+    cspTag: cspTag || tag || "",
+    tag: tag || cspTag || "",
+    materialType: data.materialType || "",
+    finishedGoodItemNum: data.finishedGoodItemNum || data.goodItemNum || "",
+    finishedGoodType: data.finishedGoodType || "",
+    coating: data.coating || data.coatingWeight || "",
+    coatingWeight: data.coatingWeight || data.coating || "",
+    grade: data.grade || data.alloyGrade || "",
+    alloyGrade: data.alloyGrade || data.grade || "",
+    quality: data.quality || data.qualityType || "",
+    qualityType: data.qualityType || data.quality || "",
+    gauge: firstScalarValue(data.gauge, data.gaugeMin, data.gaugeMax),
+    gaugeMin: firstScalarValue(data.gaugeMin),
+    gaugeMax: firstScalarValue(data.gaugeMax),
+    tolerance: data.tolerance ?? data.gaugeTolerance ?? "",
+    gaugeTolerance: data.gaugeTolerance ?? data.tolerance ?? "",
+    width: firstScalarValue(data.width),
+    length: firstScalarValue(data.length),
+    lengths: Array.isArray(data.lengths) ? data.lengths : [],
+    coils: extractedCoils,
+    weight: normalizedWeight,
+    pounds: normalizedWeight,
+    masterCoilWeight: normalizedWeight,
+    weightEvidence,
+    weightCandidates: normalizeWeightCandidates(data.weightCandidates),
+    coilCount,
+    coilIds,
+    perPieceWeight: data.perPieceWeight ?? "",
+    pieces: data.pieces ?? "",
+    maxLift: firstScalarValue(data.maxLift, extractedCoils.find((coil) => coil.maxLift)?.maxLift),
+    skidQty: data.skidQty ?? "",
+    boardQty: data.boardQty ?? "",
+    liftUnitIndicator: data.liftUnitIndicator || "",
+    flatnessSpec: data.flatnessSpec || "",
+    quoteLeadTime: data.quoteLeadTime || data.leadTime || "",
+    actualYield: data.actualYield || "",
+    packaging: {
+      blocks3x4: Boolean(packaging.blocks3x4),
+      paperWrap: Boolean(packaging.paperWrap),
+      paperTop: Boolean(packaging.paperTop),
+      banding4way: Boolean(packaging.banding4way),
+      stenciling: Boolean(packaging.stenciling),
+      fullBoard3x4: Boolean(packaging.fullBoard3x4),
+      skids: Boolean(packaging.skids)
+    },
+    needsSkids: Boolean(data.needsSkids || packaging.skids || /skid/i.test(cleanTextValue(data.liftUnitIndicator)) || extractedCoils.some((coil) => /skid/i.test(cleanTextValue(coil.liftUnitIndicator)))),
+    needsFullBoards: Boolean(data.needsFullBoards || packaging.fullBoard3x4),
+    notes: data.notes || "",
+    billingNotes: data.billingNotes || "",
+    warnings: [...new Set(warnings)],
+    confidence: Number(data.confidence || 0) || null
+  };
+}
+
+function quoteExtractionPrompt(mode = "quote") {
+  const isWorkOrder = mode === "workOrder";
+  return [
+    isWorkOrder
+      ? "Extract PO and work-order data from the uploaded CSP customer document screenshot or image."
+      : "Extract quote request data from the uploaded customer email screenshot or quote request image.",
+    isWorkOrder
+      ? "This is for PO/work-order intake and work-order pricing sheet review, not the quote calculator."
+      : "This is for the quote pricing calculator.",
+    "Return only a JSON object. Do not include markdown.",
+    "",
+    "Use these exact keys when present:",
+    "customer, customerLogoText, customerEvidence, customerAddress, productionPoNumber, packagingPoNumber, poNumber, poRef, workOrder, quoteDate, reqDate, poDate, process, line, cspTag, tag, materialType, finishedGoodItemNum, finishedGoodType, coating, coatingWeight, grade, alloyGrade, quality, qualityType, gauge, gaugeMin, gaugeMax, tolerance, gaugeTolerance, width, length, lengths, coils, weight, pounds, masterCoilWeight, originalCoilQty, qty, quantity, weightEvidence, weightCandidates, coilCount, coilIds, perPieceWeight, pieces, maxLift, skidQty, boardQty, liftUnitIndicator, flatnessSpec, quoteLeadTime, actualYield, packaging, needsSkids, needsFullBoards, notes, billingNotes, warnings, confidence.",
+    "",
+    "Only populate customer or customerLogoText from an explicit visible external customer name, customer logo, bill-to/sold-to/ship-to/customer-name field, email sender organization, or customer address block.",
+    "Put a short description of the visible source text used for the customer in customerEvidence.",
+    "If the customer name is not explicitly visible, leave customer and customerLogoText empty.",
+    "Do not infer the customer from a reusable template, document layout, prior examples, PO/work-order/SO/job/order numbers, item numbers, dimensions, packaging, process, or line.",
+    "Do not use CSP, Coil Steel Processing, CSP Coil Steel Prs, Warehouse Process, or similar internal CSP header/logo text as the customer.",
+    "If the same template could belong to another customer, leave customer blank and add a warning that the customer is ambiguous.",
+    "If the visible email signature/domain/logo says WorthingtonSteel.com or Worthington Steel, customer should be Worthington Steel. Do not use CIRAL unless CIRAL is explicitly visible in the request.",
+    isWorkOrder
+      ? "For RCP/vendor setup or PO forms, prefer the company/location in a visible From, Vendor, PO issuer, sold-to, bill-to, or ship-from field as the customer. Example: if the form says \"From: RCP - Hamilton\" or \"Hamilton, OH\", customer should be \"Hamilton\" and customerEvidence should cite that visible From text."
+      : "For RFQ/email documents, prefer the sender company or explicit customer/bill-to/sold-to name as the customer.",
+    isWorkOrder
+      ? "On RCP forms, do not treat an \"RCP Customer\" line as the CSP quote customer when a separate From/Vendor/issuer field is visible; that line may be an end-customer or downstream reference."
+      : "Do not use downstream customer/reference lines when a direct sender or bill-to customer is visible.",
+    "Normalize process to either \"leveled\" or \"stretched\". If text says stretcher leveled or stretched leveled, use \"stretched\".",
+    "Normalize line to \"herr\" for Herr-Voss and \"rbi\" for RBI.",
+    isWorkOrder
+      ? "For work-order uploads, leave cspTag and tag empty. CSP Tag # is not printed on these orders and must be entered manually. Do not use Rel Tag #, Mill Tag Number, Sales Order, Process Order, Customer PO, coil tag, or material tag as CSP Tag #."
+      : "Only populate cspTag/tag from a visible CSP tag, material tag, coil tag, or tag/lot field. Do not use PO numbers, work-order numbers, sales-order numbers, customer part numbers, setup IDs, or values like PP044370 or PR423214 as cspTag/tag.",
+    "Numbers should be numbers when possible. Strip commas, #, lbs, inches, and quote marks from numeric values.",
+    "For multiple lengths, put the first length in length and all lengths in lengths.",
+    "For RFQ tables with multiple material rows, return every quoted row in coils. Each coils item should include gauge, width, length, grade/alloyGrade, coating/coatingWeight, materialType, finishedGoodType, quality/qualityType, shortTons, weight/pounds, maxLift, and liftUnitIndicator when visible.",
+    "If an RFQ table has 4 visible item rows, coils must contain 4 items. If it has 2 visible item rows, coils must contain 2 items. Never return only the last row, thickest row, or a representative row.",
+    "Example: rows with gauges 0.0785, 0.164, 0.100, and 0.118 must become four separate coils items, preserving each row's grade, coating, width, length, Short Tons / RFQ, Lift Unit Indicator, and Max Lift.",
+    "If a row has Short Tons / RFQ, convert it to pounds by multiplying by 2000 and put that pounds value on that coils item. Do not collapse multiple RFQ rows into one coil.",
+    "If Lift Unit Indicator says Skid on any row, set needsSkids true.",
+    isWorkOrder
+      ? "Use weight/pounds/masterCoilWeight for the inbound coil or order weight, not per-piece weight."
+      : "Use weight/pounds/masterCoilWeight for the inbound coil or RFQ weight, not per-piece weight.",
+    isWorkOrder
+      ? "For Paragon Steel Process Order images, the Original Coil Detail row has columns like Rel Tag #, Heat #, Qty, Item Description, Product Type, Quality, PIW, Grade. In that row, Qty is the original coil weight in pounds; put that Qty value in weight, pounds, masterCoilWeight, originalCoilQty, and weightCandidates, and cite it in weightEvidence."
+      : "If a quote/RFQ row labels the coil pounds as Qty, use it as weight only when the context clearly shows it is coil weight, not piece count.",
+    isWorkOrder
+      ? "When both production and packaging PO/work-order documents are uploaded, use the production document's master coil, consumption coil, inbound coil, or order LBS as weight/pounds/masterCoilWeight. Do not sum planned production rows, packaging rows, SO line items, produced-sheet rows, or package/bundle weights."
+      : "When multiple quote/package documents are uploaded, use the RFQ/inbound coil/order LBS as weight/pounds/masterCoilWeight. Do not sum packaging rows, downstream line items, produced-sheet rows, or package/bundle weights.",
+    "For CSP Job Work Order images with a Consumption or Cons ID section, use the LBS value from the consumption/HR Coil row as the quote weight. For this template, prefer the top production coil LBS over Planned Production rows, Order Information rows, Produced Sheets rows, Scrapped rows, or Packaging tables.",
+    isWorkOrder
+      ? "For process/order forms, prefer printed coil-row weights in the 40,000 to 50,000 lb range over handwritten notes, rounded estimates, bundle/max-lift notes, or default-looking values such as exactly 45,000."
+      : "Prefer printed coil-row weights over handwritten notes, rounded estimates, or default-looking values.",
+    "Never use exactly 45,000 as weight unless the image visibly prints exactly 45,000 in a weight, Qty, or LBS field. If uncertain, leave weight blank.",
+    "If the source, inventory, application, consumption, or input-coil section lists multiple material coils for the same job, set coilCount and coilIds, then use the sum of only those input/material coil Weight/LBS values as weight/pounds/masterCoilWeight.",
+    "For multiple input coils, set pieces to the number of input coils only when no better finished-piece count is visible. Add each coil weight to weightCandidates and cite the sum in weightEvidence.",
+    "Do not sum output rows, planned production rows, customer order rows, scrapped rows, package rows, or repeated references to the same coil.",
+    "Do not use values from rows whose identifiers begin with SO- as the quote weight unless that is the only explicit customer quote weight visible.",
+    "Do not join an SO number with a nearby weight. For example, never turn SO-240312-1-1 plus 26,014 lbs into 261014.",
+    "If a visible weight is over 120000 lbs, assume it may be OCR/field-merge error, leave weight/pounds/masterCoilWeight empty, and add a warning.",
+    "If no visible weight or valid weight source text is found, leave weight, pounds, and masterCoilWeight empty. Never use an assumed/default weight.",
+    "Put the exact visible text used for weight in weightEvidence, such as \"Consumption HR Coil LBS 44,840\" or \"Original Coil Detail Qty 43,190\".",
+    "When there are several visible LBS values, include weightCandidates as an array of objects with value and label/source text.",
+    "When production and packaging documents have separate POs, put the production PO in productionPoNumber and the packaging PO in packagingPoNumber. Use productionPoNumber for poNumber/poRef.",
+    "If a packaging document shows different child/package weights than the production PO, keep the production/RFQ coil weight and add a warning describing the difference.",
+    "Packaging must be an object with booleans for blocks3x4, paperWrap, paperTop, banding4way, stenciling, fullBoard3x4, and skids.",
+    "Map lumber, 3x4 cross-blocks, cross blocks, and 3x4 blocks to packaging.blocks3x4.",
+    "Map full-width boards, full width boards, and 3x4 full boards to packaging.fullBoard3x4.",
+    "Map paper tops to packaging.paperTop, paper wrap to packaging.paperWrap, skid mentions to packaging.skids.",
+    "Add warnings for fields that are unclear, missing, or inferred.",
+    "confidence should be a number from 0 to 1."
+  ].join("\n");
+}
+
+app.get("/api/quotes/status", (req, res) => {
+  res.json({
+    aiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    model: QUOTE_EXTRACTION_MODEL
+  });
+});
+
+app.post("/api/quotes/extract", async (req, res) => {
+  try {
+    const openai = getOpenAIClient();
+    if (!openai) return res.status(503).json({ error: "AI extraction is not configured on this server." });
+
+    const mode = req.body?.mode === "workOrder" ? "workOrder" : "quote";
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+    const pastedText = String(req.body?.text || req.body?.emailText || "").trim();
+    if (!files.length && !pastedText) return res.status(400).json({ error: "Upload at least one screenshot image or paste quote request text." });
+    if (files.length > 6) return res.status(400).json({ error: "Upload 6 images or fewer at a time." });
+    if (pastedText.length > 30000) return res.status(413).json({ error: "Pasted text is too long. Keep it under 30,000 characters." });
+
+    const imageFiles = files.filter((file) => {
+      const type = String(file?.type || "").toLowerCase();
+      const dataUrl = String(file?.dataUrl || "");
+      return /^image\/(png|jpe?g|webp)$/.test(type) && /^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl);
+    });
+
+    if (files.length && imageFiles.length !== files.length) {
+      return res.status(400).json({ error: "Only PNG, JPG, and WebP screenshot images are supported for AI extraction." });
+    }
+
+    const totalBytes = imageFiles.reduce((sum, file) => sum + Buffer.byteLength(String(file.dataUrl || ""), "utf8"), 0);
+    if (totalBytes > 80 * 1024 * 1024) {
+      return res.status(413).json({ error: "Upload is too large. Try fewer screenshots at once." });
+    }
+
+    const content = [
+      { type: "text", text: quoteExtractionPrompt(mode) },
+      ...(pastedText ? [{ type: "text", text: `Pasted quote request email/text:\n${pastedText}` }] : []),
+      ...imageFiles.map((file) => ({
+        type: "image_url",
+        image_url: {
+          url: file.dataUrl,
+          detail: "high"
+        }
+      }))
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: QUOTE_EXTRACTION_MODEL,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: mode === "workOrder"
+            ? "You extract structured CSP steel processing PO and work-order fields from screenshots. Return valid JSON only."
+            : "You extract structured CSP steel processing quote request fields from screenshots. Return valid JSON only."
+        },
+        { role: "user", content }
+      ],
+      max_tokens: 3000
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || "{}";
+    const extracted = normalizeQuoteExtraction(parseJsonObject(raw), mode);
+    return res.json({
+      extracted,
+      model: completion.model || QUOTE_EXTRACTION_MODEL
+    });
+  } catch (err) {
+    console.error("Quote extraction endpoint error:", err);
+    return res.status(500).json({ error: err.message || "AI quote extraction failed." });
   }
 });
 
