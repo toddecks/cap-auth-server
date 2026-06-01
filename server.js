@@ -3035,9 +3035,10 @@ app.post("/api/ai-analyze", async (req, res) => {
 
 // Production chart data endpoint for frontend chart rebuild pages
 app.get("/api/chart-data", async (req, res) => {
-  const allowedTables = new Set(["psdata_loads", "psdata_loads_api", "psdata_iso_complaints"]);
+  const allowedTables = new Set(["psdata_loads", "psdata_loads_api", "psdata_iso_complaints", "psdata_appt_in"]);
   const table = String(req.query.table || "psdata_loads_api").trim();
   const shipDateColumn = table === "psdata_loads_api" ? "shipDate" : "ship_date";
+  const receivingDateColumn = "arrival_date";
   const limitRaw = Number(req.query.limit || 3000);
   const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 3000, 50), 250000);
   const select = String(req.query.select || "*").trim() || "*";
@@ -3045,6 +3046,9 @@ app.get("/api/chart-data", async (req, res) => {
   const shipDateGte = String(req.query.ship_date_gte || "").trim();
   const shipDateLt = String(req.query.ship_date_lt || "").trim();
   const shipDateLte = String(req.query.ship_date_lte || "").trim();
+  const arrivalDateGte = String(req.query.arrival_date_gte || "").trim();
+  const arrivalDateLt = String(req.query.arrival_date_lt || "").trim();
+  const arrivalDateLte = String(req.query.arrival_date_lte || "").trim();
 
   if (!allowedTables.has(table)) {
     return res.status(400).json({ error: `Table not allowed: ${table}` });
@@ -3059,7 +3063,11 @@ app.get("/api/chart-data", async (req, res) => {
       const to = Math.min(from + batchSize - 1, limit - 1);
       let query = chartSupabase.from(table).select(select);
 
-      if (table !== "psdata_iso_complaints") {
+      if (table === "psdata_appt_in") {
+        if (arrivalDateGte) query = query.gte(receivingDateColumn, arrivalDateGte);
+        if (arrivalDateLt) query = query.lt(receivingDateColumn, arrivalDateLt);
+        if (arrivalDateLte) query = query.lte(receivingDateColumn, arrivalDateLte);
+      } else if (table !== "psdata_iso_complaints") {
         if (shipDateGte) query = query.gte(shipDateColumn, shipDateGte);
         if (shipDateLt) query = query.lt(shipDateColumn, shipDateLt);
         if (shipDateLte) query = query.lte(shipDateColumn, shipDateLte);
@@ -3094,6 +3102,9 @@ app.get("/api/chart-data", async (req, res) => {
       ship_date_gte: shipDateGte || null,
       ship_date_lt: shipDateLt || null,
       ship_date_lte: shipDateLte || null,
+      arrival_date_gte: arrivalDateGte || null,
+      arrival_date_lt: arrivalDateLt || null,
+      arrival_date_lte: arrivalDateLte || null,
       count: rows.length,
       rows
     });
