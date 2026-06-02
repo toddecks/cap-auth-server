@@ -3035,7 +3035,7 @@ app.post("/api/ai-analyze", async (req, res) => {
 
 // Production chart data endpoint for frontend chart rebuild pages
 app.get("/api/chart-data", async (req, res) => {
-  const allowedTables = new Set(["psdata_loads", "psdata_loads_api", "psdata_production_tags_api", "psdata_iso_complaints", "psdata_appt_in"]);
+  const allowedTables = new Set(["psdata_loads", "psdata_loads_api", "psdata_production_tags_api", "psdata_iso_complaints", "psdata_appt_in", "psdata_cust_inv"]);
   const table = String(req.query.table || "psdata_loads_api").trim();
   const shipDateColumn = table === "psdata_loads_api" ? "shipDate" : "ship_date";
   const receivingDateColumn = "arrival_date";
