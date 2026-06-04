@@ -1631,10 +1631,21 @@ app.put("/api/users/:id/roles", async (req, res) => {
   }
 
   try {
-    const resolvedRoleIds = await resolveRoleIds(roles);
+    const resolvedRoleIds = Array.from(new Set(
+      roles
+        .map((role) => {
+          if (typeof role === "number" && ROLE_BY_ID.has(role)) return role;
+          const parsedId = Number(role);
+          if (Number.isInteger(parsedId) && ROLE_BY_ID.has(parsedId)) return parsedId;
+          const roleDef = ROLE_BY_NAME.get(normalizeRoleName(role));
+          return roleDef?.id || null;
+        })
+        .filter((roleId) => Number.isInteger(roleId))
+    ));
 
     // Remove existing roles
-    await supabase.from("user_roles").delete().eq("user_id", id);
+    const { error: deleteError } = await supabase.from("user_roles").delete().eq("user_id", id);
+    if (deleteError) throw deleteError;
 
     // Insert new roles
     const roleRows = resolvedRoleIds.map((role_id) => ({
@@ -1643,13 +1654,14 @@ app.put("/api/users/:id/roles", async (req, res) => {
     }));
 
     if (roleRows.length > 0) {
-      await supabase.from("user_roles").insert(roleRows);
+      const { error: insertError } = await supabase.from("user_roles").insert(roleRows);
+      if (insertError) throw insertError;
     }
 
-    return res.json({ success: true });
+    return res.json({ success: true, roles: resolvedRoleIds });
   } catch (err) {
     console.error("Update roles error:", err);
-    return res.status(500).json({ error: "Failed to update roles" });
+    return res.status(500).json({ error: err?.message || "Failed to update roles" });
   }
 });
 
