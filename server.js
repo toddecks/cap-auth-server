@@ -170,7 +170,6 @@ const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
 const PRO_MAINTENANCE_TEAMS_WEBHOOK_URL = String(process.env.PRO_MAINTENANCE_TEAMS_WEBHOOK_URL || "").trim();
 const PRO_MAINTENANCE_ACK_BASE_URL = String(process.env.PRO_MAINTENANCE_ACK_BASE_URL || "").trim();
-const BI_SITE_BASE_URL = String(process.env.BI_SITE_BASE_URL || "https://bi.coilsteelprocessing.com").trim().replace(/\/+$/, "");
 
 const sanitizePlainObject = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -1965,166 +1964,6 @@ const TODD_WORK_REQUEST_ADMIN_EMAILS = new Set(
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)
 );
-const TODD_REQUEST_RECIPIENTS = String(process.env.TODD_REQUEST_RECIPIENTS || "")
-  .split(",")
-  .map((value) => value.trim().toLowerCase())
-  .filter(Boolean);
-const TODD_REQUEST_COPY_REQUESTER = String(process.env.TODD_REQUEST_COPY_REQUESTER || "true").toLowerCase() !== "false";
-const TODD_REQUEST_NOTIFY_ON_UPDATE = String(process.env.TODD_REQUEST_NOTIFY_ON_UPDATE || "true").toLowerCase() !== "false";
-const TODD_PRIORITY_LABELS = {
-  hot: "Hot",
-  urgent: "Urgent",
-  high: "High",
-  normal: "Normal",
-  low: "Low"
-};
-const TODD_STATUS_LABELS = {
-  not_started: "Not Started",
-  in_progress: "In Progress",
-  waiting: "Waiting",
-  on_hold: "On Hold",
-  long_term: "Long Term",
-  done: "Done"
-};
-
-const uniqueEmails = (values) =>
-  [...new Set((Array.isArray(values) ? values : [])
-    .map((value) => String(value || "").trim().toLowerCase())
-    .filter((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)))];
-
-const toddRequestAdminRecipients = () =>
-  uniqueEmails(TODD_REQUEST_RECIPIENTS.length ? TODD_REQUEST_RECIPIENTS : [...TODD_WORK_REQUEST_ADMIN_EMAILS]);
-
-const formatToddLabel = (value, labels = {}) =>
-  labels[value] || String(value || "-")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-
-const formatToddDate = (value) => {
-  if (!value) return "-";
-  const text = String(value).slice(0, 10);
-  const [year, month, day] = text.split("-");
-  return year && month && day ? `${month}/${day}/${year}` : text;
-};
-
-const toddRequestChangedFields = (previous = {}, next = {}) => {
-  const fields = [
-    ["project", "Project"],
-    ["requested_by", "Requester"],
-    ["date_needed", "Due Date"],
-    ["priority", "Priority"],
-    ["status", "Status"],
-    ["notes", "Notes"]
-  ];
-  return fields
-    .filter(([key]) => String(previous?.[key] ?? "") !== String(next?.[key] ?? ""))
-    .map(([key, label]) => ({ key, label, before: previous?.[key], after: next?.[key] }));
-};
-
-const buildToddRequestEmail = ({ action, request, previousRequest = null, actorEmail = "" }) => {
-  const isCreated = action === "created";
-  const changes = previousRequest ? toddRequestChangedFields(previousRequest, request) : [];
-  const summary = isCreated
-    ? `${request.requested_by || "Someone"} submitted a new request: ${request.project}.`
-    : `${actorEmail || "CSP BI"} updated ${request.project}.`;
-  const requestUrl = `${BI_SITE_BASE_URL}/todd-list.html`;
-  const submitUrl = `${BI_SITE_BASE_URL}/todd.html`;
-  const changeRows = changes.map((change) => ({
-    label: change.label,
-    value: `${change.key === "priority" ? formatToddLabel(change.before, TODD_PRIORITY_LABELS) : change.key === "status" ? formatToddLabel(change.before, TODD_STATUS_LABELS) : change.key === "date_needed" ? formatToddDate(change.before) : change.before || "-"} → ${change.key === "priority" ? formatToddLabel(change.after, TODD_PRIORITY_LABELS) : change.key === "status" ? formatToddLabel(change.after, TODD_STATUS_LABELS) : change.key === "date_needed" ? formatToddDate(change.after) : change.after || "-"}`
-  }));
-
-  const body = [
-    buildEmailTable("Request", [
-      { label: "Project", value: request.project },
-      { label: "Requester", value: request.requested_by },
-      { label: "Requester Email", value: request.requested_by_email },
-      { label: "Date Submitted", value: formatToddDate(request.date_requested || request.created_at) },
-      { label: "Due Date", value: formatToddDate(request.date_needed) },
-      { label: "Priority", value: formatToddLabel(request.priority, TODD_PRIORITY_LABELS) },
-      { label: "Status", value: formatToddLabel(request.status, TODD_STATUS_LABELS) },
-      { label: "Updated By", value: actorEmail },
-      { label: "Request ID", value: request.id }
-    ]),
-    changeRows.length ? buildEmailTable("Changes", changeRows) : "",
-    request.notes
-      ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Notes</h3><p style="margin:0;color:#233658;white-space:pre-wrap;">${escapeHtml(request.notes)}</p>`
-      : "",
-    `<div style="margin-top:24px;">
-      <a href="${escapeHtml(requestUrl)}" style="display:inline-block;background:#172742;color:#ffffff;font-size:14px;font-weight:bold;padding:11px 16px;border-radius:6px;">Open Todd Requests</a>
-      <a href="${escapeHtml(submitUrl)}" style="display:inline-block;margin-left:8px;background:#f1a91e;color:#172742;font-size:14px;font-weight:bold;padding:11px 16px;border-radius:6px;">Submit Another Request</a>
-    </div>`
-  ].join("");
-
-  return buildEmailShell({
-    eyebrow: "Todd Request",
-    title: isCreated ? "New Todd request submitted" : "Todd request updated",
-    summary,
-    submittedBy: request.requested_by_email || request.requested_by || actorEmail || "CSP BI",
-    submittedAt: request.created_at || request.updated_at || new Date().toISOString(),
-    body
-  });
-};
-
-const sendToddRequestNotification = async ({ action, request, previousRequest = null, actorEmail = "" }) => {
-  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL) {
-    return {
-      sent: false,
-      reason: "Todd request email skipped because RESEND_API_KEY or PRO_FORMS_FROM_EMAIL is not configured."
-    };
-  }
-
-  let recipients = [];
-  if (action === "created") {
-    recipients = toddRequestAdminRecipients();
-  } else if (TODD_REQUEST_NOTIFY_ON_UPDATE && TODD_REQUEST_COPY_REQUESTER) {
-    recipients = uniqueEmails([request.requested_by_email]);
-  }
-
-  recipients = action === "created"
-    ? uniqueEmails(recipients)
-    : uniqueEmails(recipients.filter((email) => email !== String(actorEmail || "").toLowerCase()));
-  if (!recipients.length) {
-    return {
-      sent: false,
-      reason: "No Todd request notification recipients matched this action."
-    };
-  }
-
-  if (action !== "created" && previousRequest && !toddRequestChangedFields(previousRequest, request).length) {
-    return {
-      sent: false,
-      reason: "Todd request email skipped because no tracked fields changed."
-    };
-  }
-
-  const subjectPrefix = action === "created" ? "New Todd request" : "Todd request updated";
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: PRO_FORMS_FROM_EMAIL,
-      to: recipients,
-      subject: `[CSP BI] ${subjectPrefix}: ${request.project}`,
-      html: buildToddRequestEmail({ action, request, previousRequest, actorEmail })
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Email provider rejected the Todd request notification.");
-  }
-
-  const providerPayload = await response.json().catch(() => ({}));
-  return {
-    sent: true,
-    recipients,
-    providerId: providerPayload?.id || null
-  };
-};
 
 function normalizeToddPriority(value) {
   const priority = coerceText(value, 20).toLowerCase().replace(/\s+/g, "_");
@@ -2221,21 +2060,7 @@ app.post("/api/todd-requests", async (req, res) => {
       .single();
 
     if (error) throw error;
-    let notification = { sent: false, reason: "Todd request notification was not attempted." };
-    try {
-      notification = await sendToddRequestNotification({
-        action: "created",
-        request: data,
-        actorEmail: requestedByEmail
-      });
-    } catch (notificationError) {
-      console.error("Todd request create notification error:", notificationError);
-      notification = {
-        sent: false,
-        reason: notificationError.message || "Unable to send Todd request notification."
-      };
-    }
-    return res.status(201).json({ request: data, notification });
+    return res.status(201).json({ request: data });
   } catch (err) {
     console.error("Todd request create error:", err);
     return res.status(500).json({ error: err.message || "Unable to save work request." });
@@ -2275,15 +2100,6 @@ app.put("/api/todd-requests/:id", async (req, res) => {
   }
 
   try {
-    const { data: previousRequest, error: previousError } = await chartSupabase
-      .from("todd_work_requests")
-      .select(TODD_REQUEST_SELECT)
-      .eq("id", id)
-      .maybeSingle();
-
-    if (previousError) throw previousError;
-    if (!previousRequest) return res.status(404).json({ error: "Work request not found." });
-
     const { data, error } = await chartSupabase
       .from("todd_work_requests")
       .update(updateRow)
@@ -2293,22 +2109,7 @@ app.put("/api/todd-requests/:id", async (req, res) => {
 
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "Work request not found." });
-    let notification = { sent: false, reason: "Todd request notification was not attempted." };
-    try {
-      notification = await sendToddRequestNotification({
-        action: "updated",
-        request: data,
-        previousRequest,
-        actorEmail: viewerEmail
-      });
-    } catch (notificationError) {
-      console.error("Todd request update notification error:", notificationError);
-      notification = {
-        sent: false,
-        reason: notificationError.message || "Unable to send Todd request notification."
-      };
-    }
-    return res.json({ request: data, notification });
+    return res.json({ request: data });
   } catch (err) {
     console.error("Todd request update error:", err);
     return res.status(500).json({ error: err.message || "Unable to update work request." });
