@@ -1653,6 +1653,40 @@ app.put("/api/users/:id/roles", async (req, res) => {
   }
 });
 
+app.post("/api/users/:id/roles/add", async (req, res) => {
+  const { id } = req.params;
+  const role = req.body?.role ?? req.body?.role_id ?? req.body?.roleId;
+  const roleId = Number(role);
+
+  if (!Number.isInteger(roleId) || !ROLE_BY_ID.has(roleId)) {
+    return res.status(400).json({ error: "Valid role id is required." });
+  }
+
+  try {
+    const { data: existing, error: existingError } = await supabase
+      .from("user_roles")
+      .select("user_id, role_id")
+      .eq("user_id", id)
+      .eq("role_id", roleId)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (existing) {
+      return res.json({ success: true, alreadyHadRole: true, role_id: roleId });
+    }
+
+    const { error: insertError } = await supabase
+      .from("user_roles")
+      .insert({ user_id: id, role_id: roleId });
+
+    if (insertError) throw insertError;
+    return res.json({ success: true, role_id: roleId });
+  } catch (err) {
+    console.error("Add role error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to add role" });
+  }
+});
+
 const buildTempPassword = (length = 12) => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
   let value = "";
