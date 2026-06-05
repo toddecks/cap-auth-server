@@ -26,6 +26,10 @@ function getRequiredEnv(name) {
   return value;
 }
 
+function getOptionalEnv(name) {
+  return String(process.env[name] || "").trim();
+}
+
 const app = express();
 app.use(cors({
   origin: "*",
@@ -34,10 +38,12 @@ app.use(cors({
 app.use(express.json({ limit: "90mb" }));
 app.use(express.urlencoded({ extended: false, limit: "90mb" }));
 
-// Tableau Connected App Credentials
-const TABLEAU_CLIENT_ID = getRequiredEnv("TABLEAU_CLIENT_ID");
-const TABLEAU_SECRET_ID = getRequiredEnv("TABLEAU_SECRET_ID");
-const TABLEAU_SECRET_VALUE = getRequiredEnv("TABLEAU_SECRET_VALUE");
+// Tableau Connected App Credentials are optional. The Tableau workflow is retired,
+// so missing values must not prevent the auth/user-access server from starting.
+const TABLEAU_CLIENT_ID = getOptionalEnv("TABLEAU_CLIENT_ID");
+const TABLEAU_SECRET_ID = getOptionalEnv("TABLEAU_SECRET_ID");
+const TABLEAU_SECRET_VALUE = getOptionalEnv("TABLEAU_SECRET_VALUE");
+const TABLEAU_ENABLED = Boolean(TABLEAU_CLIENT_ID && TABLEAU_SECRET_ID && TABLEAU_SECRET_VALUE);
 
 app.get("/", (req, res) => {
   res.send("Token server running");
@@ -53,6 +59,10 @@ app.get("/api/deploy-status", (_req, res) => {
 
 // Endpoint to generate Tableau Embed Token
 app.get("/getTableauToken", (req, res) => {
+  if (!TABLEAU_ENABLED) {
+    return res.status(410).json({ error: "Tableau token generation is disabled." });
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const tableauUser = req.query.user || "todd@coilsteelprocessing.com";
 
