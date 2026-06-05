@@ -92,11 +92,13 @@ const { createClient } = require("@supabase/supabase-js");
 
 const AUTH_SUPABASE_URL = getRequiredEnv("AUTH_SUPABASE_URL");
 const AUTH_SERVICE_ROLE_KEY = getRequiredEnv("AUTH_SUPABASE_SERVICE_ROLE_KEY");
-const CHART_SUPABASE_URL = getRequiredEnv("CHART_SUPABASE_URL");
-const CHART_SERVICE_ROLE_KEY = getRequiredEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
+const CHART_SUPABASE_URL = getOptionalEnv("CHART_SUPABASE_URL");
+const CHART_SERVICE_ROLE_KEY = getOptionalEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
 
 const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
-const chartSupabase = createClient(CHART_SUPABASE_URL, CHART_SERVICE_ROLE_KEY);
+const chartSupabase = CHART_SUPABASE_URL && CHART_SERVICE_ROLE_KEY
+  ? createClient(CHART_SUPABASE_URL, CHART_SERVICE_ROLE_KEY)
+  : null;
 const ROLE_DEFINITIONS = [
   { id: 1, name: "admin" },
   { id: 2, name: "shipping" },
