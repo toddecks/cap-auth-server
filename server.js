@@ -114,7 +114,8 @@ const ROLE_DEFINITIONS = [
   { id: 15, name: "iso" },
   { id: 16, name: "alarm_logs" },
   { id: 17, name: "quote_calculator" },
-  { id: 18, name: "work_order_pricing" }
+  { id: 18, name: "work_order_pricing" },
+  { id: 19, name: "website_leads" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
