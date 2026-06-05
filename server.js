@@ -43,6 +43,14 @@ app.get("/", (req, res) => {
   res.send("Token server running");
 });
 
+app.get("/api/deploy-status", (_req, res) => {
+  res.json({
+    service: "cap-auth-server",
+    roleUpdateMode: "replace-user-roles-v2",
+    node: process.version
+  });
+});
+
 // Endpoint to generate Tableau Embed Token
 app.get("/getTableauToken", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
@@ -1631,17 +1639,7 @@ app.put("/api/users/:id/roles", async (req, res) => {
   }
 
   try {
-    const resolvedRoleIds = Array.from(new Set(
-      roles
-        .map((role) => {
-          if (typeof role === "number" && ROLE_BY_ID.has(role)) return role;
-          const parsedId = Number(role);
-          if (Number.isInteger(parsedId) && ROLE_BY_ID.has(parsedId)) return parsedId;
-          const roleDef = ROLE_BY_NAME.get(normalizeRoleName(role));
-          return roleDef?.id || null;
-        })
-        .filter((roleId) => Number.isInteger(roleId))
-    ));
+    const resolvedRoleIds = await resolveRoleIds(roles);
 
     // Remove existing roles
     const { error: deleteError } = await supabase.from("user_roles").delete().eq("user_id", id);
