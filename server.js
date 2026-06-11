@@ -94,6 +94,7 @@ const AUTH_SUPABASE_URL = getRequiredEnv("AUTH_SUPABASE_URL");
 const AUTH_SERVICE_ROLE_KEY = getRequiredEnv("AUTH_SUPABASE_SERVICE_ROLE_KEY");
 const CHART_SUPABASE_URL = getOptionalEnv("CHART_SUPABASE_URL");
 const CHART_SERVICE_ROLE_KEY = getOptionalEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
+const HR_REGISTRATION_CODE = getOptionalEnv("HR_REGISTRATION_CODE");
 
 const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
 const chartSupabase = CHART_SUPABASE_URL && CHART_SERVICE_ROLE_KEY
@@ -117,7 +118,8 @@ const ROLE_DEFINITIONS = [
   { id: 16, name: "alarm_logs" },
   { id: 17, name: "quote_calculator" },
   { id: 18, name: "work_order_pricing" },
-  { id: 19, name: "website_leads" }
+  { id: 19, name: "website_leads" },
+  { id: 20, name: "hr" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
@@ -182,6 +184,33 @@ const roleNamesFromRows = (rows) =>
   (Array.isArray(rows) ? rows : [])
     .map((row) => row?.roles?.name)
     .filter(Boolean);
+
+const secureTextEquals = (left, right) => {
+  const leftBuffer = Buffer.from(String(left || ""), "utf8");
+  const rightBuffer = Buffer.from(String(right || ""), "utf8");
+  return leftBuffer.length === rightBuffer.length
+    && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const HR_REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
+const HR_REGISTRATION_MAX_ATTEMPTS = 8;
+const hrRegistrationAttempts = new Map();
+
+const consumeHrRegistrationAttempt = (req) => {
+  const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const key = forwardedFor || req.ip || "unknown";
+  const now = Date.now();
+  const current = hrRegistrationAttempts.get(key);
+
+  if (!current || now - current.startedAt >= HR_REGISTRATION_WINDOW_MS) {
+    hrRegistrationAttempts.set(key, { count: 1, startedAt: now });
+    return true;
+  }
+
+  if (current.count >= HR_REGISTRATION_MAX_ATTEMPTS) return false;
+  current.count += 1;
+  return true;
+};
 
 const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .split(",")
@@ -1557,6 +1586,85 @@ app.post("/api/create-user", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in create-user:", err);
     return res.status(500).json({ message: "Unexpected server error." });
+  }
+});
+
+app.post("/api/hr/register", async (req, res) => {
+  if (!HR_REGISTRATION_CODE) {
+    return res.status(503).json({ message: "HR registration is not configured." });
+  }
+
+  if (!consumeHrRegistrationAttempt(req)) {
+    return res.status(429).json({ message: "Too many registration attempts. Try again later." });
+  }
+
+  const { email, password, enrollmentCode } = req.body || {};
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanPassword = String(password || "");
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ message: "Enter a valid email address." });
+  }
+
+  if (cleanPassword.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters." });
+  }
+
+  if (!secureTextEquals(enrollmentCode, HR_REGISTRATION_CODE)) {
+    return res.status(403).json({ message: "The employee enrollment code is not valid." });
+  }
+
+  let createdUserId = "";
+
+  try {
+    await ensureKnownRoles();
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password: cleanPassword,
+      email_confirm: true
+    });
+
+    if (authError || !authData?.user?.id) {
+      const alreadyExists = /already|registered|exists/i.test(String(authError?.message || ""));
+      return res.status(400).json({
+        message: alreadyExists
+          ? "An account already exists for this email. Sign in or ask an administrator to add HR access."
+          : authError?.message || "Unable to create the account."
+      });
+    }
+
+    createdUserId = authData.user.id;
+
+    const { error: userError } = await supabase
+      .from("users")
+      .upsert(
+        { id: createdUserId, email: cleanEmail },
+        { onConflict: "id" }
+      );
+
+    if (userError) throw userError;
+
+    const { error: roleError } = await supabase
+      .from("user_roles")
+      .insert({ user_id: createdUserId, role_id: 20 });
+
+    if (roleError) throw roleError;
+
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    console.error("HR registration failed:", error);
+
+    if (createdUserId) {
+      try {
+        await supabase.from("users").delete().eq("id", createdUserId);
+        await supabase.auth.admin.deleteUser(createdUserId);
+      } catch (cleanupError) {
+        console.error("HR registration cleanup failed:", cleanupError);
+      }
+    }
+
+    return res.status(500).json({ message: "Unable to complete registration." });
   }
 });
 
