@@ -1560,7 +1560,7 @@ const renderMaintenanceOrderForm = (order, { message = "", error = "" } = {}) =>
   `;
 };
 
-app.post("/api/create-user", async (req, res) => {
+app.post("/api/create-user", requireAdminAccess, async (req, res) => {
   const { email, password, roles } = req.body || {};
 
   if (!email || !password || !Array.isArray(roles) || roles.length === 0) {
@@ -1969,7 +1969,7 @@ app.get("/api/auth/roles", async (req, res) => {
 });
 
 // Get all users with roles
-app.get("/api/users", async (req, res) => {
+app.get("/api/users", requireAdminAccess, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("users")
@@ -1999,7 +1999,7 @@ app.get("/api/users", async (req, res) => {
 });
 
 // Delete user (removes roles + auth user)
-app.delete("/api/users/:id", async (req, res) => {
+app.delete("/api/users/:id", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -2020,7 +2020,7 @@ app.delete("/api/users/:id", async (req, res) => {
 });
 
 // Update user roles
-app.put("/api/users/:id/roles", async (req, res) => {
+app.put("/api/users/:id/roles", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
   const { roles } = req.body || {};
 
@@ -2053,7 +2053,7 @@ app.put("/api/users/:id/roles", async (req, res) => {
   }
 });
 
-app.post("/api/users/:id/roles/add", async (req, res) => {
+app.post("/api/users/:id/roles/add", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
   const role = req.body?.role ?? req.body?.role_id ?? req.body?.roleId;
   const roleId = Number(role);
@@ -2105,7 +2105,7 @@ const getUserAuthMetadata = async (id) => {
   return data.user.user_metadata || {};
 };
 
-app.post("/api/users/:id/reset-password-temp", async (req, res) => {
+app.post("/api/users/:id/reset-password-temp", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
   const provided = String(req.body?.tempPassword || "").trim();
   const tempPassword = provided || buildTempPassword(14);
@@ -2139,7 +2139,7 @@ app.post("/api/users/:id/reset-password-temp", async (req, res) => {
   }
 });
 
-app.post("/api/users/:id/force-password-change", async (req, res) => {
+app.post("/api/users/:id/force-password-change", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
   const force = req.body?.force !== false;
 
@@ -2163,7 +2163,7 @@ app.post("/api/users/:id/force-password-change", async (req, res) => {
   }
 });
 
-app.post("/api/users/:id/send-reset-email", async (req, res) => {
+app.post("/api/users/:id/send-reset-email", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
   const redirectTo =
     String(req.body?.redirectTo || "").trim() ||
