@@ -52,7 +52,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
-    roleUpdateMode: "replace-user-roles-v2",
+    roleUpdateMode: "hr-admin-v1",
     node: process.version
   });
 });
@@ -95,6 +95,12 @@ const AUTH_SERVICE_ROLE_KEY = getRequiredEnv("AUTH_SUPABASE_SERVICE_ROLE_KEY");
 const CHART_SUPABASE_URL = getOptionalEnv("CHART_SUPABASE_URL");
 const CHART_SERVICE_ROLE_KEY = getOptionalEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
 const HR_REGISTRATION_CODE = getOptionalEnv("HR_REGISTRATION_CODE");
+const HR_INVITE_FROM_EMAIL = getOptionalEnv("HR_INVITE_FROM_EMAIL")
+  || getOptionalEnv("PRO_FORMS_FROM_EMAIL");
+const HR_PORTAL_BASE_URL = (
+  getOptionalEnv("HR_PORTAL_BASE_URL")
+  || "https://hr.coilsteelprocessing.com"
+).replace(/\/+$/, "");
 
 const supabase = createClient(AUTH_SUPABASE_URL, AUTH_SERVICE_ROLE_KEY);
 const chartSupabase = CHART_SUPABASE_URL && CHART_SERVICE_ROLE_KEY
@@ -184,6 +190,34 @@ const roleNamesFromRows = (rows) =>
   (Array.isArray(rows) ? rows : [])
     .map((row) => row?.roles?.name)
     .filter(Boolean);
+
+const requireAdminAccess = async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Missing Supabase access token." });
+    }
+
+    const { data, error } = await supabase.auth.getUser(token);
+    const user = data?.user;
+    if (error || !user?.id) {
+      return res.status(401).json({ error: error?.message || "Invalid or expired Supabase session." });
+    }
+
+    const roleRows = await fetchUserRoleRows(user.id);
+    const roles = roleNamesFromRows(roleRows);
+    if (!roles.includes("admin")) {
+      return res.status(403).json({ error: "Administrator access is required." });
+    }
+
+    req.authUser = user;
+    req.authRoles = roles;
+    return next();
+  } catch (error) {
+    console.error("Admin authorization failed:", error);
+    return res.status(500).json({ error: "Unable to verify administrator access." });
+  }
+};
 
 const secureTextEquals = (left, right) => {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
@@ -1665,6 +1699,241 @@ app.post("/api/hr/register", async (req, res) => {
     }
 
     return res.status(500).json({ message: "Unable to complete registration." });
+  }
+});
+
+const listAllAuthUsers = async () => {
+  const users = [];
+  const perPage = 100;
+
+  for (let page = 1; page <= 100; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+
+    const pageUsers = Array.isArray(data?.users) ? data.users : [];
+    users.push(...pageUsers);
+    if (pageUsers.length < perPage) break;
+  }
+
+  return users;
+};
+
+const sendHrInvitation = async (email) => {
+  if (!RESEND_API_KEY || !HR_INVITE_FROM_EMAIL) {
+    throw new Error("HR invitation email is not configured.");
+  }
+
+  const registerUrl = `${HR_PORTAL_BASE_URL}/register.html`;
+  const safeCode = escapeHtml(HR_REGISTRATION_CODE);
+  const safeUrl = escapeHtml(registerUrl);
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="UTF-8"><title>CSP Employee Benefits Invitation</title></head>
+    <body style="margin:0;background:#f3f6fb;font-family:Arial,sans-serif;color:#233658;">
+      <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
+        <div style="background:#ffffff;border:1px solid #d5deec;border-radius:8px;padding:28px;">
+          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Employee Benefits Account</h1>
+          <p style="margin:0 0 18px;line-height:1.55;">You have been invited to create a Coil Steel Processing employee benefits account.</p>
+          <p style="margin:0 0 6px;font-size:13px;font-weight:bold;text-transform:uppercase;color:#5b6a87;">Enrollment Code</p>
+          <div style="margin:0 0 22px;padding:12px 14px;border:1px solid #d5deec;border-radius:6px;background:#f3f6fb;font-size:22px;font-weight:bold;letter-spacing:.04em;">${safeCode}</div>
+          <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Create Employee Account</a>
+          <p style="margin:22px 0 0;color:#5b6a87;font-size:13px;line-height:1.5;">This code is for CSP employees only. Do not forward this invitation.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: HR_INVITE_FROM_EMAIL,
+      to: [email],
+      subject: "Create your CSP employee benefits account",
+      html
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || "The email provider rejected the invitation.");
+  }
+
+  return payload?.id || null;
+};
+
+app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid employee email address." });
+  }
+  if (!HR_REGISTRATION_CODE) {
+    return res.status(503).json({ error: "The HR enrollment code is not configured." });
+  }
+
+  try {
+    const authUsers = await listAllAuthUsers();
+    const existingUser = authUsers.find(
+      (user) => String(user.email || "").trim().toLowerCase() === email
+    );
+    if (existingUser) {
+      return res.status(409).json({
+        error: "An account already exists for this email. Grant HR access from the employee list instead."
+      });
+    }
+
+    const providerId = await sendHrInvitation(email);
+    return res.json({ success: true, email, providerId });
+  } catch (error) {
+    console.error("HR invitation failed:", error);
+    const status = /not configured/i.test(error?.message || "") ? 503 : 500;
+    return res.status(status).json({ error: error?.message || "Unable to send the invitation." });
+  }
+});
+
+app.get("/api/hr/admin/users", requireAdminAccess, async (req, res) => {
+  const search = String(req.query.search || "").trim().toLowerCase();
+
+  try {
+    const [authUsers, roleResult] = await Promise.all([
+      listAllAuthUsers(),
+      supabase
+        .from("user_roles")
+        .select("user_id,role_id,roles(name)")
+    ]);
+
+    if (roleResult.error) throw roleResult.error;
+
+    const rolesByUser = new Map();
+    (Array.isArray(roleResult.data) ? roleResult.data : []).forEach((row) => {
+      if (!rolesByUser.has(row.user_id)) rolesByUser.set(row.user_id, []);
+      rolesByUser.get(row.user_id).push({
+        id: Number(row.role_id),
+        name: row?.roles?.name || ""
+      });
+    });
+
+    const users = authUsers
+      .filter((user) => !search || String(user.email || "").toLowerCase().includes(search))
+      .map((user) => {
+        const roles = rolesByUser.get(user.id) || [];
+        return {
+          id: user.id,
+          email: user.email || "",
+          created_at: user.created_at || null,
+          last_sign_in_at: user.last_sign_in_at || null,
+          email_confirmed_at: user.email_confirmed_at || null,
+          force_password_change: user.user_metadata?.force_password_change === true,
+          has_hr_access: roles.some((role) => role.id === 20 || role.name === "hr"),
+          roles
+        };
+      })
+      .sort((left, right) => left.email.localeCompare(right.email));
+
+    res.set("Cache-Control", "no-store");
+    return res.json({ users });
+  } catch (error) {
+    console.error("HR admin user lookup failed:", error);
+    return res.status(500).json({ error: error?.message || "Unable to load employees." });
+  }
+});
+
+app.patch("/api/hr/admin/users/:id", requireAdminAccess, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const requestedEmail = req.body?.email;
+  const email = requestedEmail === undefined
+    ? ""
+    : String(requestedEmail || "").trim().toLowerCase();
+
+  if (!id) return res.status(400).json({ error: "A user id is required." });
+  if (!email) return res.status(400).json({ error: "Enter a valid email address." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.admin.updateUserById(id, {
+      email,
+      email_confirm: true
+    });
+    if (error || !data?.user) throw error || new Error("User update did not return an account.");
+
+    const { error: profileError } = await supabase
+      .from("users")
+      .upsert({ id, email }, { onConflict: "id" });
+    if (profileError) throw profileError;
+
+    return res.json({
+      success: true,
+      user: {
+        id: data.user.id,
+        email: data.user.email || email
+      }
+    });
+  } catch (error) {
+    console.error("HR admin email update failed:", error);
+    return res.status(400).json({ error: error?.message || "Unable to update the employee email." });
+  }
+});
+
+app.post("/api/hr/admin/users/:id/temporary-password", requireAdminAccess, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "A user id is required." });
+
+  try {
+    const tempPassword = buildTempPassword(14);
+    const existingMetadata = await getUserAuthMetadata(id);
+    const { error } = await supabase.auth.admin.updateUserById(id, {
+      password: tempPassword,
+      user_metadata: {
+        ...existingMetadata,
+        force_password_change: true
+      }
+    });
+    if (error) throw error;
+
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      success: true,
+      tempPassword,
+      forcePasswordChange: true
+    });
+  } catch (error) {
+    console.error("HR admin temporary password failed:", error);
+    return res.status(400).json({ error: error?.message || "Unable to create a temporary password." });
+  }
+});
+
+app.put("/api/hr/admin/users/:id/hr-access", requireAdminAccess, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const enabled = req.body?.enabled === true;
+  if (!id) return res.status(400).json({ error: "A user id is required." });
+
+  try {
+    await ensureKnownRoles();
+    if (enabled) {
+      const { error } = await supabase
+        .from("user_roles")
+        .upsert({ user_id: id, role_id: 20 }, { onConflict: "user_id,role_id" });
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from("user_roles")
+        .delete()
+        .eq("user_id", id)
+        .eq("role_id", 20);
+      if (error) throw error;
+    }
+
+    return res.json({ success: true, enabled });
+  } catch (error) {
+    console.error("HR access update failed:", error);
+    return res.status(500).json({ error: error?.message || "Unable to update HR access." });
   }
 });
 
