@@ -2140,7 +2140,7 @@ app.delete("/api/users/:id", requireAdminAccess, async (req, res) => {
 });
 
 // Update user profile and login email
-app.patch("/api/users/:id/profile", requireAdminAccess, async (req, res) => {
+const updateUserProfileHandler = async (req, res) => {
   const id = String(req.params.id || "").trim();
   const email = String(req.body?.email || "").trim().toLowerCase();
   const profile = normalizeUserProfile(req.body || {});
@@ -2183,10 +2183,13 @@ app.patch("/api/users/:id/profile", requireAdminAccess, async (req, res) => {
     console.error("User profile update error:", err);
     return res.status(400).json({ error: err?.message || "Failed to update user profile." });
   }
-});
+};
+
+app.patch("/api/users/:id/profile", requireAdminAccess, updateUserProfileHandler);
+app.post("/api/users/:id/profile", requireAdminAccess, updateUserProfileHandler);
 
 // Update user roles
-app.put("/api/users/:id/roles", requireAdminAccess, async (req, res) => {
+const updateUserRolesHandler = async (req, res) => {
   const { id } = req.params;
   const { roles } = req.body || {};
 
@@ -2217,7 +2220,10 @@ app.put("/api/users/:id/roles", requireAdminAccess, async (req, res) => {
     console.error("Update roles error:", err);
     return res.status(500).json({ error: err?.message || "Failed to update roles" });
   }
-});
+};
+
+app.put("/api/users/:id/roles", requireAdminAccess, updateUserRolesHandler);
+app.post("/api/users/:id/roles", requireAdminAccess, updateUserRolesHandler);
 
 app.post("/api/users/:id/roles/add", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
