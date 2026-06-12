@@ -326,6 +326,46 @@ const coerceInteger = (value) => {
 
 const coerceDateText = (value) => coerceText(value, 20) || null;
 
+const normalizeUserProfile = (body = {}) => ({
+  first_name: coerceText(body.first_name ?? body.firstName, 120) || "",
+  last_name: coerceText(body.last_name ?? body.lastName, 120) || "",
+  job_title: coerceText(body.job_title ?? body.jobTitle, 160) || ""
+});
+
+const profileFromAuthUser = (user = {}) => {
+  const metadata = user.user_metadata || {};
+  return {
+    first_name: coerceText(metadata.first_name ?? metadata.firstName, 120) || "",
+    last_name: coerceText(metadata.last_name ?? metadata.lastName, 120) || "",
+    job_title: coerceText(metadata.job_title ?? metadata.jobTitle, 160) || ""
+  };
+};
+
+const upsertPublicUserProfile = async ({ id, email, first_name = "", last_name = "", job_title = "" }) => {
+  const baseRow = { id, email };
+  const profileRow = {
+    ...baseRow,
+    first_name,
+    last_name,
+    job_title,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from("users")
+    .upsert(profileRow, { onConflict: "id" });
+
+  if (!error) return;
+
+  const missingColumn = /column .* does not exist|schema cache|Could not find/i.test(String(error.message || ""));
+  if (!missingColumn) throw error;
+
+  const fallback = await supabase
+    .from("users")
+    .upsert(baseRow, { onConflict: "id" });
+  if (fallback.error) throw fallback.error;
+};
+
 const getArray = (value) => (Array.isArray(value) ? value : []);
 
 const buildFormSpecificSubmission = ({ submissionId, formKey, submittedAt, submittedBy, dimensions, metrics, payload, notes }) => {
@@ -1608,15 +1648,16 @@ const renderMaintenanceOrderForm = (order, { message = "", error = "" } = {}) =>
 
 app.post("/api/create-user", requireAdminAccess, async (req, res) => {
   const { email, password, roles } = req.body || {};
+  const profile = normalizeUserProfile(req.body || {});
 
-  if (!email || !password || !Array.isArray(roles) || roles.length === 0) {
+  if (!email || !password || !Array.isArray(roles)) {
     return res.status(400).json({ message: "Email, password, and roles are required." });
   }
 
   const cleanEmail = String(email).trim().toLowerCase();
 
   try {
-    const resolvedRoleIds = await resolveRoleIds(roles);
+    const resolvedRoleIds = await resolveRoleIds([...roles, 20]);
     if (resolvedRoleIds.length === 0) {
       return res.status(400).json({ message: "No valid roles were selected." });
     }
@@ -1626,6 +1667,10 @@ app.post("/api/create-user", requireAdminAccess, async (req, res) => {
       email: cleanEmail,
       password,
       email_confirm: true,
+      user_metadata: {
+        ...profile,
+        force_password_change: false
+      }
     });
 
     if (authError || !authUser?.user) {
@@ -1634,23 +1679,15 @@ app.post("/api/create-user", requireAdminAccess, async (req, res) => {
     }
 
     // 2️⃣ Insert user record in 'users' table
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .insert({
-        id: authUser.user.id,
-        email: cleanEmail
-      })
-      .select()
-      .single();
-
-    if (userError || !user) {
-      console.error("User insert failed:", userError);
-      return res.status(400).json({ message: userError?.message || "Error inserting user record." });
-    }
+    await upsertPublicUserProfile({
+      id: authUser.user.id,
+      email: cleanEmail,
+      ...profile
+    });
 
     // 3️⃣ Assign roles
     const roleRows = resolvedRoleIds.map((role_id) => ({
-      user_id: user.id,
+      user_id: authUser.user.id,
       role_id,
     }));
 
@@ -2031,31 +2068,53 @@ app.get("/api/auth/roles", async (req, res) => {
 
 // Get all users with roles
 app.get("/api/users", requireAdminAccess, async (req, res) => {
+  const search = String(req.query.search || "").trim().toLowerCase();
+
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select(`
-        id,
-        email,
-        user_roles (
-          role_id,
-          roles (name)
-        )
-      `);
+    const [authUsers, roleResult] = await Promise.all([
+      listAllAuthUsers(),
+      supabase
+        .from("user_roles")
+        .select("user_id,role_id,roles(name)")
+    ]);
 
-    if (error) {
-      console.error("User fetch failed:", error);
-      return res.status(500).json({ error: error.message });
-    }
+    if (roleResult.error) throw roleResult.error;
 
-    return res.json((Array.isArray(data) ? data : []).map((user) => ({
-      ...user,
-      last_login: user.last_login || null,
-      csv_download_count: user.csv_download_count || 0
-    })));
+    const rolesByUser = new Map();
+    (Array.isArray(roleResult.data) ? roleResult.data : []).forEach((row) => {
+      if (!rolesByUser.has(row.user_id)) rolesByUser.set(row.user_id, []);
+      rolesByUser.get(row.user_id).push({
+        role_id: Number(row.role_id),
+        roles: {
+          name: row?.roles?.name || ""
+        }
+      });
+    });
+
+    const users = authUsers
+      .filter((user) => !search || String(user.email || "").toLowerCase().includes(search))
+      .map((user) => {
+        const profile = profileFromAuthUser(user);
+        return {
+          id: user.id,
+          email: user.email || "",
+          first_name: profile.first_name,
+          last_name: profile.last_name,
+          job_title: profile.job_title,
+          created_at: user.created_at || null,
+          last_sign_in_at: user.last_sign_in_at || null,
+          email_confirmed_at: user.email_confirmed_at || null,
+          force_password_change: user.user_metadata?.force_password_change === true,
+          user_roles: rolesByUser.get(user.id) || []
+        };
+      })
+      .sort((left, right) => left.email.localeCompare(right.email));
+
+    res.set("Cache-Control", "no-store");
+    return res.json(users);
   } catch (err) {
     console.error("User endpoint error:", err);
-    return res.status(500).json({ error: "Failed to fetch users" });
+    return res.status(500).json({ error: err?.message || "Failed to fetch users" });
   }
 });
 
@@ -2080,6 +2139,52 @@ app.delete("/api/users/:id", requireAdminAccess, async (req, res) => {
   }
 });
 
+// Update user profile and login email
+app.patch("/api/users/:id/profile", requireAdminAccess, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const profile = normalizeUserProfile(req.body || {});
+
+  if (!id) return res.status(400).json({ error: "A user id is required." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+
+  try {
+    const existingMetadata = await getUserAuthMetadata(id);
+    const nextMetadata = {
+      ...existingMetadata,
+      ...profile
+    };
+
+    const { data, error } = await supabase.auth.admin.updateUserById(id, {
+      email,
+      email_confirm: true,
+      user_metadata: nextMetadata
+    });
+    if (error || !data?.user) throw error || new Error("User update did not return an account.");
+
+    await upsertPublicUserProfile({
+      id,
+      email,
+      ...profile
+    });
+
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      success: true,
+      user: {
+        id,
+        email: data.user.email || email,
+        ...profile
+      }
+    });
+  } catch (err) {
+    console.error("User profile update error:", err);
+    return res.status(400).json({ error: err?.message || "Failed to update user profile." });
+  }
+});
+
 // Update user roles
 app.put("/api/users/:id/roles", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
@@ -2090,7 +2195,7 @@ app.put("/api/users/:id/roles", requireAdminAccess, async (req, res) => {
   }
 
   try {
-    const resolvedRoleIds = await resolveRoleIds(roles);
+    const resolvedRoleIds = await resolveRoleIds([...roles, 20]);
 
     // Remove existing roles
     const { error: deleteError } = await supabase.from("user_roles").delete().eq("user_id", id);
@@ -2231,18 +2336,27 @@ app.post("/api/users/:id/send-reset-email", requireAdminAccess, async (req, res)
     "https://bi.coilsteelprocessing.com/reset-password.html";
 
   try {
-    const { data: user, error: userError } = await supabase
+    const { data: publicUser, error: userError } = await supabase
       .from("users")
       .select("email")
       .eq("id", id)
-      .single();
+      .maybeSingle();
 
-    if (userError || !user?.email) {
-      console.error("Reset email lookup failed:", userError);
-      return res.status(404).json({ error: "User email not found." });
+    if (userError) {
+      console.warn("Reset email public user lookup failed:", userError);
     }
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
+    let email = publicUser?.email || "";
+    if (!email) {
+      const { data: authUser, error: authLookupError } = await supabase.auth.admin.getUserById(id);
+      if (authLookupError || !authUser?.user?.email) {
+        console.error("Reset email auth lookup failed:", authLookupError);
+        return res.status(404).json({ error: "User email not found." });
+      }
+      email = authUser.user.email;
+    }
+
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo
     });
 
@@ -2251,7 +2365,7 @@ app.post("/api/users/:id/send-reset-email", requireAdminAccess, async (req, res)
       return res.status(400).json({ error: resetError.message || "Failed to send reset email." });
     }
 
-    return res.json({ success: true, email: user.email });
+    return res.json({ success: true, email });
   } catch (err) {
     console.error("Send reset email endpoint error:", err);
     return res.status(500).json({ error: err.message || "Failed to send reset email." });
