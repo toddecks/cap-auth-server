@@ -108,13 +108,9 @@ const chartSupabase = CHART_SUPABASE_URL && CHART_SERVICE_ROLE_KEY
   : null;
 const ROLE_DEFINITIONS = [
   { id: 1, name: "admin" },
-  { id: 2, name: "shipping" },
   { id: 3, name: "receiving" },
   { id: 4, name: "production" },
-  { id: 5, name: "live" },
-  { id: 6, name: "finance" },
   { id: 7, name: "inventory" },
-  { id: 8, name: "maintenance" },
   { id: 9, name: "bonus_report" },
   { id: 10, name: "ai_assistant" },
   { id: 11, name: "shipping_overview" },
@@ -124,8 +120,9 @@ const ROLE_DEFINITIONS = [
   { id: 16, name: "alarm_logs" },
   { id: 17, name: "quote_calculator" },
   { id: 18, name: "work_order_pricing" },
-  { id: 19, name: "website_leads" },
-  { id: 20, name: "hr" }
+  { id: 20, name: "employee" },
+  { id: 21, name: "shift_reports" },
+  { id: 22, name: "todd_requests" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
@@ -1893,7 +1890,7 @@ app.get("/api/hr/admin/users", requireAdminAccess, async (req, res) => {
           last_sign_in_at: user.last_sign_in_at || null,
           email_confirmed_at: user.email_confirmed_at || null,
           force_password_change: user.user_metadata?.force_password_change === true,
-          has_hr_access: roles.some((role) => role.id === 20 || role.name === "hr"),
+          has_hr_access: roles.some((role) => role.id === 20 || role.name === "employee" || role.name === "hr"),
           roles
         };
       })
