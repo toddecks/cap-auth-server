@@ -246,6 +246,55 @@ const consumeHrRegistrationAttempt = (req) => {
   return true;
 };
 
+const sendHrAccountConfirmation = async (email, confirmationUrl) => {
+  if (!RESEND_API_KEY || !HR_INVITE_FROM_EMAIL) {
+    throw new Error("HR confirmation email is not configured.");
+  }
+
+  if (!confirmationUrl) {
+    throw new Error("Unable to generate the email confirmation link.");
+  }
+
+  const safeUrl = escapeHtml(confirmationUrl);
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="UTF-8"><title>Confirm Your CSP Benefits Account</title></head>
+    <body style="margin:0;background:#f3f6fb;font-family:Arial,sans-serif;color:#233658;">
+      <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
+        <div style="background:#ffffff;border:1px solid #d5deec;border-radius:8px;padding:28px;">
+          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Confirm Your Employee Benefits Account</h1>
+          <p style="margin:0 0 18px;line-height:1.55;">Your Coil Steel Processing employee benefits account has been created. Confirm your email address to finish setup.</p>
+          <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Confirm Email and Sign In</a>
+          <p style="margin:22px 0 0;color:#5b6a87;font-size:13px;line-height:1.5;">If you did not create this account, ignore this email or contact HR.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: HR_INVITE_FROM_EMAIL,
+      to: [email],
+      subject: "Confirm your CSP employee benefits account",
+      html
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || "The email provider rejected the confirmation email.");
+  }
+
+  return payload?.id || null;
+};
+
 const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -1628,6 +1677,10 @@ app.post("/api/hr/register", async (req, res) => {
     return res.status(503).json({ message: "HR registration is not configured." });
   }
 
+  if (!RESEND_API_KEY || !HR_INVITE_FROM_EMAIL) {
+    return res.status(503).json({ message: "HR confirmation email is not configured." });
+  }
+
   if (!consumeHrRegistrationAttempt(req)) {
     return res.status(429).json({ message: "Too many registration attempts. Try again later." });
   }
@@ -1653,10 +1706,13 @@ app.post("/api/hr/register", async (req, res) => {
   try {
     await ensureKnownRoles();
 
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    const { data: authData, error: authError } = await supabase.auth.admin.generateLink({
+      type: "signup",
       email: cleanEmail,
       password: cleanPassword,
-      email_confirm: true
+      options: {
+        redirectTo: `${HR_PORTAL_BASE_URL}/login.html?confirmed=1`
+      }
     });
 
     if (authError || !authData?.user?.id) {
@@ -1685,7 +1741,15 @@ app.post("/api/hr/register", async (req, res) => {
 
     if (roleError) throw roleError;
 
-    return res.status(201).json({ ok: true });
+    const confirmationUrl =
+      authData?.properties?.action_link ||
+      authData?.properties?.actionLink ||
+      authData?.action_link ||
+      "";
+
+    await sendHrAccountConfirmation(cleanEmail, confirmationUrl);
+
+    return res.status(201).json({ ok: true, emailConfirmationRequired: true });
   } catch (error) {
     console.error("HR registration failed:", error);
 
