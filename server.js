@@ -122,7 +122,8 @@ const ROLE_DEFINITIONS = [
   { id: 18, name: "work_order_pricing" },
   { id: 20, name: "employee" },
   { id: 21, name: "shift_reports" },
-  { id: 22, name: "todd_requests" }
+  { id: 22, name: "todd_requests" },
+  { id: 23, name: "hr_admin" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
@@ -188,7 +189,7 @@ const roleNamesFromRows = (rows) =>
     .map((row) => row?.roles?.name)
     .filter(Boolean);
 
-const requireAdminAccess = async (req, res, next) => {
+const requireRoleAccess = (requiredRoles, message, logLabel) => async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) {
@@ -203,18 +204,30 @@ const requireAdminAccess = async (req, res, next) => {
 
     const roleRows = await fetchUserRoleRows(user.id);
     const roles = roleNamesFromRows(roleRows);
-    if (!roles.includes("admin")) {
-      return res.status(403).json({ error: "Administrator access is required." });
+    if (!requiredRoles.some((role) => roles.includes(role))) {
+      return res.status(403).json({ error: message });
     }
 
     req.authUser = user;
     req.authRoles = roles;
     return next();
   } catch (error) {
-    console.error("Admin authorization failed:", error);
-    return res.status(500).json({ error: "Unable to verify administrator access." });
+    console.error(`${logLabel} authorization failed:`, error);
+    return res.status(500).json({ error: `Unable to verify ${logLabel.toLowerCase()} access.` });
   }
 };
+
+const requireAdminAccess = requireRoleAccess(
+  ["admin"],
+  "Administrator access is required.",
+  "Admin"
+);
+
+const requireHrAdminAccess = requireRoleAccess(
+  ["admin", "hr_admin"],
+  "HR administrator access is required.",
+  "HR admin"
+);
 
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -2007,7 +2020,7 @@ const sendHrInvitation = async (email, code, expiresAt) => {
   return payload?.id || null;
 };
 
-app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
+app.post("/api/hr/admin/invitations", requireHrAdminAccess, async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   const requestedRoles = Array.isArray(req.body?.roles) ? req.body.roles : [];
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -2054,7 +2067,7 @@ app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
   }
 });
 
-app.get("/api/hr/admin/users", requireAdminAccess, async (req, res) => {
+app.get("/api/hr/admin/users", requireHrAdminAccess, async (req, res) => {
   const search = String(req.query.search || "").trim().toLowerCase();
 
   try {
@@ -2101,7 +2114,7 @@ app.get("/api/hr/admin/users", requireAdminAccess, async (req, res) => {
   }
 });
 
-app.patch("/api/hr/admin/users/:id", requireAdminAccess, async (req, res) => {
+app.patch("/api/hr/admin/users/:id", requireHrAdminAccess, async (req, res) => {
   const id = String(req.params.id || "").trim();
   const requestedEmail = req.body?.email;
   const email = requestedEmail === undefined
@@ -2139,7 +2152,7 @@ app.patch("/api/hr/admin/users/:id", requireAdminAccess, async (req, res) => {
   }
 });
 
-app.post("/api/hr/admin/users/:id/temporary-password", requireAdminAccess, async (req, res) => {
+app.post("/api/hr/admin/users/:id/temporary-password", requireHrAdminAccess, async (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ error: "A user id is required." });
 
@@ -2167,7 +2180,7 @@ app.post("/api/hr/admin/users/:id/temporary-password", requireAdminAccess, async
   }
 });
 
-app.put("/api/hr/admin/users/:id/hr-access", requireAdminAccess, async (req, res) => {
+app.put("/api/hr/admin/users/:id/hr-access", requireHrAdminAccess, async (req, res) => {
   const id = String(req.params.id || "").trim();
   const enabled = req.body?.enabled === true;
   if (!id) return res.status(400).json({ error: "A user id is required." });
