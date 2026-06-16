@@ -239,9 +239,11 @@ const generateHrInvitationCode = () => {
   return formatInvitationCode(code);
 };
 
-const createHrInvitation = async (email) => {
+const createHrInvitation = async (email, requestedRoles = []) => {
   const cleanEmail = String(email || "").trim().toLowerCase();
   const expiresAt = new Date(Date.now() + HR_INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const resolvedRoleIds = await resolveRoleIds(requestedRoles);
+  const roleIds = Array.from(new Set([20, ...resolvedRoleIds]));
 
   await supabase
     .from("hr_invitations")
@@ -256,9 +258,12 @@ const createHrInvitation = async (email) => {
       .insert({
         email: cleanEmail,
         code_hash: hashInvitationCode(code),
-        expires_at: expiresAt
+        expires_at: expiresAt,
+        metadata: {
+          role_ids: roleIds
+        }
       })
-      .select("id,email,expires_at")
+      .select("id,email,expires_at,metadata")
       .single();
 
     if (!error && data?.id) {
@@ -279,7 +284,7 @@ const findValidHrInvitation = async (email, code) => {
 
   const { data, error } = await supabase
     .from("hr_invitations")
-    .select("id,email,status,expires_at")
+    .select("id,email,status,expires_at,metadata")
     .eq("code_hash", hashInvitationCode(normalizedCode))
     .maybeSingle();
 
@@ -1886,9 +1891,18 @@ app.post("/api/hr/register", async (req, res) => {
 
     if (userError) throw userError;
 
+    const invitedRoleIds = Array.isArray(invitation?.metadata?.role_ids)
+      ? invitation.metadata.role_ids
+      : [];
+    const assignedRoleIds = Array.from(new Set([20, ...(await resolveRoleIds(invitedRoleIds))]));
+    const roleRows = assignedRoleIds.map((role_id) => ({
+      user_id: createdUserId,
+      role_id
+    }));
+
     const { error: roleError } = await supabase
       .from("user_roles")
-      .insert({ user_id: createdUserId, role_id: 20 });
+      .upsert(roleRows, { onConflict: "user_id,role_id" });
 
     if (roleError) throw roleError;
 
@@ -1995,6 +2009,7 @@ const sendHrInvitation = async (email, code, expiresAt) => {
 
 app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
+  const requestedRoles = Array.isArray(req.body?.roles) ? req.body.roles : [];
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: "Enter a valid employee email address." });
   }
@@ -2010,7 +2025,7 @@ app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
       });
     }
 
-    const invitation = await createHrInvitation(email);
+    const invitation = await createHrInvitation(email, requestedRoles);
     try {
       const providerId = await sendHrInvitation(email, invitation.code, invitation.expires_at);
       await supabase
