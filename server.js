@@ -94,9 +94,9 @@ const AUTH_SUPABASE_URL = getRequiredEnv("AUTH_SUPABASE_URL");
 const AUTH_SERVICE_ROLE_KEY = getRequiredEnv("AUTH_SUPABASE_SERVICE_ROLE_KEY");
 const CHART_SUPABASE_URL = getOptionalEnv("CHART_SUPABASE_URL");
 const CHART_SERVICE_ROLE_KEY = getOptionalEnv("CHART_SUPABASE_SERVICE_ROLE_KEY");
-const HR_REGISTRATION_CODE = getOptionalEnv("HR_REGISTRATION_CODE");
 const HR_INVITE_FROM_EMAIL = getOptionalEnv("HR_INVITE_FROM_EMAIL")
   || getOptionalEnv("PRO_FORMS_FROM_EMAIL");
+const HR_INVITATION_TTL_DAYS = Number(getOptionalEnv("HR_INVITATION_TTL_DAYS") || 14);
 const HR_PORTAL_BASE_URL = (
   getOptionalEnv("HR_PORTAL_BASE_URL")
   || "https://hr.coilsteelprocessing.com"
@@ -216,11 +216,127 @@ const requireAdminAccess = async (req, res, next) => {
   }
 };
 
-const secureTextEquals = (left, right) => {
-  const leftBuffer = Buffer.from(String(left || ""), "utf8");
-  const rightBuffer = Buffer.from(String(right || ""), "utf8");
-  return leftBuffer.length === rightBuffer.length
-    && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const normalizeInvitationCode = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const formatInvitationCode = (value) =>
+  normalizeInvitationCode(value).replace(/(.{4})(?=.)/g, "$1-");
+
+const hashInvitationCode = (value) =>
+  crypto.createHash("sha256").update(normalizeInvitationCode(value)).digest("hex");
+
+const generateHrInvitationCode = () => {
+  const bytes = crypto.randomBytes(12);
+  let code = "";
+  for (const byte of bytes) {
+    code += HR_INVITE_CODE_CHARS[byte % HR_INVITE_CODE_CHARS.length];
+  }
+  return formatInvitationCode(code);
+};
+
+const createHrInvitation = async (email) => {
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const expiresAt = new Date(Date.now() + HR_INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  await supabase
+    .from("hr_invitations")
+    .update({ status: "revoked" })
+    .eq("email", cleanEmail)
+    .eq("status", "pending");
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const code = generateHrInvitationCode();
+    const { data, error } = await supabase
+      .from("hr_invitations")
+      .insert({
+        email: cleanEmail,
+        code_hash: hashInvitationCode(code),
+        expires_at: expiresAt
+      })
+      .select("id,email,expires_at")
+      .single();
+
+    if (!error && data?.id) {
+      return { ...data, code };
+    }
+
+    if (!/duplicate|unique/i.test(String(error?.message || ""))) {
+      throw error || new Error("Unable to create the invitation code.");
+    }
+  }
+
+  throw new Error("Unable to create a unique invitation code.");
+};
+
+const findValidHrInvitation = async (email, code) => {
+  const normalizedCode = normalizeInvitationCode(code);
+  if (!normalizedCode) return null;
+
+  const { data, error } = await supabase
+    .from("hr_invitations")
+    .select("id,email,status,expires_at")
+    .eq("code_hash", hashInvitationCode(normalizedCode))
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data || data.status !== "pending") return null;
+  if (String(data.email || "").trim().toLowerCase() !== String(email || "").trim().toLowerCase()) {
+    return null;
+  }
+
+  if (new Date(data.expires_at).getTime() <= Date.now()) {
+    await supabase
+      .from("hr_invitations")
+      .update({ status: "expired" })
+      .eq("id", data.id)
+      .eq("status", "pending");
+    return null;
+  }
+
+  return data;
+};
+
+const acceptHrInvitation = async (invitationId, userId) => {
+  const { data, error } = await supabase
+    .from("hr_invitations")
+    .update({
+      status: "accepted",
+      accepted_at: new Date().toISOString(),
+      accepted_user_id: userId
+    })
+    .eq("id", invitationId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.id) {
+    const usedError = new Error("The invitation code has already been used.");
+    usedError.statusCode = 403;
+    throw usedError;
+  }
+};
+
+const restoreHrInvitation = async (invitationId, userId) => {
+  if (!invitationId || !userId) return;
+  const { error } = await supabase
+    .from("hr_invitations")
+    .update({
+      status: "pending",
+      accepted_at: null,
+      accepted_user_id: null
+    })
+    .eq("id", invitationId)
+    .eq("accepted_user_id", userId);
+
+  if (error) {
+    console.error("HR invitation restore failed:", error);
+  }
 };
 
 const HR_REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
@@ -1707,10 +1823,6 @@ app.post("/api/create-user", requireAdminAccess, async (req, res) => {
 });
 
 app.post("/api/hr/register", async (req, res) => {
-  if (!HR_REGISTRATION_CODE) {
-    return res.status(503).json({ message: "HR registration is not configured." });
-  }
-
   if (!RESEND_API_KEY || !HR_INVITE_FROM_EMAIL) {
     return res.status(503).json({ message: "HR confirmation email is not configured." });
   }
@@ -1731,14 +1843,19 @@ app.post("/api/hr/register", async (req, res) => {
     return res.status(400).json({ message: "Password must be at least 8 characters." });
   }
 
-  if (!secureTextEquals(enrollmentCode, HR_REGISTRATION_CODE)) {
-    return res.status(403).json({ message: "The employee enrollment code is not valid." });
-  }
-
   let createdUserId = "";
+  let invitationId = "";
 
   try {
     await ensureKnownRoles();
+
+    const invitation = await findValidHrInvitation(cleanEmail, enrollmentCode);
+    if (!invitation) {
+      return res.status(403).json({
+        message: "The invitation code is not valid for this email or has expired."
+      });
+    }
+    invitationId = invitation.id;
 
     const { data: authData, error: authError } = await supabase.auth.admin.generateLink({
       type: "signup",
@@ -1775,6 +1892,8 @@ app.post("/api/hr/register", async (req, res) => {
 
     if (roleError) throw roleError;
 
+    await acceptHrInvitation(invitationId, createdUserId);
+
     const confirmationUrl =
       authData?.properties?.action_link ||
       authData?.properties?.actionLink ||
@@ -1789,6 +1908,7 @@ app.post("/api/hr/register", async (req, res) => {
 
     if (createdUserId) {
       try {
+        await restoreHrInvitation(invitationId, createdUserId);
         await supabase.from("users").delete().eq("id", createdUserId);
         await supabase.auth.admin.deleteUser(createdUserId);
       } catch (cleanupError) {
@@ -1796,7 +1916,10 @@ app.post("/api/hr/register", async (req, res) => {
       }
     }
 
-    return res.status(500).json({ message: "Unable to complete registration." });
+    const status = Number(error?.statusCode) || 500;
+    return res.status(status).json({
+      message: status === 403 ? error.message : "Unable to complete registration."
+    });
   }
 });
 
@@ -1816,14 +1939,19 @@ const listAllAuthUsers = async () => {
   return users;
 };
 
-const sendHrInvitation = async (email) => {
+const sendHrInvitation = async (email, code, expiresAt) => {
   if (!RESEND_API_KEY || !HR_INVITE_FROM_EMAIL) {
     throw new Error("HR invitation email is not configured.");
   }
 
-  const registerUrl = `${HR_PORTAL_BASE_URL}/register.html`;
-  const safeCode = escapeHtml(HR_REGISTRATION_CODE);
+  const registerUrl = `${HR_PORTAL_BASE_URL}/register.html?email=${encodeURIComponent(email)}`;
+  const safeCode = escapeHtml(formatInvitationCode(code));
   const safeUrl = escapeHtml(registerUrl);
+  const expirationLabel = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  }).format(new Date(expiresAt));
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -1833,10 +1961,10 @@ const sendHrInvitation = async (email) => {
         <div style="background:#ffffff;border:1px solid #d5deec;border-radius:8px;padding:28px;">
           <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Employee Benefits Account</h1>
           <p style="margin:0 0 18px;line-height:1.55;">You have been invited to create a Coil Steel Processing employee benefits account.</p>
-          <p style="margin:0 0 6px;font-size:13px;font-weight:bold;text-transform:uppercase;color:#5b6a87;">Enrollment Code</p>
+          <p style="margin:0 0 6px;font-size:13px;font-weight:bold;text-transform:uppercase;color:#5b6a87;">One-Time Invitation Code</p>
           <div style="margin:0 0 22px;padding:12px 14px;border:1px solid #d5deec;border-radius:6px;background:#f3f6fb;font-size:22px;font-weight:bold;letter-spacing:.04em;">${safeCode}</div>
           <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Create Employee Account</a>
-          <p style="margin:22px 0 0;color:#5b6a87;font-size:13px;line-height:1.5;">This code is for CSP employees only. Do not forward this invitation.</p>
+          <p style="margin:22px 0 0;color:#5b6a87;font-size:13px;line-height:1.5;">This code can be used once and expires on ${escapeHtml(expirationLabel)}. Do not forward this invitation.</p>
         </div>
       </div>
     </body>
@@ -1870,9 +1998,6 @@ app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: "Enter a valid employee email address." });
   }
-  if (!HR_REGISTRATION_CODE) {
-    return res.status(503).json({ error: "The HR enrollment code is not configured." });
-  }
 
   try {
     const authUsers = await listAllAuthUsers();
@@ -1885,8 +2010,28 @@ app.post("/api/hr/admin/invitations", requireAdminAccess, async (req, res) => {
       });
     }
 
-    const providerId = await sendHrInvitation(email);
-    return res.json({ success: true, email, providerId });
+    const invitation = await createHrInvitation(email);
+    try {
+      const providerId = await sendHrInvitation(email, invitation.code, invitation.expires_at);
+      await supabase
+        .from("hr_invitations")
+        .update({ provider_id: providerId })
+        .eq("id", invitation.id);
+
+      return res.json({
+        success: true,
+        email,
+        providerId,
+        expiresAt: invitation.expires_at
+      });
+    } catch (emailError) {
+      await supabase
+        .from("hr_invitations")
+        .update({ status: "revoked" })
+        .eq("id", invitation.id)
+        .eq("status", "pending");
+      throw emailError;
+    }
   } catch (error) {
     console.error("HR invitation failed:", error);
     const status = /not configured/i.test(error?.message || "") ? 503 : 500;
@@ -3426,6 +3571,7 @@ function quoteExtractionPrompt(mode = "quote") {
     isWorkOrder
       ? "For RCP/vendor setup or PO forms, prefer the company/location in a visible From, Vendor, PO issuer, sold-to, bill-to, or ship-from field as the customer. Example: if the form says \"From: RCP - Hamilton\" or \"Hamilton, OH\", customer should be \"Hamilton\" and customerEvidence should cite that visible From text."
       : "For RFQ/email documents, prefer the sender company or explicit customer/bill-to/sold-to name as the customer.",
+    "For pasted email headers, ignore internal CSP recipients in To/Cc. If From uses sttxna.com, customer should be Steel Technologies LLC and customerEvidence should cite the From email domain.",
     isWorkOrder
       ? "On RCP forms, do not treat an \"RCP Customer\" line as the CSP quote customer when a separate From/Vendor/issuer field is visible; that line may be an end-customer or downstream reference."
       : "Do not use downstream customer/reference lines when a direct sender or bill-to customer is visible.",
@@ -3437,6 +3583,9 @@ function quoteExtractionPrompt(mode = "quote") {
     "Numbers should be numbers when possible. Strip commas, #, lbs, inches, and quote marks from numeric values.",
     "For multiple lengths, put the first length in length and all lengths in lengths.",
     "For RFQ tables with multiple material rows, return every quoted row in coils. Each coils item should include gauge, width, length, grade/alloyGrade, coating/coatingWeight, materialType, finishedGoodType, quality/qualityType, shortTons, weight/pounds, maxLift, and liftUnitIndicator when visible.",
+    "Customer RFQ tables may use simple headers such as Gauge, Width, Length, Type, Tyoe, Grade, Quantity. Treat Type/Tyoe as materialType, and when Quantity/Qty is a large material amount such as 45,000 in an RFQ row, use it as weight/pounds, not piece count.",
+    "Treat packaging language such as lift, lifts, bundle, bundle weight, or standard pack - 4000# lifts as maxLift when paired with a pounds/# value. Do not use that lift value as coil weight.",
+    "Some pasted RFQ tables list all headers first, then each row's values below the headers. Reconstruct those rows in header order.",
     "If an RFQ table has 4 visible item rows, coils must contain 4 items. If it has 2 visible item rows, coils must contain 2 items. Never return only the last row, thickest row, or a representative row.",
     "Example: rows with gauges 0.0785, 0.164, 0.100, and 0.118 must become four separate coils items, preserving each row's grade, coating, width, length, Short Tons / RFQ, Lift Unit Indicator, and Max Lift.",
     "If a row has Short Tons / RFQ, convert it to pounds by multiplying by 2000 and put that pounds value on that coils item. Do not collapse multiple RFQ rows into one coil.",
