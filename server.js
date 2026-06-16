@@ -2397,6 +2397,8 @@ const updateUserRolesHandler = async (req, res) => {
 
 app.put("/api/users/:id/roles", requireAdminAccess, updateUserRolesHandler);
 app.post("/api/users/:id/roles", requireAdminAccess, updateUserRolesHandler);
+app.put("/api/hr/admin/users/:id/roles", requireHrAdminAccess, updateUserRolesHandler);
+app.post("/api/hr/admin/users/:id/roles", requireHrAdminAccess, updateUserRolesHandler);
 
 app.post("/api/users/:id/roles/add", requireAdminAccess, async (req, res) => {
   const { id } = req.params;
