@@ -2292,7 +2292,7 @@ app.get("/api/users", requireAdminAccess, async (req, res) => {
 });
 
 // Delete user (removes roles + auth user)
-app.delete("/api/users/:id", requireAdminAccess, async (req, res) => {
+const deleteUserHandler = async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -2310,7 +2310,10 @@ app.delete("/api/users/:id", requireAdminAccess, async (req, res) => {
     console.error("Delete user error:", err);
     return res.status(500).json({ error: "Failed to delete user" });
   }
-});
+};
+
+app.delete("/api/users/:id", requireAdminAccess, deleteUserHandler);
+app.delete("/api/hr/admin/users/:id", requireHrAdminAccess, deleteUserHandler);
 
 // Update user profile and login email
 const updateUserProfileHandler = async (req, res) => {
