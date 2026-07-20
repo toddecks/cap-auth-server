@@ -120,6 +120,7 @@ const ROLE_DEFINITIONS = [
   { id: 16, name: "alarm_logs" },
   { id: 17, name: "quote_calculator" },
   { id: 18, name: "work_order_pricing" },
+  { id: 19, name: "website_leads" },
   { id: 20, name: "employee" },
   { id: 21, name: "shift_reports" },
   { id: 22, name: "todd_requests" },
@@ -189,7 +190,7 @@ const roleNamesFromRows = (rows) =>
     .map((row) => row?.roles?.name)
     .filter(Boolean);
 
-const requireRoleAccess = (requiredRoles, message, logLabel) => async (req, res, next) => {
+const requireRoleAccess = (requiredRoles, message, logLabel, allowedEmails = []) => async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) {
@@ -204,7 +205,8 @@ const requireRoleAccess = (requiredRoles, message, logLabel) => async (req, res,
 
     const roleRows = await fetchUserRoleRows(user.id);
     const roles = roleNamesFromRows(roleRows);
-    if (!requiredRoles.some((role) => roles.includes(role))) {
+    const email = String(user.email || "").trim().toLowerCase();
+    if (!requiredRoles.some((role) => roles.includes(role)) && !allowedEmails.includes(email)) {
       return res.status(403).json({ error: message });
     }
 
@@ -227,6 +229,13 @@ const requireHrAdminAccess = requireRoleAccess(
   ["admin", "hr_admin"],
   "HR administrator access is required.",
   "HR admin"
+);
+
+const requireWebsiteLeadAccess = requireRoleAccess(
+  ["admin", "website_leads"],
+  "Website traffic access is required.",
+  "Website traffic",
+  ["kyle@coilsteelprocessing.com"]
 );
 
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -3827,6 +3836,58 @@ app.post("/api/ai-analyze", async (req, res) => {
   } catch (err) {
     console.error("AI analyze endpoint error:", err);
     return res.status(500).json({ error: err.message || "AI analysis request failed." });
+  }
+});
+
+// Protected website traffic feed. IP and location data never receives a public
+// browser database key; it is returned only after the BI Supabase session and
+// the admin/website_leads role have both been verified.
+app.get("/api/web-visits/admin", requireWebsiteLeadAccess, async (req, res) => {
+  if (!chartSupabase) {
+    return res.status(503).json({ error: "Website traffic storage is not configured." });
+  }
+
+  const daysRaw = Number(req.query.days || 30);
+  const days = Math.min(Math.max(Number.isFinite(daysRaw) ? Math.round(daysRaw) : 30, 1), 3650);
+  const limitRaw = Number(req.query.limit || 5000);
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? Math.round(limitRaw) : 5000, 100), 10000);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const columns = [
+    "id", "visited_at", "site", "page_url", "page_path", "pathname", "page_title",
+    "referrer", "source_host", "visitor_id", "session_id", "event_name", "campaign_name",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid",
+    "gbraid", "wbraid", "fbclid", "msclkid", "li_fat_id", "landing_page", "ip_address",
+    "ip_hash", "user_agent", "device_type", "browser", "os", "timezone", "viewport_width",
+    "viewport_height", "screen_width", "screen_height", "scroll_depth", "organization",
+    "reverse_dns", "network_name", "ip_city", "ip_region", "ip_country", "ip_latitude",
+    "ip_longitude", "is_steel_company", "steel_company_name", "steel_company_segment",
+    "steel_confidence", "steel_reason", "metadata"
+  ].join(",");
+
+  try {
+    const { data, error } = await chartSupabase
+      .from("web_visitor_events")
+      .select(columns)
+      .gte("visited_at", since)
+      .or("site.ilike.%expansion%,pathname.eq./expansion.html,page_path.ilike.%expansion%")
+      .order("visited_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error("Website traffic query failed:", error);
+      return res.status(400).json({ error: error.message || "Website traffic query failed." });
+    }
+
+    return res.json({
+      days,
+      limit,
+      count: Array.isArray(data) ? data.length : 0,
+      rows: Array.isArray(data) ? data : [],
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Website traffic endpoint failed:", error);
+    return res.status(500).json({ error: error.message || "Website traffic endpoint failed." });
   }
 });
 
