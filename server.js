@@ -452,10 +452,6 @@ const EXPANSION_LEAD_STORE_URL = String(
   process.env.EXPANSION_LEAD_STORE_URL
   || "https://wtjrucerrbzwxnwhqgma.supabase.co/functions/v1/expansion-lead-store"
 ).trim();
-const EXPANSION_EVENT_COLLECTOR_URL = String(
-  process.env.EXPANSION_EVENT_COLLECTOR_URL
-  || "https://cap-auth-server-1.onrender.com/api/web-visits"
-).trim();
 const PRO_MAINTENANCE_TEAMS_WEBHOOK_URL = String(process.env.PRO_MAINTENANCE_TEAMS_WEBHOOK_URL || "").trim();
 const PRO_MAINTENANCE_ACK_BASE_URL = String(process.env.PRO_MAINTENANCE_ACK_BASE_URL || "").trim();
 
@@ -3868,21 +3864,17 @@ app.post("/api/expansion-events", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
     const clientIp = expansionLeadIp(req);
-    const response = await fetch(EXPANSION_EVENT_COLLECTOR_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(clientIp ? { "X-Forwarded-For": clientIp } : {}),
-        ...(req.get("user-agent") ? { "User-Agent": req.get("user-agent") } : {}),
-        ...(req.get("origin") ? { Origin: req.get("origin") } : {})
-      },
-      body: JSON.stringify(req.body || {})
+    const payload = await expansionLeadStoreRequest({
+      action: "traffic_store",
+      clientIp,
+      userAgent: expansionLeadText(req.get("user-agent"), 1200),
+      event: req.body || {}
     });
-    const payload = await response.json().catch(() => ({}));
-    return res.status(response.status).json(payload);
+    return res.status(201).json(payload);
   } catch (error) {
-    console.error("Expansion traffic forwarding failed:", error);
-    return res.status(502).json({ error: "Unable to record this visit." });
+    console.error("Expansion traffic storage failed:", error);
+    const statusCode = Number(error?.statusCode) || 502;
+    return res.status(statusCode).json({ error: error?.message || "Unable to record this visit." });
   }
 });
 

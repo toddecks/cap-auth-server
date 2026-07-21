@@ -25,6 +25,38 @@ const safeMetadata = (value: unknown) => {
   return Object.fromEntries(entries);
 };
 
+const numberOrNull = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const sha256 = async (value: string) => {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+const sourceHost = (value: unknown) => {
+  try {
+    return new URL(text(value, 1200)).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+
+const lookupIp = async (ipAddress: string) => {
+  if (!ipAddress) return null;
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ipAddress)}`);
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success !== false ? payload : null;
+  } catch {
+    return null;
+  }
+};
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const authSupabaseUrl = "https://pxydsxadvmuffniluokk.supabase.co";
 const authSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4eWRzeGFkdm11ZmZuaWx1b2trIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzNDc4NzIsImV4cCI6MjA4MDkyMzg3Mn0.pyR6evjkvXIItcBuf8qIXBYOtOZIZIaE_0NEVGShFrI";
@@ -104,6 +136,85 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     const action = text(body?.action, 30);
+
+    if (action === "traffic_store") {
+      const incoming = body?.event || {};
+      const campaign = incoming?.campaign && typeof incoming.campaign === "object"
+        ? incoming.campaign
+        : {};
+      const clientIp = text(body?.clientIp, 100);
+      const geo = await lookupIp(clientIp);
+      const organization = text(geo?.connection?.org || geo?.connection?.isp, 300) || null;
+      const organizationText = String(organization || "").toLowerCase();
+      const steelMatch = /(steel|metal|coil|fabricat|manufactur|stamping|forming|service center)/i.test(organizationText)
+        && !/(broadband|cable|telecom|communications|hosting|cloud|internet|wireless)/i.test(organizationText);
+      const eventName = text(incoming?.eventName || incoming?.eventType, 80) || "page_view";
+      const viewport = incoming?.viewport && typeof incoming.viewport === "object" ? incoming.viewport : {};
+      const screen = incoming?.screen && typeof incoming.screen === "object" ? incoming.screen : {};
+      const metadata = safeMetadata(incoming?.metadata || incoming?.extra);
+      const row = {
+        visited_at: new Date().toISOString(),
+        site: text(incoming?.site, 300) || null,
+        page_url: text(incoming?.url, 1200) || null,
+        page_path: text(incoming?.path || incoming?.pathname, 1200) || null,
+        pathname: text(incoming?.pathname, 1200) || null,
+        page_title: text(incoming?.title, 500) || null,
+        referrer: text(incoming?.referrer, 1200) || null,
+        source_host: sourceHost(incoming?.referrer) || null,
+        visitor_id: text(incoming?.visitorId, 200) || null,
+        session_id: text(incoming?.sessionId, 200) || null,
+        event_name: eventName,
+        campaign_name: text(incoming?.campaignName, 300) || null,
+        utm_source: text(campaign?.utm_source, 300) || null,
+        utm_medium: text(campaign?.utm_medium, 300) || null,
+        utm_campaign: text(campaign?.utm_campaign, 300) || null,
+        utm_term: text(campaign?.utm_term, 300) || null,
+        utm_content: text(campaign?.utm_content, 300) || null,
+        gclid: text(campaign?.gclid, 300) || null,
+        gbraid: text(campaign?.gbraid, 300) || null,
+        wbraid: text(campaign?.wbraid, 300) || null,
+        fbclid: text(campaign?.fbclid, 300) || null,
+        msclkid: text(campaign?.msclkid, 300) || null,
+        li_fat_id: text(campaign?.li_fat_id, 300) || null,
+        landing_page: text(incoming?.landingPage, 1200) || null,
+        ip_address: clientIp || null,
+        ip_hash: clientIp ? await sha256(clientIp) : null,
+        user_agent: text(body?.userAgent, 1200) || null,
+        organization,
+        reverse_dns: text(geo?.connection?.domain, 300) || null,
+        network_name: text(geo?.connection?.isp, 300) || organization,
+        ip_city: text(geo?.city, 200) || null,
+        ip_region: text(geo?.region, 200) || null,
+        ip_country: text(geo?.country, 200) || null,
+        ip_latitude: numberOrNull(geo?.latitude),
+        ip_longitude: numberOrNull(geo?.longitude),
+        is_steel_company: steelMatch,
+        steel_company_name: steelMatch ? organization : null,
+        steel_company_segment: steelMatch ? "IP organization match" : null,
+        steel_confidence: steelMatch ? 0.75 : 0,
+        steel_reason: steelMatch ? "Steel or manufacturing keyword in the visitor network organization." : null,
+        device_type: text(incoming?.deviceType, 80) || null,
+        browser: text(incoming?.browser, 80) || null,
+        os: text(incoming?.os, 80) || null,
+        timezone: text(incoming?.timezone, 120) || null,
+        viewport_width: numberOrNull(viewport?.width),
+        viewport_height: numberOrNull(viewport?.height),
+        screen_width: numberOrNull(screen?.width),
+        screen_height: numberOrNull(screen?.height),
+        scroll_depth: numberOrNull(incoming?.scrollDepth),
+        metadata
+      };
+
+      const inserted = await restRequest("web_visitor_events?select=id,visited_at", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify(row)
+      });
+      if (!Array.isArray(inserted) || inserted.length !== 1) {
+        throw new Error("Supabase did not return the traffic record.");
+      }
+      return json({ ok: true, id: inserted[0].id, visitedAt: inserted[0].visited_at }, 201);
+    }
 
     if (action === "list") {
       const authorization = await authorizeLeadViewer(req);
