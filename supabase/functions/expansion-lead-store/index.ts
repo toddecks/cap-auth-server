@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Headers": "authorization, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Content-Type": "application/json"
 };
@@ -26,6 +26,8 @@ const safeMetadata = (value: unknown) => {
 };
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const authSupabaseUrl = "https://pxydsxadvmuffniluokk.supabase.co";
+const authSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4eWRzeGFkdm11ZmZuaWx1b2trIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzNDc4NzIsImV4cCI6MjA4MDkyMzg3Mn0.pyR6evjkvXIItcBuf8qIXBYOtOZIZIaE_0NEVGShFrI";
 const legacySecret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const secretDictionary = (() => {
   try {
@@ -57,6 +59,44 @@ const restRequest = async (path: string, init: RequestInit = {}) => {
   return payload;
 };
 
+const authorizeLeadViewer = async (req: Request) => {
+  const authorization = text(req.headers.get("authorization"), 5000);
+  if (!/^Bearer\s+\S+/i.test(authorization)) {
+    return { error: "Missing Supabase access token.", status: 401 };
+  }
+
+  const authHeaders = {
+    apikey: authSupabaseAnonKey,
+    Authorization: authorization,
+    "Content-Type": "application/json"
+  };
+  const userResponse = await fetch(`${authSupabaseUrl}/auth/v1/user`, { headers: authHeaders });
+  const user = await userResponse.json().catch(() => null);
+  if (!userResponse.ok || !user?.id) {
+    return { error: "Invalid or expired Supabase session.", status: 401 };
+  }
+
+  const rolesResponse = await fetch(
+    `${authSupabaseUrl}/rest/v1/user_roles?user_id=eq.${encodeURIComponent(user.id)}&select=roles(name)`,
+    { headers: authHeaders }
+  );
+  const roleRows = await rolesResponse.json().catch(() => []);
+  if (!rolesResponse.ok) {
+    return { error: "Unable to verify Website Traffic access.", status: 500 };
+  }
+
+  const roles = (Array.isArray(roleRows) ? roleRows : [])
+    .map((row) => row?.roles?.name)
+    .filter(Boolean);
+  const email = text(user.email, 254).toLowerCase();
+  if (!roles.some((role) => role === "admin" || role === "website_leads")
+      && email !== "kyle@coilsteelprocessing.com") {
+    return { error: "Website traffic access is required.", status: 403 };
+  }
+
+  return { user, roles };
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
@@ -64,6 +104,20 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json();
     const action = text(body?.action, 30);
+
+    if (action === "list") {
+      const authorization = await authorizeLeadViewer(req);
+      if (authorization.error) return json({ error: authorization.error }, authorization.status);
+
+      const rows = await restRequest(
+        "expansion_leads?select=id,submitted_at,name,company,email&order=submitted_at.desc&limit=250"
+      );
+      return json({
+        rows: Array.isArray(rows) ? rows : [],
+        count: Array.isArray(rows) ? rows.length : 0,
+        generatedAt: new Date().toISOString()
+      });
+    }
 
     if (action === "email_status") {
       const id = Number(body?.id);

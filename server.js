@@ -3919,10 +3919,13 @@ const sendExpansionLeadEmail = async (lead) => {
   return payload?.id || null;
 };
 
-const expansionLeadStoreRequest = async (payload) => {
+const expansionLeadStoreRequest = async (payload, accessToken = "") => {
   const response = await fetch(EXPANSION_LEAD_STORE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+    },
     body: JSON.stringify(payload)
   });
   const result = await response.json().catch(() => ({}));
@@ -4014,6 +4017,23 @@ app.post("/api/expansion-leads", async (req, res) => {
     console.error("Expansion lead submission failed:", error);
     const statusCode = Number(error?.statusCode) || 500;
     return res.status(statusCode).json({ error: error?.message || "We could not submit your request. Please try again or call CSP." });
+  }
+});
+
+app.get("/api/expansion-leads/admin", requireWebsiteLeadAccess, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const payload = await expansionLeadStoreRequest({ action: "list" }, getBearerToken(req));
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    return res.json({
+      rows,
+      count: rows.length,
+      generatedAt: payload.generatedAt || new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Expansion lead admin endpoint failed:", error);
+    const statusCode = Number(error?.statusCode) || 500;
+    return res.status(statusCode).json({ error: error?.message || "Unable to load form responses." });
   }
 });
 
