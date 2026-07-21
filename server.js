@@ -448,6 +448,10 @@ const EXPANSION_LEAD_RECIPIENTS = String(
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const EXPANSION_LEAD_STORE_URL = String(
+  process.env.EXPANSION_LEAD_STORE_URL
+  || "https://wtjrucerrbzwxnwhqgma.supabase.co/functions/v1/expansion-lead-store"
+).trim();
 const PRO_MAINTENANCE_TEAMS_WEBHOOK_URL = String(process.env.PRO_MAINTENANCE_TEAMS_WEBHOOK_URL || "").trim();
 const PRO_MAINTENANCE_ACK_BASE_URL = String(process.env.PRO_MAINTENANCE_ACK_BASE_URL || "").trim();
 
@@ -3915,12 +3919,23 @@ const sendExpansionLeadEmail = async (lead) => {
   return payload?.id || null;
 };
 
+const expansionLeadStoreRequest = async (payload) => {
+  const response = await fetch(EXPANSION_LEAD_STORE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(result?.error || "Supabase rejected the lead record.");
+    error.statusCode = response.status;
+    throw error;
+  }
+  return result;
+};
+
 app.post("/api/expansion-leads", async (req, res) => {
   res.set("Cache-Control", "no-store");
-
-  if (!chartSupabase) {
-    return res.status(503).json({ error: "Lead storage is not configured." });
-  }
 
   // Quietly accept bot submissions that fill the hidden website field.
   if (expansionLeadText(req.body?.website, 200)) {
@@ -3959,77 +3974,36 @@ app.post("/api/expansion-leads", async (req, res) => {
   }
 
   try {
-    const { data: existing, error: existingError } = await chartSupabase
-      .from("expansion_leads")
-      .select("id,email_status,resend_email_id")
-      .eq("submission_token", lead.submission_token)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existing?.email_status === "sent") {
-      return res.json({ success: true, recorded: true, emailed: true, id: existing.id });
-    }
-
-    if (lead.ip_address && !existing) {
-      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-      const { count, error: rateError } = await chartSupabase
-        .from("expansion_leads")
-        .select("id", { count: "exact", head: true })
-        .eq("ip_address", lead.ip_address)
-        .gte("submitted_at", since);
-      if (rateError) throw rateError;
-      if (Number(count || 0) >= 5) {
-        return res.status(429).json({ error: "Too many requests. Please call CSP or try again later." });
-      }
-    }
-
-    let storedLead;
-    if (existing) {
-      const { data, error } = await chartSupabase
-        .from("expansion_leads")
-        .update({ ...lead, email_status: "pending", email_error: null })
-        .eq("id", existing.id)
-        .select("*")
-        .single();
-      if (error) throw error;
-      storedLead = data;
-    } else {
-      const { data, error } = await chartSupabase
-        .from("expansion_leads")
-        .insert(lead)
-        .select("*")
-        .single();
-      if (error) throw error;
-      storedLead = data;
+    const stored = await expansionLeadStoreRequest({ action: "store", lead });
+    if (stored.emailStatus === "sent") {
+      return res.json({ success: true, recorded: true, emailed: true, id: stored.id });
     }
 
     try {
-      const providerId = await sendExpansionLeadEmail(storedLead);
-      const { error: updateError } = await chartSupabase
-        .from("expansion_leads")
-        .update({
-          email_status: "sent",
-          email_sent_at: new Date().toISOString(),
-          resend_email_id: providerId,
-          email_error: null
-        })
-        .eq("id", storedLead.id);
-      if (updateError) console.error("Expansion lead email status update failed:", updateError);
+      const providerId = await sendExpansionLeadEmail({ ...lead, id: stored.id });
+      await expansionLeadStoreRequest({
+        action: "email_status",
+        id: stored.id,
+        submissionToken: lead.submission_token,
+        emailStatus: "sent",
+        resendEmailId: providerId
+      });
 
       return res.status(201).json({
         success: true,
         recorded: true,
         emailed: true,
-        id: storedLead.id
+        id: stored.id
       });
     } catch (emailError) {
       console.error("Expansion lead email failed:", emailError);
-      await chartSupabase
-        .from("expansion_leads")
-        .update({
-          email_status: "failed",
-          email_error: expansionLeadText(emailError?.message, 1000)
-        })
-        .eq("id", storedLead.id);
+      await expansionLeadStoreRequest({
+        action: "email_status",
+        id: stored.id,
+        submissionToken: lead.submission_token,
+        emailStatus: "failed",
+        emailError: expansionLeadText(emailError?.message, 1000)
+      }).catch((statusError) => console.error("Expansion lead failure status update failed:", statusError));
 
       return res.status(502).json({
         error: "Your request was recorded, but the notification email could not be sent. Please call CSP if your need is urgent.",
@@ -4038,7 +4012,8 @@ app.post("/api/expansion-leads", async (req, res) => {
     }
   } catch (error) {
     console.error("Expansion lead submission failed:", error);
-    return res.status(500).json({ error: "We could not submit your request. Please try again or call CSP." });
+    const statusCode = Number(error?.statusCode) || 500;
+    return res.status(statusCode).json({ error: error?.message || "We could not submit your request. Please try again or call CSP." });
   }
 });
 
