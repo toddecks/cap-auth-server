@@ -137,6 +137,38 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const action = text(body?.action, 30);
 
+    if (action === "traffic_list") {
+      const authorization = await authorizeLeadViewer(req);
+      if (authorization.error) return json({ error: authorization.error }, authorization.status);
+
+      const rawDays = Number(body?.days || 30);
+      const days = Math.min(Math.max(Number.isFinite(rawDays) ? Math.round(rawDays) : 30, 1), 3650);
+      const rawLimit = Number(body?.limit || 5000);
+      const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? Math.round(rawLimit) : 5000, 100), 10000);
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const columns = [
+        "id", "visited_at", "site", "page_url", "page_path", "pathname", "page_title",
+        "referrer", "source_host", "visitor_id", "session_id", "event_name", "campaign_name",
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid",
+        "gbraid", "wbraid", "fbclid", "msclkid", "li_fat_id", "landing_page", "ip_address",
+        "ip_hash", "user_agent", "device_type", "browser", "os", "timezone", "viewport_width",
+        "viewport_height", "screen_width", "screen_height", "scroll_depth", "organization",
+        "reverse_dns", "network_name", "ip_city", "ip_region", "ip_country", "ip_latitude",
+        "ip_longitude", "is_steel_company", "steel_company_name", "steel_company_segment",
+        "steel_confidence", "steel_reason", "metadata"
+      ].join(",");
+      const rows = await restRequest(
+        `web_visitor_events?select=${columns}&site=ilike.*expansion*&visited_at=gte.${encodeURIComponent(since)}&order=visited_at.desc&limit=${limit}`
+      );
+      return json({
+        days,
+        limit,
+        rows: Array.isArray(rows) ? rows : [],
+        count: Array.isArray(rows) ? rows.length : 0,
+        generatedAt: new Date().toISOString()
+      });
+    }
+
     if (action === "traffic_store") {
       const incoming = body?.event || {};
       const campaign = incoming?.campaign && typeof incoming.campaign === "object"

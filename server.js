@@ -4055,6 +4055,32 @@ app.get("/api/expansion-leads/admin", requireWebsiteLeadAccess, async (req, res)
   }
 });
 
+app.get("/api/expansion-traffic/admin", requireWebsiteLeadAccess, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const daysRaw = Number(req.query.days || 30);
+    const days = Math.min(Math.max(Number.isFinite(daysRaw) ? Math.round(daysRaw) : 30, 1), 3650);
+    const limitRaw = Number(req.query.limit || 5000);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? Math.round(limitRaw) : 5000, 100), 10000);
+    const payload = await expansionLeadStoreRequest(
+      { action: "traffic_list", days, limit },
+      getBearerToken(req)
+    );
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    return res.json({
+      days,
+      limit,
+      rows,
+      count: rows.length,
+      generatedAt: payload.generatedAt || new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Expansion traffic admin endpoint failed:", error);
+    const statusCode = Number(error?.statusCode) || 500;
+    return res.status(statusCode).json({ error: error?.message || "Unable to load ad traffic." });
+  }
+});
+
 // Protected website traffic feed. IP and location data never receives a public
 // browser database key; it is returned only after the BI Supabase session and
 // the admin/website_leads role have both been verified.
