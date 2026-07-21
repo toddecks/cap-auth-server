@@ -441,6 +441,13 @@ const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
   .filter(Boolean);
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
+const EXPANSION_LEAD_RECIPIENTS = String(
+  process.env.EXPANSION_LEAD_RECIPIENTS
+  || "kyle@coilsteelprocessing.com,josh@coilsteelprocessing.com"
+)
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 const PRO_MAINTENANCE_TEAMS_WEBHOOK_URL = String(process.env.PRO_MAINTENANCE_TEAMS_WEBHOOK_URL || "").trim();
 const PRO_MAINTENANCE_ACK_BASE_URL = String(process.env.PRO_MAINTENANCE_ACK_BASE_URL || "").trim();
 
@@ -3836,6 +3843,202 @@ app.post("/api/ai-analyze", async (req, res) => {
   } catch (err) {
     console.error("AI analyze endpoint error:", err);
     return res.status(500).json({ error: err.message || "AI analysis request failed." });
+  }
+});
+
+const expansionLeadText = (value, maxLength) =>
+  String(value ?? "").trim().slice(0, maxLength);
+
+const expansionLeadIp = (req) => {
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  return expansionLeadText(forwarded || req.ip || "", 100);
+};
+
+const sendExpansionLeadEmail = async (lead) => {
+  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL || EXPANSION_LEAD_RECIPIENTS.length === 0) {
+    throw new Error("Expansion lead email delivery is not configured.");
+  }
+
+  const rows = [
+    ["Name", lead.name],
+    ["Company", lead.company],
+    ["Email", lead.email],
+    ["Phone", lead.phone],
+    ["Processing need", lead.material_need],
+    ["Opportunity timing", lead.opportunity_timing]
+  ].map(([label, value]) => `
+    <tr>
+      <td style="padding:9px 12px;border-bottom:1px solid #d8dee9;color:#5f6c80;font-size:13px;font-weight:700;">${escapeHtml(label)}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #d8dee9;color:#172132;font-size:14px;">${escapeHtml(value)}</td>
+    </tr>
+  `).join("");
+
+  const html = `
+    <div style="margin:0;padding:28px;background:#f6f8fb;font-family:Arial,sans-serif;color:#172132;">
+      <div style="max-width:680px;margin:0 auto;overflow:hidden;border:1px solid #d8dee9;border-radius:10px;background:#ffffff;">
+        <div style="padding:24px 28px;background:#142033;color:#ffffff;">
+          <div style="color:#f1a91e;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;">Expansion Landing Page</div>
+          <h1 style="margin:8px 0 0;font-size:26px;line-height:1.2;">New processing inquiry</h1>
+        </div>
+        <div style="padding:24px 28px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;border:1px solid #d8dee9;">${rows}</table>
+          <h2 style="margin:24px 0 8px;font-size:17px;color:#233658;">Message</h2>
+          <p style="margin:0;white-space:pre-wrap;color:#5f6c80;font-size:14px;line-height:1.55;">${escapeHtml(lead.message || "No additional message provided.")}</p>
+          <p style="margin:24px 0 0;color:#7a8597;font-size:12px;">Submitted ${escapeHtml(new Date(lead.submitted_at).toLocaleString("en-US", { timeZone: "America/New_York", timeZoneName: "short" }))}</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: PRO_FORMS_FROM_EMAIL,
+      to: EXPANSION_LEAD_RECIPIENTS,
+      reply_to: lead.email,
+      subject: `[Website Lead] ${lead.company} — ${lead.material_need}`,
+      html
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || "Resend rejected the expansion lead email.");
+  }
+
+  return payload?.id || null;
+};
+
+app.post("/api/expansion-leads", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  if (!chartSupabase) {
+    return res.status(503).json({ error: "Lead storage is not configured." });
+  }
+
+  // Quietly accept bot submissions that fill the hidden website field.
+  if (expansionLeadText(req.body?.website, 200)) {
+    return res.json({ success: true });
+  }
+
+  const lead = {
+    submission_token: expansionLeadText(req.body?.submissionToken, 50),
+    submitted_at: new Date().toISOString(),
+    name: expansionLeadText(req.body?.name, 120),
+    company: expansionLeadText(req.body?.company, 160),
+    email: expansionLeadText(req.body?.email, 254).toLowerCase(),
+    phone: expansionLeadText(req.body?.phone, 60),
+    material_need: expansionLeadText(req.body?.material, 180),
+    opportunity_timing: expansionLeadText(req.body?.opportunity, 140),
+    message: expansionLeadText(req.body?.message, 5000) || null,
+    page_url: expansionLeadText(req.body?.pageUrl, 1200) || null,
+    referrer: expansionLeadText(req.body?.referrer, 1200) || null,
+    visitor_id: expansionLeadText(req.body?.visitorId, 160) || null,
+    session_id: expansionLeadText(req.body?.sessionId, 160) || null,
+    ip_address: expansionLeadIp(req) || null,
+    user_agent: expansionLeadText(req.get("user-agent"), 1000) || null,
+    metadata: sanitizePlainObject(req.body?.metadata)
+  };
+
+  const required = ["name", "company", "email", "phone", "material_need", "opportunity_timing"];
+  const missing = required.filter((key) => !lead[key]);
+  if (missing.length > 0) {
+    return res.status(400).json({ error: "Complete all required fields." });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(lead.submission_token)) {
+    return res.status(400).json({ error: "The submission could not be identified. Refresh the page and try again." });
+  }
+
+  try {
+    const { data: existing, error: existingError } = await chartSupabase
+      .from("expansion_leads")
+      .select("id,email_status,resend_email_id")
+      .eq("submission_token", lead.submission_token)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.email_status === "sent") {
+      return res.json({ success: true, recorded: true, emailed: true, id: existing.id });
+    }
+
+    if (lead.ip_address && !existing) {
+      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { count, error: rateError } = await chartSupabase
+        .from("expansion_leads")
+        .select("id", { count: "exact", head: true })
+        .eq("ip_address", lead.ip_address)
+        .gte("submitted_at", since);
+      if (rateError) throw rateError;
+      if (Number(count || 0) >= 5) {
+        return res.status(429).json({ error: "Too many requests. Please call CSP or try again later." });
+      }
+    }
+
+    let storedLead;
+    if (existing) {
+      const { data, error } = await chartSupabase
+        .from("expansion_leads")
+        .update({ ...lead, email_status: "pending", email_error: null })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (error) throw error;
+      storedLead = data;
+    } else {
+      const { data, error } = await chartSupabase
+        .from("expansion_leads")
+        .insert(lead)
+        .select("*")
+        .single();
+      if (error) throw error;
+      storedLead = data;
+    }
+
+    try {
+      const providerId = await sendExpansionLeadEmail(storedLead);
+      const { error: updateError } = await chartSupabase
+        .from("expansion_leads")
+        .update({
+          email_status: "sent",
+          email_sent_at: new Date().toISOString(),
+          resend_email_id: providerId,
+          email_error: null
+        })
+        .eq("id", storedLead.id);
+      if (updateError) console.error("Expansion lead email status update failed:", updateError);
+
+      return res.status(201).json({
+        success: true,
+        recorded: true,
+        emailed: true,
+        id: storedLead.id
+      });
+    } catch (emailError) {
+      console.error("Expansion lead email failed:", emailError);
+      await chartSupabase
+        .from("expansion_leads")
+        .update({
+          email_status: "failed",
+          email_error: expansionLeadText(emailError?.message, 1000)
+        })
+        .eq("id", storedLead.id);
+
+      return res.status(502).json({
+        error: "Your request was recorded, but the notification email could not be sent. Please call CSP if your need is urgent.",
+        recorded: true
+      });
+    }
+  } catch (error) {
+    console.error("Expansion lead submission failed:", error);
+    return res.status(500).json({ error: "We could not submit your request. Please try again or call CSP." });
   }
 });
 
