@@ -2771,6 +2771,13 @@ app.post("/api/pro/maintenance-orders/:publicToken/acknowledge", async (req, res
 const TODD_REQUEST_SELECT = "id,project,requested_by,requested_by_email,date_requested,date_needed,priority,priority_rank,status,notes,created_at,updated_at,completed_at,metadata";
 const TODD_PRIORITIES = new Set(["hot", "urgent", "high", "normal", "low"]);
 const TODD_STATUSES = new Set(["not_started", "in_progress", "waiting", "on_hold", "long_term", "done"]);
+const TODD_ATTACHMENT_BUCKET = "todd-request-attachments";
+const TODD_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const TODD_ATTACHMENT_EXTENSIONS = new Set([
+  ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif",
+  ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt",
+  ".zip", ".mp4", ".mov"
+]);
 const TODD_WORK_REQUEST_ADMIN_EMAILS = new Set(
   String(process.env.TODD_WORK_REQUEST_ADMIN_EMAILS || "todd@coilsteelprocessing.com,josh@coilsteelprocessing.com")
     .split(",")
@@ -2786,6 +2793,84 @@ function normalizeToddPriority(value) {
 function normalizeToddStatus(value) {
   const status = coerceText(value, 30).toLowerCase().replace(/[\s-]+/g, "_");
   return TODD_STATUSES.has(status) ? status : "not_started";
+}
+
+function normalizeToddAttachment(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const originalName = coerceText(value.name, 220);
+  const contentType = coerceText(value.type, 160) || "application/octet-stream";
+  const declaredSize = coerceInteger(value.size);
+  const base64 = String(value.base64 || "").replace(/\s+/g, "");
+  const extension = path.extname(originalName).toLowerCase();
+
+  if (!originalName || !base64) {
+    const error = new Error("The selected attachment is incomplete.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!TODD_ATTACHMENT_EXTENSIONS.has(extension)) {
+    const error = new Error("This attachment file type is not supported.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!declaredSize || declaredSize < 1 || declaredSize > TODD_ATTACHMENT_MAX_BYTES) {
+    const error = new Error("The attachment must be 20 MB or smaller.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length || buffer.length !== declaredSize || buffer.length > TODD_ATTACHMENT_MAX_BYTES) {
+    const error = new Error("The attachment could not be validated.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { originalName, contentType, extension, buffer };
+}
+
+async function ensureToddAttachmentBucket() {
+  if (!chartSupabase) throw new Error("Work request storage is not configured.");
+  const { data: buckets, error: listError } = await chartSupabase.storage.listBuckets();
+  if (listError) throw listError;
+  if ((buckets || []).some((bucket) => bucket.id === TODD_ATTACHMENT_BUCKET)) return;
+
+  const { error: createError } = await chartSupabase.storage.createBucket(TODD_ATTACHMENT_BUCKET, {
+    public: false,
+    fileSizeLimit: TODD_ATTACHMENT_MAX_BYTES
+  });
+  if (createError && !/already exists|duplicate/i.test(String(createError.message || ""))) {
+    throw createError;
+  }
+}
+
+async function uploadToddAttachment(rawAttachment) {
+  const attachment = normalizeToddAttachment(rawAttachment);
+  if (!attachment) return null;
+  await ensureToddAttachmentBucket();
+
+  const safeBaseName = path.basename(attachment.originalName, attachment.extension)
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "attachment";
+  const folder = new Date().toISOString().slice(0, 7);
+  const objectPath = `${folder}/${crypto.randomUUID()}-${safeBaseName}${attachment.extension}`;
+  const { error } = await chartSupabase.storage
+    .from(TODD_ATTACHMENT_BUCKET)
+    .upload(objectPath, attachment.buffer, {
+      contentType: attachment.contentType,
+      cacheControl: "3600",
+      upsert: false
+    });
+
+  if (error) throw error;
+  return {
+    bucket: TODD_ATTACHMENT_BUCKET,
+    path: objectPath,
+    name: attachment.originalName,
+    type: attachment.contentType,
+    size: attachment.buffer.length
+  };
 }
 
 async function getToddRequestViewerEmail(req) {
@@ -2828,6 +2913,40 @@ app.get("/api/todd-requests", async (req, res) => {
   }
 });
 
+app.get("/api/todd-requests/:id/attachment", async (req, res) => {
+  const viewerEmail = await requireToddRequestAdmin(req, res);
+  if (!viewerEmail) return;
+
+  const id = coerceInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: "Valid request id is required." });
+
+  try {
+    const { data: requestRow, error: requestError } = await chartSupabase
+      .from("todd_work_requests")
+      .select("metadata")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (requestError) throw requestError;
+    if (!requestRow) return res.status(404).json({ error: "Work request not found." });
+
+    const attachment = requestRow.metadata?.attachment;
+    if (!attachment?.path || attachment.bucket !== TODD_ATTACHMENT_BUCKET) {
+      return res.status(404).json({ error: "This request does not have an attachment." });
+    }
+
+    const { data, error } = await chartSupabase.storage
+      .from(TODD_ATTACHMENT_BUCKET)
+      .createSignedUrl(attachment.path, 120, { download: attachment.name || true });
+
+    if (error) throw error;
+    return res.json({ url: data.signedUrl, name: attachment.name || "attachment" });
+  } catch (err) {
+    console.error("Todd request attachment error:", err);
+    return res.status(500).json({ error: err.message || "Unable to open the attachment." });
+  }
+});
+
 app.post("/api/todd-requests", async (req, res) => {
   const body = req.body || {};
   const project = coerceText(body.project, 300);
@@ -2837,11 +2956,13 @@ app.post("/api/todd-requests", async (req, res) => {
   const dateNeeded = coerceDateText(body.dateNeeded || body.date_needed);
   const priority = normalizeToddPriority(body.priority);
   const notes = coerceText(body.notes, 5000);
+  let uploadedAttachment = null;
 
   if (!project) return res.status(400).json({ error: "Project is required." });
   if (!requestedBy) return res.status(400).json({ error: "Person that requested is required." });
 
   try {
+    uploadedAttachment = await uploadToddAttachment(body.attachment);
     const { data: maxRows, error: maxError } = await chartSupabase
       .from("todd_work_requests")
       .select("priority_rank")
@@ -2863,7 +2984,10 @@ app.post("/api/todd-requests", async (req, res) => {
       notes: notes || null,
       created_at: now,
       updated_at: now,
-      metadata: sanitizePlainObject(body.metadata)
+      metadata: {
+        ...sanitizePlainObject(body.metadata),
+        ...(uploadedAttachment ? { attachment: uploadedAttachment } : {})
+      }
     };
 
     const { data, error } = await chartSupabase
@@ -2875,8 +2999,14 @@ app.post("/api/todd-requests", async (req, res) => {
     if (error) throw error;
     return res.status(201).json({ request: data });
   } catch (err) {
+    if (uploadedAttachment?.path) {
+      await chartSupabase.storage
+        .from(TODD_ATTACHMENT_BUCKET)
+        .remove([uploadedAttachment.path])
+        .catch(() => {});
+    }
     console.error("Todd request create error:", err);
-    return res.status(500).json({ error: err.message || "Unable to save work request." });
+    return res.status(err.statusCode || 500).json({ error: err.message || "Unable to save work request." });
   }
 });
 
