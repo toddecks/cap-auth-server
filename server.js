@@ -3980,6 +3980,590 @@ app.post("/api/ai-analyze", async (req, res) => {
   }
 });
 
+const SAD_MAX_EVENTS = 15000;
+const SAD_MAX_FINDINGS = 20;
+const SAD_BASELINE_DAYS = 7;
+const SAD_MODEL = process.env.OPENAI_SAD_MODEL || "gpt-4o-mini";
+
+function sadClamp(value, min, max) {
+  return Math.min(max, Math.max(min, Number(value) || 0));
+}
+
+function sadRound(value, digits = 1) {
+  const factor = 10 ** digits;
+  return Math.round((Number(value) || 0) * factor) / factor;
+}
+
+function sadMean(values) {
+  if (!Array.isArray(values) || !values.length) return 0;
+  return values.reduce((sum, value) => sum + (Number(value) || 0), 0) / values.length;
+}
+
+function sadStdDev(values, mean = sadMean(values)) {
+  if (!Array.isArray(values) || values.length < 2) return 0;
+  const variance = values.reduce((sum, value) => {
+    const delta = (Number(value) || 0) - mean;
+    return sum + (delta * delta);
+  }, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function sadDayKey(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeSadEvent(row, index) {
+  const timestamp = new Date(row?.timestamp || row?.eventTimestamp || row?.event_timestamp || "");
+  if (Number.isNaN(timestamp.getTime())) return null;
+  const alarmType = coerceText(row?.alarmType || row?.alarm_type || row?.type, 20).toUpperCase() || "OTHER";
+  const plcTag = coerceText(row?.plcTag || row?.plc_tag || row?.plc, 300) || "Unknown PLC";
+  const message = coerceText(row?.message || row?.description, 800) || "No alarm message";
+  return {
+    id: coerceText(row?.id, 200) || `event-${index}`,
+    timestamp: timestamp.toISOString(),
+    timestampMs: timestamp.getTime(),
+    alarmType,
+    plcTag,
+    message,
+    cause: coerceText(row?.cause, 800),
+    actions: coerceText(row?.actions, 1200)
+  };
+}
+
+function sadGroupKey({ alarmType, plcTag, message }) {
+  return `${String(alarmType).toUpperCase()}|${String(plcTag).toLowerCase()}|${String(message).toLowerCase()}`;
+}
+
+function sadBurstCount(timestamps, windowMs = 10 * 60 * 1000) {
+  if (!Array.isArray(timestamps) || !timestamps.length) return 0;
+  const sorted = timestamps.slice().sort((a, b) => a - b);
+  let left = 0;
+  let max = 1;
+  for (let right = 0; right < sorted.length; right += 1) {
+    while (sorted[right] - sorted[left] > windowMs) left += 1;
+    max = Math.max(max, right - left + 1);
+  }
+  return max;
+}
+
+function buildSadStatisticalFindings(rawEvents, rawCommonRows) {
+  const events = (Array.isArray(rawEvents) ? rawEvents : [])
+    .slice(0, SAD_MAX_EVENTS)
+    .map(normalizeSadEvent)
+    .filter(Boolean)
+    .sort((a, b) => a.timestampMs - b.timestampMs);
+
+  if (!events.length) {
+    return {
+      findings: [],
+      stats: {
+        eventsAnalyzed: 0,
+        patternsAnalyzed: 0,
+        anomaliesFound: 0,
+        baselineDays: SAD_BASELINE_DAYS
+      },
+      analysisEnd: new Date().toISOString()
+    };
+  }
+
+  const analysisEndMs = events[events.length - 1].timestampMs;
+  const currentStartMs = analysisEndMs - (24 * 60 * 60 * 1000);
+  const sixHourStartMs = analysisEndMs - (6 * 60 * 60 * 1000);
+  const baselineWindows = [];
+  for (let dayOffset = SAD_BASELINE_DAYS; dayOffset >= 1; dayOffset -= 1) {
+    const bucketEnd = currentStartMs - ((dayOffset - 1) * 24 * 60 * 60 * 1000);
+    baselineWindows.push({
+      start: bucketEnd - (24 * 60 * 60 * 1000),
+      end: bucketEnd
+    });
+  }
+  const baselineSampleTotals = baselineWindows.map((window) =>
+    events.filter((event) => event.timestampMs >= window.start && event.timestampMs < window.end).length
+  );
+  const groups = new Map();
+
+  events.forEach((event) => {
+    const key = sadGroupKey(event);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        alarmType: event.alarmType,
+        plcTag: event.plcTag,
+        message: event.message,
+        cause: event.cause,
+        actions: event.actions,
+        events: []
+      });
+    }
+    const group = groups.get(key);
+    group.events.push(event);
+    if (!group.cause && event.cause) group.cause = event.cause;
+    if (!group.actions && event.actions) group.actions = event.actions;
+  });
+
+  const commonByKey = new Map();
+  (Array.isArray(rawCommonRows) ? rawCommonRows : []).forEach((row) => {
+    const normalized = {
+      alarmType: coerceText(row?.alarm_type || row?.alarmType, 20).toUpperCase() || "OTHER",
+      plcTag: coerceText(row?.plc_tag || row?.plcTag || row?.plc, 300) || "Unknown PLC",
+      message: coerceText(row?.message, 800) || "No alarm message"
+    };
+    commonByKey.set(sadGroupKey(normalized), {
+      count: Math.max(0, Number(row?.qty_last_24h) || 0),
+      isIssue: Boolean(row?.is_issue)
+    });
+  });
+  const currentCommonTotal = Array.from(commonByKey.values())
+    .reduce((sum, row) => sum + (Number(row?.count) || 0), 0);
+
+  const findings = [];
+  groups.forEach((group) => {
+    const currentEvents = group.events.filter((event) => event.timestampMs >= currentStartMs);
+    const common = commonByKey.get(group.key);
+    const currentCount = Math.max(currentEvents.length, common?.count || 0);
+    if (!currentCount) return;
+
+    const baselineCounts = baselineWindows.map((window) =>
+      group.events.filter((event) =>
+        event.timestampMs >= window.start && event.timestampMs < window.end
+      ).length);
+
+    const baselineShares = baselineCounts.map((count, index) => {
+      const sampleTotal = baselineSampleTotals[index] || 0;
+      return sampleTotal ? count / sampleTotal : 0;
+    });
+    const hasShareBaseline = currentCommonTotal > 0 && baselineSampleTotals.some((count) => count > 0);
+    const rawBaselineMean = sadMean(baselineCounts);
+    const rawBaselineStdDev = sadStdDev(baselineCounts, rawBaselineMean);
+    const baselineShareMean = sadMean(baselineShares);
+    const baselineShareStdDev = sadStdDev(baselineShares, baselineShareMean);
+    const baselineMean = hasShareBaseline ? baselineShareMean * currentCommonTotal : rawBaselineMean;
+    const baselineStdDev = hasShareBaseline ? baselineShareStdDev * currentCommonTotal : rawBaselineStdDev;
+    const denominator = Math.max(baselineStdDev, Math.sqrt(baselineMean + 0.5), 1);
+    const zScore = (currentCount - baselineMean) / denominator;
+    const ratio = currentCount / Math.max(baselineMean, 0.5);
+    const last6hCount = currentEvents.filter((event) => event.timestampMs >= sixHourStartMs).length;
+    const prior18hCount = Math.max(0, currentEvents.length - last6hCount);
+    const recentHourlyRate = last6hCount / 6;
+    const priorHourlyRate = prior18hCount / 18;
+    const rawRateRatio = recentHourlyRate / Math.max(priorHourlyRate, 0.05);
+    const burst10m = sadBurstCount(currentEvents.map((event) => event.timestampMs));
+    const baselineRateRatios = baselineWindows.map((window) => {
+      const latest6Start = window.end - (6 * 60 * 60 * 1000);
+      const latest6Count = group.events.filter((event) =>
+        event.timestampMs >= latest6Start && event.timestampMs < window.end
+      ).length;
+      const earlier18Count = group.events.filter((event) =>
+        event.timestampMs >= window.start && event.timestampMs < latest6Start
+      ).length;
+      return (latest6Count / 6) / Math.max(earlier18Count / 18, 0.05);
+    });
+    const baselineRateRatio = Math.max(sadMean(baselineRateRatios), 1);
+    const rateRatio = rawRateRatio / baselineRateRatio;
+    const baselineBurstCounts = baselineWindows.map((window) =>
+      sadBurstCount(group.events
+        .filter((event) => event.timestampMs >= window.start && event.timestampMs < window.end)
+        .map((event) => event.timestampMs))
+    );
+    const baselineBurstMean = sadMean(baselineBurstCounts);
+    const burstRatio = burst10m / Math.max(baselineBurstMean, 1);
+    const isIssue = Boolean(common?.isIssue);
+
+    let score = 0;
+    score += Math.min(38, Math.max(0, zScore) * 9);
+    score += Math.min(22, Math.max(0, Math.log2(Math.max(1, ratio))) * 8);
+    score += Math.min(14, Math.log10(currentCount + 1) * 8);
+    score += Math.min(12, Math.max(0, Math.log2(Math.max(1, rateRatio))) * 5);
+    score += Math.min(8, Math.max(0, burstRatio - 1) * 3);
+    if (isIssue) score += 12;
+    if (group.alarmType === "AL") score += 6;
+    score = sadClamp(score, 0, 100);
+
+    const unusual = score >= 35 || zScore >= 2 || ratio >= 2.5 || rateRatio >= 3 || burstRatio >= 3 || isIssue;
+    if (!unusual) return;
+
+    let severity = "Low";
+    if (score >= 75) severity = "Critical";
+    else if (score >= 58) severity = "High";
+    else if (score >= 42) severity = "Medium";
+
+    const evidenceParts = [
+      `${currentCount} occurrence${currentCount === 1 ? "" : "s"} in the latest 24h`,
+      `${sadRound(baselineMean)} expected from the 7-day baseline`,
+      `${sadRound(ratio)}× baseline`,
+      `z-score ${sadRound(zScore)}`
+    ];
+    if (rateRatio >= 1.5) evidenceParts.push(`${sadRound(rateRatio)}× recent rate change`);
+    if (burstRatio >= 1.5) {
+      evidenceParts.push(`${burst10m} events within 10 minutes vs ${sadRound(baselineBurstMean)} baseline`);
+    }
+
+    findings.push({
+      id: crypto.createHash("sha1").update(group.key).digest("hex").slice(0, 12),
+      severity,
+      statisticalScore: Math.round(score),
+      alarmType: group.alarmType,
+      plcTag: group.plcTag,
+      message: group.message,
+      cause: group.cause || "",
+      existingActions: group.actions || "",
+      current24hCount: currentCount,
+      baselineDailyMean: sadRound(baselineMean),
+      baselineStdDev: sadRound(baselineStdDev),
+      baselineMethod: hasShareBaseline ? "historical alarm-share baseline" : "daily occurrence baseline",
+      zScore: sadRound(zScore),
+      baselineRatio: sadRound(ratio),
+      recentRateRatio: sadRound(rateRatio),
+      burst10m,
+      baselineBurst10m: sadRound(baselineBurstMean),
+      burstRatio: sadRound(burstRatio),
+      isIssue,
+      evidence: evidenceParts.join(" • "),
+      lastSeen: group.events[group.events.length - 1]?.timestamp || new Date(analysisEndMs).toISOString()
+    });
+  });
+
+  findings.sort((a, b) =>
+    b.statisticalScore - a.statisticalScore ||
+    b.current24hCount - a.current24hCount ||
+    String(a.plcTag).localeCompare(String(b.plcTag))
+  );
+
+  const limited = findings.slice(0, SAD_MAX_FINDINGS);
+  return {
+    findings: limited,
+    stats: {
+      eventsAnalyzed: events.length,
+      patternsAnalyzed: groups.size,
+      anomaliesFound: limited.length,
+      baselineDays: SAD_BASELINE_DAYS
+    },
+    analysisEnd: new Date(analysisEndMs).toISOString()
+  };
+}
+
+function sadActionsText(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => coerceText(item, 500)).filter(Boolean).join(" • ");
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).map((item) => coerceText(item, 500)).filter(Boolean).join(" • ");
+  }
+  return coerceText(value, 1200);
+}
+
+function buildSadStatisticalFindingsFromStats(rawRows, analysisEnd = new Date().toISOString()) {
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  const findings = [];
+  let eventsAnalyzed = 0;
+
+  rows.forEach((row) => {
+    const currentCount = Math.max(0, Number(row?.current_24h_count) || 0);
+    if (!currentCount) return;
+    eventsAnalyzed += currentCount;
+
+    const baselineMean = Math.max(0, Number(row?.baseline_daily_mean) || 0);
+    const baselineStdDev = Math.max(0, Number(row?.baseline_daily_stddev) || 0);
+    const denominator = Math.max(baselineStdDev, Math.sqrt(baselineMean + 0.5), 1);
+    const zScore = (currentCount - baselineMean) / denominator;
+    const ratio = currentCount / Math.max(baselineMean, 0.5);
+    const last6hCount = Math.max(0, Number(row?.last_6h_count) || 0);
+    const prior18hCount = Math.max(0, Number(row?.prior_18h_count) || 0);
+    const recentHourlyRate = last6hCount / 6;
+    const priorHourlyRate = prior18hCount / 18;
+    const rateRatio = recentHourlyRate / Math.max(priorHourlyRate, 0.05);
+    const burst10m = Math.max(0, Number(row?.current_burst_10m) || 0);
+    const baselineBurstMean = Math.max(0, Number(row?.baseline_burst_10m_mean) || 0);
+    const burstRatio = burst10m / Math.max(baselineBurstMean, 1);
+    const alarmType = coerceText(row?.alarm_type, 20).toUpperCase() || "OTHER";
+    const plcTag = coerceText(row?.plc_tag, 300) || "Unknown PLC";
+    const message = coerceText(row?.message, 800) || "No alarm message";
+    const cause = coerceText(row?.cause, 800);
+    const actions = sadActionsText(row?.actions);
+    const isIssue = alarmType === "AL";
+
+    let score = 0;
+    score += Math.min(38, Math.max(0, zScore) * 9);
+    score += Math.min(22, Math.max(0, Math.log2(Math.max(1, ratio))) * 8);
+    score += Math.min(14, Math.log10(currentCount + 1) * 8);
+    score += Math.min(16, Math.max(0, Math.log2(Math.max(1, rateRatio))) * 6);
+    score += Math.min(10, Math.max(0, burstRatio - 1) * 4);
+    if (isIssue) score += 8;
+    score = sadClamp(score, 0, 100);
+
+    const unusual =
+      score >= 35 ||
+      zScore >= 2 ||
+      ratio >= 2.5 ||
+      (last6hCount >= 5 && rateRatio >= 3) ||
+      (burst10m >= 3 && burstRatio >= 3);
+    if (!unusual) return;
+
+    let severity = "Low";
+    if (score >= 75) severity = "Critical";
+    else if (score >= 58) severity = "High";
+    else if (score >= 42) severity = "Medium";
+
+    const evidenceParts = [
+      `${currentCount} occurrence${currentCount === 1 ? "" : "s"} in the latest 24h`,
+      `${sadRound(baselineMean)} expected from the prior 7 days`,
+      `${sadRound(ratio)}× baseline`,
+      `z-score ${sadRound(zScore)}`
+    ];
+    if (last6hCount >= 3 && rateRatio >= 1.5) {
+      evidenceParts.push(`${sadRound(rateRatio)}× recent rate change`);
+    }
+    if (burst10m >= 2 && burstRatio >= 1.5) {
+      evidenceParts.push(`${burst10m} events in a 10-minute interval vs ${sadRound(baselineBurstMean)} baseline`);
+    }
+
+    const key = sadGroupKey({ alarmType, plcTag, message });
+    findings.push({
+      id: crypto.createHash("sha1").update(key).digest("hex").slice(0, 12),
+      severity,
+      statisticalScore: Math.round(score),
+      alarmType,
+      plcTag,
+      message,
+      cause,
+      existingActions: actions,
+      current24hCount: currentCount,
+      baselineDailyMean: sadRound(baselineMean),
+      baselineStdDev: sadRound(baselineStdDev),
+      baselineMethod: "Supabase rolling seven-day RBI alarm baseline",
+      zScore: sadRound(zScore),
+      baselineRatio: sadRound(ratio),
+      recentRateRatio: sadRound(rateRatio),
+      burst10m,
+      baselineBurst10m: sadRound(baselineBurstMean),
+      burstRatio: sadRound(burstRatio),
+      isIssue,
+      evidence: evidenceParts.join(" • "),
+      lastSeen: new Date(row?.last_seen || analysisEnd).toISOString()
+    });
+  });
+
+  findings.sort((a, b) =>
+    b.statisticalScore - a.statisticalScore ||
+    b.current24hCount - a.current24hCount ||
+    String(a.plcTag).localeCompare(String(b.plcTag))
+  );
+
+  const limited = findings.slice(0, SAD_MAX_FINDINGS);
+  return {
+    findings: limited,
+    stats: {
+      eventsAnalyzed,
+      patternsAnalyzed: rows.length,
+      anomaliesFound: limited.length,
+      baselineDays: SAD_BASELINE_DAYS
+    },
+    analysisEnd
+  };
+}
+
+async function fetchSadSupabaseAnalysis() {
+  if (!chartSupabase) return null;
+  const analysisEnd = new Date().toISOString();
+  const { data, error } = await chartSupabase.rpc("get_rbi_sad_alarm_stats", {
+    p_analysis_end: analysisEnd
+  });
+  if (error) {
+    throw new Error(`Unable to read RBI alarm statistics from Supabase: ${error.message}`);
+  }
+  return buildSadStatisticalFindingsFromStats(data, analysisEnd);
+}
+
+function sadFallbackInterpretation(finding) {
+  const dominantSignal = finding.burstRatio >= 1.5
+    ? "a concentrated short-window burst"
+    : finding.recentRateRatio >= 2
+      ? "a recent acceleration in occurrence rate"
+      : "a statistically unusual increase above its recent baseline";
+  return {
+    id: finding.id,
+    isAnomaly: true,
+    anomalyType: finding.burstRatio >= 1.5
+      ? "burst_cluster"
+      : (finding.recentRateRatio >= 2 ? "rate_acceleration" : "frequency_spike"),
+    relatedAlarmIds: [],
+    potentialProblem: finding.message,
+    aiAssessment: `This alarm shows ${dominantSignal}. Treat it as an early-warning signal and confirm the machine state before assigning a root cause.`,
+    recommendedInspection: finding.existingActions || `Inspect the ${finding.plcTag} condition, related sensors, interlocks, and recent operator sequence.`,
+    confidence: sadClamp(Math.round(45 + (finding.statisticalScore * 0.5)), 45, 95)
+  };
+}
+
+async function getSadAiInterpretations(openai, findings) {
+  if (!openai || !findings.length) return null;
+  const schema = {
+    type: "object",
+    properties: {
+      summary: { type: "string" },
+      findings: {
+        type: "array",
+        maxItems: SAD_MAX_FINDINGS,
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            isAnomaly: { type: "boolean" },
+            anomalyType: {
+              type: "string",
+              enum: [
+                "frequency_spike",
+                "rate_acceleration",
+                "burst_cluster",
+                "sequence_or_cooccurrence",
+                "new_pattern",
+                "not_anomalous",
+                "other"
+              ]
+            },
+            relatedAlarmIds: {
+              type: "array",
+              maxItems: 5,
+              items: { type: "string" }
+            },
+            potentialProblem: { type: "string" },
+            aiAssessment: { type: "string" },
+            recommendedInspection: { type: "string" },
+            confidence: { type: "integer", minimum: 0, maximum: 100 }
+          },
+          required: [
+            "id",
+            "isAnomaly",
+            "anomalyType",
+            "relatedAlarmIds",
+            "potentialProblem",
+            "aiAssessment",
+            "recommendedInspection",
+            "confidence"
+          ],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ["summary", "findings"],
+    additionalProperties: false
+  };
+
+  const response = await openai.responses.create({
+    model: SAD_MODEL,
+    temperature: 0.2,
+    input: [
+      {
+        role: "system",
+        content: [
+          "You are S.A.D., CSP's Steel Alarm Diagnostics analyst.",
+          "The application has already detected statistical anomalies in industrial alarm logs.",
+          "Independently decide whether each candidate is an operational anomaly, including unusual frequency, acceleration, bursts, sequences, or co-occurring alarms.",
+          "Use only the supplied alarm messages, PLC tags, existing causes/actions, and measured evidence.",
+          "Find relationships among alarms when the evidence supports them, but do not invent a root cause.",
+          "Describe each item as a potential problem or inspection focus, never as a confirmed diagnosis.",
+          "Do not recommend bypassing guards, interlocks, lockout/tagout, or other safety controls.",
+          "Keep each assessment and inspection recommendation concise and useful to maintenance personnel."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: `Analyze these statistically detected alarm anomalies:\n${JSON.stringify(findings, null, 2)}`
+      }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "sad_alarm_analysis",
+        strict: true,
+        schema
+      }
+    }
+  });
+
+  const parsed = parseJsonObject(response?.output_text || "");
+  return parsed && Array.isArray(parsed.findings) ? parsed : null;
+}
+
+app.post("/api/alarm-sad-analyze", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const supabaseAnalysis = await fetchSadSupabaseAnalysis();
+    const analysis = supabaseAnalysis ||
+      buildSadStatisticalFindings(req.body?.events, req.body?.commonRows);
+    const dataSource = supabaseAnalysis ? "supabase_rbi_alarm_all" : "request_payload";
+    const fallbackFindings = analysis.findings.map(sadFallbackInterpretation);
+    let aiResult = null;
+    let aiStatus = "fallback";
+
+    const aiRequested = req.body?.useAi !== false;
+    const openai = aiRequested ? getOpenAIClient() : null;
+    if (openai && analysis.findings.length) {
+      try {
+        aiResult = await getSadAiInterpretations(openai, analysis.findings);
+        if (aiResult) aiStatus = "analyzed";
+      } catch (aiError) {
+        console.error("S.A.D. AI interpretation error:", aiError);
+      }
+    } else if (aiRequested && !openai) {
+      aiStatus = "not_configured";
+    } else if (!aiRequested) {
+      aiStatus = "disabled";
+    }
+
+    const aiById = new Map((aiResult?.findings || []).map((item) => [String(item.id), item]));
+    const fallbackById = new Map(fallbackFindings.map((item) => [String(item.id), item]));
+    const findings = analysis.findings.map((finding) => {
+      const interpretation = aiById.get(String(finding.id)) || fallbackById.get(String(finding.id));
+      return {
+        ...finding,
+        aiAnomaly: interpretation?.isAnomaly !== false,
+        anomalyType: coerceText(interpretation?.anomalyType, 80) || "other",
+        relatedAlarmIds: Array.isArray(interpretation?.relatedAlarmIds)
+          ? interpretation.relatedAlarmIds.map((id) => coerceText(id, 80)).filter(Boolean).slice(0, 5)
+          : [],
+        detectionMethod: aiById.has(String(finding.id)) && interpretation?.isAnomaly !== false
+          ? "AI + statistical"
+          : "Statistical",
+        potentialProblem: coerceText(interpretation?.potentialProblem, 500) || finding.message,
+        aiAssessment: coerceText(interpretation?.aiAssessment, 1200),
+        recommendedInspection: coerceText(interpretation?.recommendedInspection, 1200),
+        confidence: sadClamp(interpretation?.confidence, 0, 100)
+      };
+    }).sort((a, b) =>
+      Number(b.aiAnomaly) - Number(a.aiAnomaly) ||
+      b.statisticalScore - a.statisticalScore
+    );
+
+    const aiAnomalyCount = findings.filter((finding) => finding.aiAnomaly).length;
+
+    return res.json({
+      success: true,
+      summary: coerceText(aiResult?.summary, 1200) ||
+        (findings.length
+          ? `${findings.length} statistically unusual alarm patterns were identified for review.`
+          : "No statistically unusual alarm patterns were identified in the available data."),
+      findings,
+      stats: {
+        ...analysis.stats,
+        statisticalCandidates: analysis.stats.anomaliesFound,
+        aiAnomalies: aiStatus === "analyzed" ? aiAnomalyCount : null
+      },
+      analysisEnd: analysis.analysisEnd,
+      generatedAt: new Date().toISOString(),
+      dataSource,
+      aiStatus,
+      model: aiStatus === "analyzed" ? SAD_MODEL : null,
+      advisory:
+        "S.A.D. findings are early-warning indicators, not confirmed diagnoses. Qualified personnel must verify conditions and follow all required safety procedures."
+    });
+  } catch (err) {
+    console.error("S.A.D. analysis endpoint error:", err);
+    return res.status(500).json({ error: err.message || "S.A.D. analysis failed." });
+  }
+});
+
 const expansionLeadText = (value, maxLength) =>
   String(value ?? "").trim().slice(0, maxLength);
 
