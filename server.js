@@ -3984,6 +3984,8 @@ const SAD_MAX_EVENTS = 15000;
 const SAD_MAX_FINDINGS = 20;
 const SAD_BASELINE_DAYS = 7;
 const SAD_MODEL = process.env.OPENAI_SAD_MODEL || "gpt-4o-mini";
+const SAD_AI_PROXY_ENDPOINT = process.env.SAD_AI_PROXY_ENDPOINT ||
+  "https://cap-auth-server-1.onrender.com/api/ai-chart";
 
 function sadClamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
@@ -4486,6 +4488,43 @@ async function getSadAiInterpretations(openai, findings) {
   return parsed && Array.isArray(parsed.findings) ? parsed : null;
 }
 
+async function getSadAiInterpretationsViaProxy(findings) {
+  if (!findings.length || !SAD_AI_PROXY_ENDPOINT) return null;
+  const prompt = [
+    "You are S.A.D., CSP's Steel Alarm Diagnostics analyst.",
+    "Independently assess each statistically detected industrial alarm candidate.",
+    "Use only the supplied PLC tags, messages, causes, actions, and statistical evidence.",
+    "Do not invent a root cause. Describe potential problems and safe inspection priorities only.",
+    "Never recommend bypassing guards, interlocks, lockout/tagout, or other safety controls.",
+    "Return JSON only with this exact shape:",
+    '{"summary":"string","findings":[{"id":"string","isAnomaly":true,"anomalyType":"frequency_spike|rate_acceleration|burst_cluster|sequence_or_cooccurrence|new_pattern|not_anomalous|other","relatedAlarmIds":[],"potentialProblem":"string","aiAssessment":"string","recommendedInspection":"string","confidence":0}]}',
+    "Include one result for every supplied id. Confidence must be an integer from 0 to 100.",
+    `Candidates:\n${JSON.stringify(findings, null, 2)}`
+  ].join("\n");
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await fetch(SAD_AI_PROXY_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt, fresh: true }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`AI proxy returned ${response.status}`);
+    }
+    const payload = await response.json();
+    const parsed = parseJsonObject(payload?.response || payload?.summary || payload?.output || "");
+    return parsed && Array.isArray(parsed.findings) ? parsed : null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 app.post("/api/alarm-sad-analyze", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
@@ -4499,13 +4538,18 @@ app.post("/api/alarm-sad-analyze", async (req, res) => {
 
     const aiRequested = req.body?.useAi !== false;
     const openai = aiRequested ? getOpenAIClient() : null;
-    if (openai && analysis.findings.length) {
+    if (aiRequested && analysis.findings.length) {
       try {
-        aiResult = await getSadAiInterpretations(openai, analysis.findings);
+        aiResult = openai
+          ? await getSadAiInterpretations(openai, analysis.findings)
+          : await getSadAiInterpretationsViaProxy(analysis.findings);
         if (aiResult) aiStatus = "analyzed";
       } catch (aiError) {
         console.error("S.A.D. AI interpretation error:", aiError);
       }
+      if (!aiResult) aiStatus = openai ? "fallback" : "not_configured";
+    } else if (aiRequested && !analysis.findings.length) {
+      aiStatus = "no_candidates";
     } else if (aiRequested && !openai) {
       aiStatus = "not_configured";
     } else if (!aiRequested) {
