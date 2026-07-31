@@ -235,7 +235,7 @@ const requireWebsiteLeadAccess = requireRoleAccess(
   ["admin", "website_leads"],
   "Website traffic access is required.",
   "Website traffic",
-  ["kyle@coilsteelprocessing.com"]
+  ["kyle@coilsteelprocessing.com", "josh@coilsteelprocessing.com"]
 );
 
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
