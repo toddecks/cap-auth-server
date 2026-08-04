@@ -4745,7 +4745,7 @@ app.post("/api/fantasy-football-signups", async (req, res) => {
       `<p style="margin:0;color:#172132;font-size:16px;line-height:1.6;">Hi ${escapeHtml(signup.name)},</p>
        <p style="margin:14px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;">Your spot in the CSP fantasy football league is reserved. The league will be on Sleeper again, and we’ll send your league invite before the draft.</p>
        <p style="margin:18px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>Draft:</strong> August 29, 2026 at 1:00 PM ET.</p>
-       <p style="margin:12px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>League fee:</strong> $20. Please give payment to Kim to confirm your place in the league.</p>
+       <p style="margin:12px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>League fee:</strong> $20. Please give payment to Todd to confirm your place in the league.</p>
        <p style="margin:12px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>Deadline:</strong> Sign up and submit the $20 league fee by Tuesday, August 25, 2026.</p>
        <p style="margin:22px 0 0;"><a href="https://sleeper.com/download" style="display:inline-block;padding:11px 18px;border-radius:6px;background:#f1a91e;color:#142033;font-size:15px;font-weight:700;text-decoration:none;">Download Sleeper</a></p>`
     );
