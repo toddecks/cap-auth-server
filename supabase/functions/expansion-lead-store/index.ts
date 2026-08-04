@@ -137,6 +137,100 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const action = text(body?.action, 30);
 
+    if (action === "fantasy_signup_store") {
+      const incoming = body?.signup || {};
+      const signup = {
+        submission_token: text(incoming.submission_token, 50),
+        season: 2026,
+        name: text(incoming.name, 120),
+        email: text(incoming.email, 254).toLowerCase(),
+        phone: text(incoming.phone, 60),
+        submitted_at: new Date().toISOString(),
+        page_url: text(incoming.page_url, 1200) || null,
+        referrer: text(incoming.referrer, 1200) || null,
+        ip_address: text(incoming.ip_address, 100) || null,
+        user_agent: text(incoming.user_agent, 1000) || null
+      };
+
+      if (!signup.name || !signup.email || !signup.phone) {
+        return json({ error: "Complete all required fields." }, 400);
+      }
+      if (!isUuid(signup.submission_token)) {
+        return json({ error: "Invalid submission token." }, 400);
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signup.email)) {
+        return json({ error: "Enter a valid email address." }, 400);
+      }
+
+      const existing = await restRequest(
+        `fantasy_football_signups?submission_token=eq.${encodeURIComponent(signup.submission_token)}&select=id,submitted_at&limit=1`
+      );
+      if (Array.isArray(existing) && existing.length > 0) {
+        return json({
+          id: existing[0].id,
+          submittedAt: existing[0].submitted_at,
+          recorded: true
+        });
+      }
+
+      if (signup.ip_address) {
+        const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+        const recent = await restRequest(
+          `fantasy_football_signups?ip_address=eq.${encodeURIComponent(signup.ip_address)}&submitted_at=gte.${encodeURIComponent(since)}&select=id&limit=5`
+        );
+        if (Array.isArray(recent) && recent.length >= 5) {
+          return json({ error: "Too many signup attempts. Please try again later." }, 429);
+        }
+      }
+
+      const inserted = await restRequest(
+        "fantasy_football_signups?select=id,submitted_at",
+        {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(signup)
+        }
+      );
+      if (!Array.isArray(inserted) || inserted.length !== 1) {
+        throw new Error("Supabase did not return the fantasy football signup record.");
+      }
+      return json({
+        id: inserted[0].id,
+        submittedAt: inserted[0].submitted_at,
+        recorded: true
+      }, 201);
+    }
+
+    if (action === "fantasy_signup_email_status") {
+      const id = Number(body?.id);
+      const submissionToken = text(body?.submissionToken, 50);
+      const incoming = body?.emailStatus || {};
+      if (!Number.isInteger(id) || id < 1 || !isUuid(submissionToken)) {
+        return json({ error: "Invalid fantasy football email status request." }, 400);
+      }
+
+      const update = {
+        admin_email_sent_at: text(incoming.admin_email_sent_at, 80) || null,
+        participant_email_sent_at: text(incoming.participant_email_sent_at, 80) || null,
+        admin_email_provider_id: text(incoming.admin_email_provider_id, 300) || null,
+        participant_email_provider_id: text(incoming.participant_email_provider_id, 300) || null,
+        email_error: text(incoming.email_error, 1000) || null,
+        updated_at: new Date().toISOString()
+      };
+      const rows = await restRequest(
+        `fantasy_football_signups?id=eq.${id}&submission_token=eq.${encodeURIComponent(submissionToken)}&select=id`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(update)
+        }
+      );
+      if (!Array.isArray(rows) || rows.length !== 1) {
+        return json({ error: "Fantasy football signup record was not found." }, 404);
+      }
+      return json({ success: true, id: rows[0].id });
+    }
+
     if (action === "traffic_list") {
       const authorization = await authorizeLeadViewer(req);
       if (authorization.error) return json({ error: authorization.error }, authorization.status);

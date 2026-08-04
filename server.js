@@ -4659,10 +4659,6 @@ app.post("/api/fantasy-football-signups", async (req, res) => {
   if (expansionLeadText(req.body?.website, 200)) {
     return res.json({ success: true });
   }
-  if (!chartSupabase) {
-    return res.status(503).json({ error: "Fantasy football signup storage is not configured." });
-  }
-
   const signup = {
     submission_token: expansionLeadText(req.body?.submissionToken, 50),
     season: 2026,
@@ -4687,17 +4683,30 @@ app.post("/api/fantasy-football-signups", async (req, res) => {
   }
 
   try {
-    const { data: stored, error: insertError } = await chartSupabase
-      .from("fantasy_football_signups")
-      .insert(signup)
-      .select("id,submitted_at")
-      .single();
+    let stored;
+    if (chartSupabase) {
+      const { data, error: insertError } = await chartSupabase
+        .from("fantasy_football_signups")
+        .insert(signup)
+        .select("id,submitted_at")
+        .single();
 
-    if (insertError) {
-      if (insertError.code === "23505") {
-        return res.status(409).json({ error: "This email has already been signed up." });
+      if (insertError) {
+        if (insertError.code === "23505") {
+          return res.status(409).json({ error: "This email has already been signed up." });
+        }
+        throw insertError;
       }
-      throw insertError;
+      stored = data;
+    } else {
+      const payload = await expansionLeadStoreRequest({
+        action: "fantasy_signup_store",
+        signup
+      });
+      stored = {
+        id: payload.id,
+        submitted_at: payload.submittedAt || signup.submitted_at
+      };
     }
 
     const detailsRows = [
@@ -4768,11 +4777,24 @@ app.post("/api/fantasy-football-signups", async (req, res) => {
       email_error: emailErrors.join(" | ") || null,
       updated_at: new Date().toISOString()
     };
-    const { error: updateError } = await chartSupabase
-      .from("fantasy_football_signups")
-      .update(emailStatus)
-      .eq("id", stored.id);
-    if (updateError) console.error("Fantasy football email status update failed:", updateError);
+    if (chartSupabase) {
+      const { error: updateError } = await chartSupabase
+        .from("fantasy_football_signups")
+        .update(emailStatus)
+        .eq("id", stored.id);
+      if (updateError) console.error("Fantasy football email status update failed:", updateError);
+    } else {
+      try {
+        await expansionLeadStoreRequest({
+          action: "fantasy_signup_email_status",
+          id: stored.id,
+          submissionToken: signup.submission_token,
+          emailStatus
+        });
+      } catch (updateError) {
+        console.error("Fantasy football email status update failed:", updateError);
+      }
+    }
 
     if (emailErrors.length > 0) {
       console.error("Fantasy football confirmation email failed:", emailErrors.join(" | "));
