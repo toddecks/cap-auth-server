@@ -448,6 +448,13 @@ const EXPANSION_LEAD_RECIPIENTS = String(
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const FANTASY_FOOTBALL_ADMIN_RECIPIENTS = String(
+  process.env.FANTASY_FOOTBALL_ADMIN_EMAILS
+  || "todd@coilsteelprocessing.com"
+)
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 const EXPANSION_LEAD_STORE_URL = String(
   process.env.EXPANSION_LEAD_STORE_URL
   || "https://wtjrucerrbzwxnwhqgma.supabase.co/functions/v1/expansion-lead-store"
@@ -4617,6 +4624,171 @@ const expansionLeadIp = (req) => {
     .trim();
   return expansionLeadText(forwarded || req.ip || "", 100);
 };
+
+const sendFantasyFootballEmail = async ({ to, replyTo, subject, html }) => {
+  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL) {
+    throw new Error("Fantasy football email delivery is not configured.");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: PRO_FORMS_FROM_EMAIL,
+      to: Array.isArray(to) ? to : [to],
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      subject,
+      html
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || "The email provider rejected the fantasy football confirmation.");
+  }
+  return payload?.id || null;
+};
+
+app.post("/api/fantasy-football-signups", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  // Quietly accept bot submissions that fill the hidden website field.
+  if (expansionLeadText(req.body?.website, 200)) {
+    return res.json({ success: true });
+  }
+  if (!chartSupabase) {
+    return res.status(503).json({ error: "Fantasy football signup storage is not configured." });
+  }
+
+  const signup = {
+    submission_token: expansionLeadText(req.body?.submissionToken, 50),
+    season: 2026,
+    name: expansionLeadText(req.body?.name, 120),
+    email: expansionLeadText(req.body?.email, 254).toLowerCase(),
+    phone: expansionLeadText(req.body?.phone, 60),
+    submitted_at: new Date().toISOString(),
+    page_url: expansionLeadText(req.body?.pageUrl, 1200) || null,
+    referrer: expansionLeadText(req.body?.referrer, 1200) || null,
+    ip_address: expansionLeadIp(req) || null,
+    user_agent: expansionLeadText(req.get("user-agent"), 1000) || null
+  };
+
+  if (!signup.name || !signup.email || !signup.phone) {
+    return res.status(400).json({ error: "Complete all required fields." });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signup.email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(signup.submission_token)) {
+    return res.status(400).json({ error: "The signup could not be identified. Refresh the page and try again." });
+  }
+
+  try {
+    const { data: stored, error: insertError } = await chartSupabase
+      .from("fantasy_football_signups")
+      .insert(signup)
+      .select("id,submitted_at")
+      .single();
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        return res.status(409).json({ error: "This email has already been signed up." });
+      }
+      throw insertError;
+    }
+
+    const detailsRows = [
+      ["Name", signup.name],
+      ["Email", signup.email],
+      ["Phone", signup.phone],
+      ["Season", "2026"]
+    ].map(([label, value]) => `
+      <tr>
+        <td style="padding:9px 12px;border-bottom:1px solid #d8dee9;color:#66748a;font-size:13px;font-weight:700;">${escapeHtml(label)}</td>
+        <td style="padding:9px 12px;border-bottom:1px solid #d8dee9;color:#172132;font-size:14px;">${escapeHtml(value)}</td>
+      </tr>
+    `).join("");
+
+    const emailShell = (eyebrow, title, content) => `
+      <div style="margin:0;padding:28px;background:#f4f7fb;font-family:Arial,sans-serif;color:#172132;">
+        <div style="max-width:680px;margin:0 auto;overflow:hidden;border:1px solid #d8dee9;border-radius:10px;background:#ffffff;">
+          <div style="padding:24px 28px;background:#142033;color:#ffffff;">
+            <div style="color:#f1a91e;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;">${escapeHtml(eyebrow)}</div>
+            <h1 style="margin:8px 0 0;font-size:26px;line-height:1.2;">${escapeHtml(title)}</h1>
+          </div>
+          <div style="padding:24px 28px;">${content}</div>
+        </div>
+      </div>
+    `;
+
+    const adminHtml = emailShell(
+      "CSP Fantasy Football",
+      "New league signup",
+      `<table role="presentation" style="width:100%;border-collapse:collapse;border:1px solid #d8dee9;">${detailsRows}</table>
+       <p style="margin:22px 0 0;color:#66748a;font-size:13px;">Submitted ${escapeHtml(new Date(stored.submitted_at).toLocaleString("en-US", { timeZone: "America/New_York", timeZoneName: "short" }))}</p>`
+    );
+    const participantHtml = emailShell(
+      "CSP Fantasy Football",
+      "You're signed up for the 2026 season",
+      `<p style="margin:0;color:#172132;font-size:16px;line-height:1.6;">Hi ${escapeHtml(signup.name)},</p>
+       <p style="margin:14px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;">Your spot in the CSP fantasy football league is reserved. The league will be on Sleeper again, and we’ll send your league invite before the draft.</p>
+       <p style="margin:18px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>Draft:</strong> August 29, 2026 at 1:00 PM ET.</p>
+       <p style="margin:12px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>League fee:</strong> $20. Please give payment to Kim to confirm your place in the league.</p>
+       <p style="margin:12px 0 0;color:#4f5f75;font-size:15px;line-height:1.65;"><strong>Deadline:</strong> Sign up and submit the $20 league fee by Tuesday, August 25, 2026.</p>
+       <p style="margin:22px 0 0;"><a href="https://sleeper.com/download" style="display:inline-block;padding:11px 18px;border-radius:6px;background:#f1a91e;color:#142033;font-size:15px;font-weight:700;text-decoration:none;">Download Sleeper</a></p>`
+    );
+
+    const [adminResult, participantResult] = await Promise.allSettled([
+      sendFantasyFootballEmail({
+        to: FANTASY_FOOTBALL_ADMIN_RECIPIENTS,
+        replyTo: signup.email,
+        subject: `[Fantasy Football] New signup — ${signup.name}`,
+        html: adminHtml
+      }),
+      sendFantasyFootballEmail({
+        to: signup.email,
+        replyTo: FANTASY_FOOTBALL_ADMIN_RECIPIENTS[0] || null,
+        subject: "You're signed up for CSP Fantasy Football",
+        html: participantHtml
+      })
+    ]);
+
+    const emailErrors = [adminResult, participantResult]
+      .filter((result) => result.status === "rejected")
+      .map((result) => expansionLeadText(result.reason?.message, 500))
+      .filter(Boolean);
+    const emailStatus = {
+      admin_email_sent_at: adminResult.status === "fulfilled" ? new Date().toISOString() : null,
+      participant_email_sent_at: participantResult.status === "fulfilled" ? new Date().toISOString() : null,
+      admin_email_provider_id: adminResult.status === "fulfilled" ? adminResult.value : null,
+      participant_email_provider_id: participantResult.status === "fulfilled" ? participantResult.value : null,
+      email_error: emailErrors.join(" | ") || null,
+      updated_at: new Date().toISOString()
+    };
+    const { error: updateError } = await chartSupabase
+      .from("fantasy_football_signups")
+      .update(emailStatus)
+      .eq("id", stored.id);
+    if (updateError) console.error("Fantasy football email status update failed:", updateError);
+
+    if (emailErrors.length > 0) {
+      console.error("Fantasy football confirmation email failed:", emailErrors.join(" | "));
+      return res.status(502).json({
+        error: "Your signup was recorded, but one of the confirmation emails could not be sent.",
+        recorded: true,
+        id: stored.id
+      });
+    }
+
+    return res.status(201).json({ success: true, recorded: true, emailed: true, id: stored.id });
+  } catch (error) {
+    console.error("Fantasy football signup failed:", error);
+    return res.status(500).json({ error: "We could not complete your signup. Please try again." });
+  }
+});
 
 app.post("/api/expansion-events", async (req, res) => {
   res.set("Cache-Control", "no-store");
