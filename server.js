@@ -435,7 +435,9 @@ const sendHrAccountConfirmation = async (email, confirmationUrl) => {
   return payload?.id || null;
 };
 
-const PRO_FORMS_RECIPIENTS = String(process.env.PRO_FORMS_RECIPIENTS || "")
+const PRO_FORMS_RECIPIENTS = String(
+  process.env.PRO_FORMS_RECIPIENTS || "todd@coilsteelprocessing.com"
+)
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
@@ -548,6 +550,7 @@ const buildFormSpecificSubmission = ({ submissionId, formKey, submittedAt, submi
         hours_worked: coerceNumber(metrics.hours_worked ?? payload.hoursWorked) || 0,
         tons: coerceNumber(metrics.tons ?? payload.tons) || 0,
         linear_feet: coerceNumber(metrics.linear_feet ?? payload.linearFeet) || 0,
+        linear_feet_per_ton: coerceNumber(metrics.linear_feet_per_ton) || 0,
         stroke_count: coerceInteger(metrics.stroke_count ?? payload.strokeCount) || 0,
         total_coils_ran: coerceInteger(metrics.total_coils_ran ?? payload.totalCoilsRan) || 0,
         had_downtime: coerceText(dimensions.had_downtime || payload.hadDowntime, 40) || null,
@@ -687,10 +690,48 @@ const formatEmailValue = (value, fallback = "-") => {
   return escapeHtml(value);
 };
 
+const formatEmailDate = (value, fallback = "-") => {
+  const input = String(value || "").trim();
+  if (!input) return fallback;
+
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(input)
+    ? new Date(`${input}T12:00:00Z`)
+    : new Date(input);
+  if (Number.isNaN(date.getTime())) return input;
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC"
+  }).format(date);
+};
+
+const formatEmailEasternDateTime = (value, fallback = "-") => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+    timeZoneName: "short"
+  }).format(date);
+};
+
 const formatEmailNumber = (value, suffix = "") => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "0";
   return `${parsed.toLocaleString("en-US", { maximumFractionDigits: 2 })}${suffix}`;
+};
+
+const formatEmailWholeNumber = (value, suffix = "") => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "0";
+  return `${Math.round(parsed).toLocaleString("en-US")}${suffix}`;
 };
 
 const buildEmailRows = (items) =>
@@ -826,7 +867,7 @@ const buildKpiGrid = (items) => {
 const buildEmailShell = ({ eyebrow, title, summary, submittedBy, submittedAt, body }) => {
   const submissionTable = buildEmailTable("Submission", [
     { label: "Submitted by", value: submittedBy || "Unknown user" },
-    { label: "Submitted at", value: submittedAt }
+    { label: "Submitted at", value: formatEmailEasternDateTime(submittedAt) }
   ]);
   const summaryBlock = summary
     ? `<span style="color:#172742;font-size:15px;font-weight:bold;line-height:1.45;">${escapeHtml(summary)}</span>`
@@ -880,9 +921,10 @@ const buildGenericSubmissionEmail = ({ formLabel, submittedBy, submittedAt, dime
 };
 
 const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, notes, payload }) => {
+  const reportDate = formatEmailDate(dimensions.report_date || dimensions.submission_date);
   const values = {
     kpi_grid: buildKpiGrid([
-      { label: "Tons", value: formatEmailNumber(metrics.tons), note: dimensions.shift || "Shift" },
+      { label: "Tons", value: formatEmailWholeNumber(metrics.tons), note: dimensions.shift || "Shift" },
       { label: "Linear Feet", value: formatEmailNumber(metrics.linear_feet), note: "Reported output" },
       { label: "Coils", value: formatEmailNumber(metrics.total_coils_ran), note: "Total ran" },
       {
@@ -893,20 +935,21 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
       }
     ]),
     production_chart: buildEmailBarChart("Production Snapshot", [
-      { label: "Tons", value: metrics.tons, display: formatEmailNumber(metrics.tons) },
+      { label: "Tons", value: metrics.tons, display: formatEmailWholeNumber(metrics.tons) },
       { label: "Coils", value: metrics.total_coils_ran, display: formatEmailNumber(metrics.total_coils_ran) },
       { label: "Downtime", value: metrics.total_downtime_minutes, display: formatEmailNumber(metrics.total_downtime_minutes, " min") }
     ], { color: "#f1a91e" }),
     shift_details_table: buildEmailTable("Shift Details", [
-      { label: "Report date", value: dimensions.report_date || dimensions.submission_date },
+      { label: "Report date", value: reportDate },
       { label: "Operator", value: dimensions.operator },
       { label: "Shift", value: dimensions.shift },
       { label: "Had downtime", value: dimensions.had_downtime }
     ]),
     production_metrics_table: buildEmailTable("Production Metrics", [
       { label: "Hours worked", value: formatEmailNumber(metrics.hours_worked) },
-      { label: "Tons", value: formatEmailNumber(metrics.tons) },
+      { label: "Tons", value: formatEmailWholeNumber(metrics.tons) },
       { label: "Linear feet", value: formatEmailNumber(metrics.linear_feet) },
+      { label: "Linear feet per ton", value: formatEmailNumber(metrics.linear_feet_per_ton) },
       { label: "Stroke count", value: formatEmailNumber(metrics.stroke_count) },
       { label: "Total coils ran", value: formatEmailNumber(metrics.total_coils_ran) },
       { label: "Total downtime", value: formatEmailNumber(metrics.total_downtime_minutes, " min") }
@@ -923,14 +966,24 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
       getArray(payload.skippedOrders).map((row) => `${row.skippedOrderNumber || "Order"}: ${row.skippedOrderReason || "No reason provided"}`),
       "No skipped orders recorded."
     ),
+    maintenance_calls_list: buildItemList(
+      "Maintenance Calls",
+      getArray(payload.maintenanceTimes).map((row) => {
+        const callTime = row.maintenanceCallTime || "n/a";
+        const arrivalTime = row.maintenanceArrivalTime || "n/a";
+        const completionTime = row.maintenanceCompletionTime || "n/a";
+        return `Call: ${callTime} | Arrival: ${arrivalTime} | Completion: ${completionTime}`;
+      }),
+      "No maintenance calls recorded."
+    ),
     comments_block: notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Comments</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
   };
   const body = renderStoredTemplate("shift_report", values) || Object.values(values).join("");
 
   return buildEmailShell({
     eyebrow: "Shift Report",
-    title: `Shift report submitted for ${formatEmailValue(dimensions.report_date || dimensions.submission_date)}`,
-    summary: `${formatEmailValue(dimensions.operator, "An operator")} submitted ${formatEmailNumber(metrics.tons)} tons on ${formatEmailValue(dimensions.shift, "the selected shift")}.`,
+    title: `Shift report submitted for ${reportDate}`,
+    summary: `${formatEmailValue(dimensions.operator, "An operator")} submitted ${formatEmailWholeNumber(metrics.tons)} tons on ${formatEmailValue(dimensions.shift, "the selected shift")}.`,
     submittedBy,
     submittedAt,
     body
@@ -1506,7 +1559,9 @@ const sendSubmissionNotification = async ({
     };
   }
 
-  const subject = `[CSP Pro] ${formLabel} submitted`;
+  const subject = formKey === "shift_report"
+    ? `${coerceText(dimensions.shift, 80) || "Shift"} Shift Report`
+    : `[CSP Pro] ${formLabel} submitted`;
   const html = buildSubmissionEmail({ formKey, formLabel, submittedBy, submittedAt, dimensions, metrics, notes, payload });
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -1544,15 +1599,16 @@ const EMAIL_PREVIEW_SAMPLES = {
     dimensions: {
       submission_date: "2026-05-01",
       report_date: "2026-05-01",
-      operator: "Operator 1",
-      shift: "1st",
+      operator: "Ronnell Gilmore",
+      shift: "Third",
       had_downtime: "Yes",
-      maintenance_tech: "Maintenance Tech 1"
+      maintenance_tech: "Sal De La Cruz"
     },
     metrics: {
       hours_worked: 8,
       tons: 124.35,
       linear_feet: 18500,
+      linear_feet_per_ton: 148.77,
       stroke_count: 420,
       total_coils_ran: 18,
       planned_downtime_minutes: 15,
@@ -1563,7 +1619,14 @@ const EMAIL_PREVIEW_SAMPLES = {
     payload: {
       plannedDowntimeDetails: "Scheduled coil change.",
       unplannedDowntimeDetails: "Entry sensor adjustment.",
-      maintenanceTech: "Maintenance Tech 1",
+      maintenanceTech: "Sal De La Cruz",
+      maintenanceTimes: [
+        {
+          maintenanceCallTime: "10:15 PM",
+          maintenanceArrivalTime: "10:28 PM",
+          maintenanceCompletionTime: "10:52 PM"
+        }
+      ],
       skippedOrders: [
         { skippedOrderNumber: "WO-10482", skippedOrderReason: "Material not staged." }
       ]
@@ -3104,6 +3167,12 @@ app.post("/api/todd-requests/reorder", async (req, res) => {
 });
 
 app.post("/api/pro/forms/submit", async (req, res) => {
+  if (!chartSupabase) {
+    return res.status(503).json({
+      error: "Pro form storage is not configured. Set CHART_SUPABASE_URL and CHART_SUPABASE_SERVICE_ROLE_KEY on the server."
+    });
+  }
+
   const body = req.body || {};
   const formKey = coerceText(body.formKey || body.form_key, 120);
   const formLabel = coerceText(body.formLabel || body.form_label || formKey, 160);
