@@ -1138,6 +1138,10 @@ const buildShiftMaintenanceEmail = ({ submittedBy, submittedAt, dimensions, payl
     { label: "Arrival", value: call.maintenanceArrivalTime || "-" },
     { label: "Completion", value: call.maintenanceCompletionTime || "-" }
   ])).join("");
+  const callDetails = buildEmailTable("Maintenance Call Details", [
+    { label: "Maintenance tech", value: dimensions.maintenance_tech || payload.maintenanceTech || "Not selected" },
+    { label: "Reason / details", value: payload.maintenanceReason || "No details supplied" }
+  ]);
 
   return buildEmailShell({
     eyebrow: "Maintenance Call",
@@ -1145,7 +1149,7 @@ const buildShiftMaintenanceEmail = ({ submittedBy, submittedAt, dimensions, payl
     summary: `${formatEmailValue(dimensions.operator, "Operator")} reported maintenance on ${formatEmailDate(dimensions.report_date || dimensions.submission_date)}.`,
     submittedBy,
     submittedAt,
-    body: callBlocks
+    body: `${callBlocks}${callDetails}`
   });
 };
 
@@ -3423,7 +3427,11 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       const maintenanceCalls = getArray(payload.maintenanceTimes).filter((call) =>
         call?.maintenanceCallTime || call?.maintenanceArrivalTime || call?.maintenanceCompletionTime
       );
-      if (maintenanceCalls.length > 0) {
+      const hasMaintenanceDetails = Boolean(
+        coerceText(payload.maintenanceReason, 1000) ||
+        coerceText(dimensions.maintenance_tech || payload.maintenanceTech, 160)
+      );
+      if (maintenanceCalls.length > 0 || hasMaintenanceDetails) {
         try {
           maintenanceNotifications.push({
             type: "shift_maintenance_email",
