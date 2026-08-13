@@ -3510,20 +3510,22 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       }
     }
 
-    for (const order of insertedMaintenanceOrders) {
-      try {
-        const teamsNotification = await sendTeamsMaintenanceNotification({ req, order });
-        maintenanceNotifications.push({
-          orderCode: order.order_code,
-          ...teamsNotification
-        });
-      } catch (teamsError) {
-        console.error("Teams maintenance notification failed:", teamsError);
-        maintenanceNotifications.push({
-          orderCode: order.order_code,
-          sent: false,
-          reason: teamsError.message || "Teams notification failed."
-        });
+    if (!isTestSubmission) {
+      for (const order of insertedMaintenanceOrders) {
+        try {
+          const teamsNotification = await sendTeamsMaintenanceNotification({ req, order });
+          maintenanceNotifications.push({
+            orderCode: order.order_code,
+            ...teamsNotification
+          });
+        } catch (teamsError) {
+          console.error("Teams maintenance notification failed:", teamsError);
+          maintenanceNotifications.push({
+            orderCode: order.order_code,
+            sent: false,
+            reason: teamsError.message || "Teams notification failed."
+          });
+        }
       }
     }
 
