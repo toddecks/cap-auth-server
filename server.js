@@ -1012,7 +1012,7 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
   });
 };
 
-const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes, payload, itemField, issueCountKey, issueLabel }) => {
+const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes, payload, itemField, issueCountKey, issueLabel, includeOrders = true }) => {
   const items = getArray(payload[itemField]);
   const issueItems = items.filter((item) => item.status === "Fail" || item.isIssue);
   const clearCount = metrics.passed_checks ?? metrics.clear_checks ?? 0;
@@ -1028,12 +1028,12 @@ const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions,
         note: issueCount > 0 ? "Needs attention" : "No issues",
         color: issueCount > 0 ? "#b42318" : "#067647"
       },
-      {
+      includeOrders ? {
         label: "Orders",
         value: formatEmailNumber(metrics.maintenance_orders_opened),
         note: "Maintenance opened",
         color: Number(metrics.maintenance_orders_opened) > 0 ? "#b42318" : "#172742"
-      }
+      } : null
     ]),
     result_chart: buildInspectionResultChart({
       clearCount,
@@ -1053,7 +1053,7 @@ const buildInspectionEmail = ({ formLabel, submittedBy, submittedAt, dimensions,
       { label: "Total checks", value: formatEmailNumber(metrics.total_checks) },
       { label: "Clear/pass checks", value: formatEmailNumber(clearCount) },
       { label: issueLabel, value: formatEmailNumber(issueCount) },
-      { label: "Maintenance orders opened", value: formatEmailNumber(metrics.maintenance_orders_opened) }
+      includeOrders ? { label: "Maintenance orders opened", value: formatEmailNumber(metrics.maintenance_orders_opened) } : null
     ]),
     problem_items_list: buildItemList(
       "Problem Items",
@@ -1106,7 +1106,8 @@ const buildSubmissionEmail = ({ formKey, formLabel, submittedBy, submittedAt, di
       payload,
       itemField: "answers",
       issueCountKey: "failed_checks",
-      issueLabel: "failed checks"
+      issueLabel: "failed checks",
+      includeOrders: false
     });
   }
 
@@ -3418,7 +3419,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
 
     const maintenanceNotifications = [];
 
-    if (!isTestSubmission && formKey === "shift_report") {
+    if (formKey === "shift_report") {
       const maintenanceCalls = getArray(payload.maintenanceTimes).filter((call) =>
         call?.maintenanceCallTime || call?.maintenanceArrivalTime || call?.maintenanceCompletionTime
       );
@@ -3427,7 +3428,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
           maintenanceNotifications.push({
             type: "shift_maintenance_email",
             ...await sendSpecialFormNotification({
-              recipients: SHIFT_MAINTENANCE_RECIPIENTS,
+              recipients: isTestSubmission ? PRO_TEST_RECIPIENTS : SHIFT_MAINTENANCE_RECIPIENTS,
               subject: `${coerceText(dimensions.shift, 80) || "Shift"} Shift Maintenance Call`,
               html: buildShiftMaintenanceEmail({ submittedBy, submittedAt, dimensions, payload })
             })
@@ -3439,12 +3440,12 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       }
     }
 
-    if (!isTestSubmission && formKey === "crane_inspection" && Number(metrics.failed_checks || 0) > 0) {
+    if (formKey === "crane_inspection" && Number(metrics.failed_checks || 0) > 0) {
       try {
         maintenanceNotifications.push({
           type: "crane_failure_email",
           ...await sendSpecialFormNotification({
-            recipients: CRANE_FAILURE_RECIPIENTS,
+            recipients: isTestSubmission ? PRO_TEST_RECIPIENTS : CRANE_FAILURE_RECIPIENTS,
             subject: `Crane Failure Notice — ${coerceText(dimensions.crane_name, 160) || "Crane"}`,
             html: buildCraneFailureEmail({ submittedBy, submittedAt, dimensions, payload })
           })
