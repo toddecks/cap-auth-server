@@ -463,6 +463,14 @@ const CRANE_FAILURE_RECIPIENTS = parseEmailRecipients(
   process.env.CRANE_FAILURE_RECIPIENTS
   || "justin@coilsteelprocessing.com,tino@coilsteelprocessing.com,sal@coilsteelprocessing.com"
 );
+const FORKLIFT_INSPECTION_RECIPIENTS = parseEmailRecipients(
+  process.env.FORKLIFT_INSPECTION_RECIPIENTS
+  || "tino@coilsteelprocessing.com,jon@coilsteelprocessing.com,todd@coilsteelprocessing.com"
+);
+const FORKLIFT_FAILURE_RECIPIENTS = parseEmailRecipients(
+  process.env.FORKLIFT_FAILURE_RECIPIENTS
+  || "sal@coilsteelprocessing.com,justin@coilsteelprocessing.com"
+);
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
 const EXPANSION_LEAD_RECIPIENTS = String(
@@ -1091,7 +1099,8 @@ const buildSubmissionEmail = ({ formKey, formLabel, submittedBy, submittedAt, di
       payload,
       itemField: "checks",
       issueCountKey: "failed_checks",
-      issueLabel: "failed checks"
+      issueLabel: "failed checks",
+      includeOrders: false
     });
   }
 
@@ -1160,6 +1169,25 @@ const buildCraneFailureEmail = ({ submittedBy, submittedAt, dimensions, payload 
   return buildEmailShell({
     eyebrow: "Crane Failure Notice",
     title: `${coerceText(dimensions.crane_name, 160) || "Crane"} inspection failure`,
+    summary: `${failures.length} failed inspection item${failures.length === 1 ? "" : "s"} reported by ${formatEmailValue(dimensions.inspector_name, "the inspector")}.`,
+    submittedBy,
+    submittedAt,
+    body: buildItemList(
+      "Failed Inspection Items",
+      failures.map((failure) => `${failure.label || failure.key || "Inspection item"}: ${failure.notes || "No failure notes supplied."}`)
+    )
+  });
+};
+
+const buildForkliftFailureEmail = ({ submittedBy, submittedAt, dimensions, payload }) => {
+  const failures = getArray(payload.checks).filter((check) =>
+    String(check?.status || "").toLowerCase() === "fail"
+  );
+  const forkliftName = coerceText(dimensions.asset_name, 160)
+    || `${coerceText(dimensions.location, 120) || "CSP"} Forklift ${coerceText(dimensions.forklift_number, 120) || ""}`.trim();
+  return buildEmailShell({
+    eyebrow: "Forklift Failure Notice",
+    title: `${forkliftName || "Forklift"} inspection failure`,
     summary: `${failures.length} failed inspection item${failures.length === 1 ? "" : "s"} reported by ${formatEmailValue(dimensions.inspector_name, "the inspector")}.`,
     submittedBy,
     submittedAt,
@@ -1609,6 +1637,8 @@ const sendSubmissionNotification = async ({
     ? PRO_TEST_RECIPIENTS
     : formKey === "shift_report"
       ? SHIFT_REPORT_RECIPIENTS
+      : formKey === "forklift_inspection"
+        ? FORKLIFT_INSPECTION_RECIPIENTS
       : formKey === "crane_inspection"
         ? CRANE_INSPECTION_RECIPIENTS
         : PRO_FORMS_RECIPIENTS;
@@ -3461,6 +3491,22 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       } catch (craneFailureEmailError) {
         console.error("Crane failure email failed:", craneFailureEmailError);
         maintenanceNotifications.push({ type: "crane_failure_email", sent: false, reason: craneFailureEmailError.message });
+      }
+    }
+
+    if (formKey === "forklift_inspection" && Number(metrics.failed_checks || 0) > 0) {
+      try {
+        maintenanceNotifications.push({
+          type: "forklift_failure_email",
+          ...await sendSpecialFormNotification({
+            recipients: isTestSubmission ? PRO_TEST_RECIPIENTS : FORKLIFT_FAILURE_RECIPIENTS,
+            subject: `Forklift Failure Notice — ${coerceText(dimensions.asset_name, 160) || coerceText(dimensions.forklift_number, 120) || "Forklift"}`,
+            html: buildForkliftFailureEmail({ submittedBy, submittedAt, dimensions, payload })
+          })
+        });
+      } catch (forkliftFailureEmailError) {
+        console.error("Forklift failure email failed:", forkliftFailureEmailError);
+        maintenanceNotifications.push({ type: "forklift_failure_email", sent: false, reason: forkliftFailureEmailError.message });
       }
     }
 
