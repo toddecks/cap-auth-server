@@ -435,12 +435,34 @@ const sendHrAccountConfirmation = async (email, confirmationUrl) => {
   return payload?.id || null;
 };
 
-const PRO_FORMS_RECIPIENTS = String(
+const parseEmailRecipients = (value) => [...new Set(
+  String(value || "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+)];
+const PRO_FORMS_RECIPIENTS = parseEmailRecipients(
   process.env.PRO_FORMS_RECIPIENTS || "todd@coilsteelprocessing.com"
-)
-  .split(",")
-  .map((value) => value.trim().toLowerCase())
-  .filter(Boolean);
+);
+const PRO_TEST_RECIPIENTS = parseEmailRecipients(
+  process.env.PRO_TEST_RECIPIENTS || "todd@coilsteelprocessing.com"
+);
+const SHIFT_REPORT_RECIPIENTS = parseEmailRecipients(
+  process.env.SHIFT_REPORT_RECIPIENTS
+  || "todd@coilsteelprocessing.com,tino@coilsteelprocessing.com,josh@coilsteelprocessing.com,kim@coilsteelprocessing.com,jplace@coilsteelprocessing.com,jason@coilsteelprocessing.com,justin@coilsteelprocessing.com,kevin@coilsteelprocessing.com,mike@coilsteelprocessing.com,sal@coilsteelprocessing.com,scotty@coilsteelprocessing.com,tyrone@coilsteelprocessing.com,janet@coilsteelprocessing.com,rbi@coilsteelprocessing.com,brian@coilsteelprocessing.com,kyle@coilsteelprocessing.com"
+);
+const SHIFT_MAINTENANCE_RECIPIENTS = parseEmailRecipients(
+  process.env.SHIFT_MAINTENANCE_RECIPIENTS
+  || "sal@coilsteelprocessing.com,justin@coilsteelprocessing.com"
+);
+const CRANE_INSPECTION_RECIPIENTS = parseEmailRecipients(
+  process.env.CRANE_INSPECTION_RECIPIENTS
+  || "tino@coilsteelprocessing.com,jon@coilsteelprocessing.com,todd@coilsteelprocessing.com"
+);
+const CRANE_FAILURE_RECIPIENTS = parseEmailRecipients(
+  process.env.CRANE_FAILURE_RECIPIENTS
+  || "justin@coilsteelprocessing.com,tino@coilsteelprocessing.com,sal@coilsteelprocessing.com"
+);
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
 const EXPANSION_LEAD_RECIPIENTS = String(
@@ -1106,6 +1128,43 @@ const buildSubmissionEmail = ({ formKey, formLabel, submittedBy, submittedAt, di
   return buildGenericSubmissionEmail({ formLabel, submittedBy, submittedAt, dimensions, metrics, notes });
 };
 
+const buildShiftMaintenanceEmail = ({ submittedBy, submittedAt, dimensions, payload }) => {
+  const calls = getArray(payload.maintenanceTimes).filter((call) =>
+    call?.maintenanceCallTime || call?.maintenanceArrivalTime || call?.maintenanceCompletionTime
+  );
+  const callBlocks = calls.map((call) => buildKpiGrid([
+    { label: "Call Time", value: call.maintenanceCallTime || "-" },
+    { label: "Arrival", value: call.maintenanceArrivalTime || "-" },
+    { label: "Completion", value: call.maintenanceCompletionTime || "-" }
+  ])).join("");
+
+  return buildEmailShell({
+    eyebrow: "Maintenance Call",
+    title: `${coerceText(dimensions.shift, 80) || "Shift"} Shift Maintenance`,
+    summary: `${formatEmailValue(dimensions.operator, "Operator")} reported maintenance on ${formatEmailDate(dimensions.report_date || dimensions.submission_date)}.`,
+    submittedBy,
+    submittedAt,
+    body: callBlocks
+  });
+};
+
+const buildCraneFailureEmail = ({ submittedBy, submittedAt, dimensions, payload }) => {
+  const failures = getArray(payload.answers).filter((answer) =>
+    String(answer?.status || "").toLowerCase() === "fail"
+  );
+  return buildEmailShell({
+    eyebrow: "Crane Failure Notice",
+    title: `${coerceText(dimensions.crane_name, 160) || "Crane"} inspection failure`,
+    summary: `${failures.length} failed inspection item${failures.length === 1 ? "" : "s"} reported by ${formatEmailValue(dimensions.inspector_name, "the inspector")}.`,
+    submittedBy,
+    submittedAt,
+    body: buildItemList(
+      "Failed Inspection Items",
+      failures.map((failure) => `${failure.label || failure.key || "Inspection item"}: ${failure.notes || "No failure notes supplied."}`)
+    )
+  });
+};
+
 const ANALYZE_BATCH_SIZE = 1000;
 const startOfDay = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate());
 const addDays = (value, days) => {
@@ -1538,12 +1597,16 @@ const sendSubmissionNotification = async ({
   dimensions,
   metrics,
   notes,
-  payload,
-  recipients
+  payload
 }) => {
-  const targetRecipients = Array.isArray(recipients) && recipients.length > 0
-    ? recipients.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
-    : PRO_FORMS_RECIPIENTS;
+  const isTest = /\btest\b/i.test(String(formLabel || ""));
+  const targetRecipients = isTest
+    ? PRO_TEST_RECIPIENTS
+    : formKey === "shift_report"
+      ? SHIFT_REPORT_RECIPIENTS
+      : formKey === "crane_inspection"
+        ? CRANE_INSPECTION_RECIPIENTS
+        : PRO_FORMS_RECIPIENTS;
 
   if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL || targetRecipients.length === 0) {
     return {
@@ -1589,6 +1652,27 @@ const sendSubmissionNotification = async ({
     recipients: targetRecipients,
     providerId: providerPayload?.id || null
   };
+};
+
+const sendSpecialFormNotification = async ({ recipients, subject, html }) => {
+  const targetRecipients = parseEmailRecipients(getArray(recipients).join(","));
+  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL || targetRecipients.length === 0) {
+    return { sent: false, reason: "Special email notification is not configured." };
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ from: PRO_FORMS_FROM_EMAIL, to: targetRecipients, subject, html })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || "Email provider rejected the special notification request.");
+  }
+  const providerPayload = await response.json().catch(() => ({}));
+  return { sent: true, recipients: targetRecipients, providerId: providerPayload?.id || null };
 };
 
 const EMAIL_PREVIEW_SAMPLES = {
@@ -3184,11 +3268,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
   const notes = coerceText(body.notes, 5000);
   const rawChartRows = Array.isArray(body.chartRows) ? body.chartRows : [];
   const rawMaintenanceOrders = Array.isArray(body.maintenanceOrders) ? body.maintenanceOrders : [];
-  const recipients = Array.isArray(body.notificationRecipients)
-    ? body.notificationRecipients
-    : Array.isArray(body.recipients)
-      ? body.recipients
-      : [];
+  const isTestSubmission = /\btest\b/i.test(String(formLabel || ""));
 
   if (!formKey) {
     return res.status(400).json({ error: "formKey is required." });
@@ -3326,8 +3406,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
         dimensions,
         metrics,
         notes,
-        payload,
-        recipients
+        payload
       });
     } catch (notificationError) {
       console.error("Pro submission notification failed:", notificationError);
@@ -3338,6 +3417,44 @@ app.post("/api/pro/forms/submit", async (req, res) => {
     }
 
     const maintenanceNotifications = [];
+
+    if (!isTestSubmission && formKey === "shift_report") {
+      const maintenanceCalls = getArray(payload.maintenanceTimes).filter((call) =>
+        call?.maintenanceCallTime || call?.maintenanceArrivalTime || call?.maintenanceCompletionTime
+      );
+      if (maintenanceCalls.length > 0) {
+        try {
+          maintenanceNotifications.push({
+            type: "shift_maintenance_email",
+            ...await sendSpecialFormNotification({
+              recipients: SHIFT_MAINTENANCE_RECIPIENTS,
+              subject: `${coerceText(dimensions.shift, 80) || "Shift"} Shift Maintenance Call`,
+              html: buildShiftMaintenanceEmail({ submittedBy, submittedAt, dimensions, payload })
+            })
+          });
+        } catch (maintenanceEmailError) {
+          console.error("Shift maintenance email failed:", maintenanceEmailError);
+          maintenanceNotifications.push({ type: "shift_maintenance_email", sent: false, reason: maintenanceEmailError.message });
+        }
+      }
+    }
+
+    if (!isTestSubmission && formKey === "crane_inspection" && Number(metrics.failed_checks || 0) > 0) {
+      try {
+        maintenanceNotifications.push({
+          type: "crane_failure_email",
+          ...await sendSpecialFormNotification({
+            recipients: CRANE_FAILURE_RECIPIENTS,
+            subject: `Crane Failure Notice — ${coerceText(dimensions.crane_name, 160) || "Crane"}`,
+            html: buildCraneFailureEmail({ submittedBy, submittedAt, dimensions, payload })
+          })
+        });
+      } catch (craneFailureEmailError) {
+        console.error("Crane failure email failed:", craneFailureEmailError);
+        maintenanceNotifications.push({ type: "crane_failure_email", sent: false, reason: craneFailureEmailError.message });
+      }
+    }
+
     for (const order of insertedMaintenanceOrders) {
       try {
         const teamsNotification = await sendTeamsMaintenanceNotification({ req, order });
