@@ -54,7 +54,7 @@ app.get("/api/deploy-status", (_req, res) => {
     service: "cap-auth-server",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
-    shiftReportDashboardMode: "current-month-employees-weekly-shifts-v4",
+    shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
     node: process.version
   });
@@ -5569,6 +5569,11 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       Second: roundMetric(weeklyShiftTotals.get(`${week}|Second`) || 0, 0),
       Third: roundMetric(weeklyShiftTotals.get(`${week}|Third`) || 0, 0)
     }));
+    const currentWeek = shiftReportWeekKey(today);
+    const currentWeekShiftTons = shiftOrder.map((shift) => ({
+      shift,
+      tons: roundMetric(weeklyShiftTotals.get(`${currentWeek}|${shift}`) || 0, 0)
+    }));
     const downtimeReasons = Array.from(downtimeReasonTotals.values())
       .filter((item) => visibleWeeks.includes(item.week))
       .map((item) => ({ ...item, minutes: Math.round(item.minutes) }))
@@ -5592,6 +5597,8 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       employeeTonsCurrentMonth,
       shiftTons,
       weeklyShiftTons,
+      currentWeek,
+      currentWeekShiftTons,
       downtimeReasons,
       history: {
         reports: rows.length,
