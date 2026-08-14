@@ -241,7 +241,7 @@ const requireWebsiteLeadAccess = requireRoleAccess(
 );
 
 const requireShiftReportAccess = requireRoleAccess(
-  ["admin", "shift_reports"],
+  ["admin", "production"],
   "Shift report dashboard access is required.",
   "Shift report dashboard"
 );
