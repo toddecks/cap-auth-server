@@ -54,7 +54,7 @@ app.get("/api/deploy-status", (_req, res) => {
     service: "cap-auth-server",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
-    shiftReportDashboardMode: "weekly-v2",
+    shiftReportDashboardMode: "monthly-employees-weekly-shifts-v3",
     shiftReportAccessMode: "production-v1",
     node: process.version
   });
@@ -5447,6 +5447,7 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
     const todayRows = rows.filter((row) => row.report_date === today);
     const sum = (list, field) => list.reduce((total, row) => total + toNumberSafe(row[field]), 0);
     const employeeTotals = new Map();
+    const employeeMonthlyTotals = new Map();
     const shiftTotals = new Map();
     const weeklyShiftTotals = new Map();
     const downtimeReasonTotals = new Map();
@@ -5462,6 +5463,11 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       const tonsPerEmployee = employees.length ? toNumberSafe(row.tons) / employees.length : 0;
       employees.forEach((employee) => {
         employeeTotals.set(employee, (employeeTotals.get(employee) || 0) + tonsPerEmployee);
+        const month = String(row.report_date || "").slice(0, 7);
+        if (month) {
+          const monthlyKey = `${month}|${employee}`;
+          employeeMonthlyTotals.set(monthlyKey, (employeeMonthlyTotals.get(monthlyKey) || 0) + tonsPerEmployee);
+        }
       });
       shiftTotals.set(row.shift, (shiftTotals.get(row.shift) || 0) + toNumberSafe(row.tons));
 
@@ -5504,6 +5510,29 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       .map(([employee, tons]) => ({ employee, tons: roundMetric(tons, 0) }))
       .sort((a, b) => b.tons - a.tons || a.employee.localeCompare(b.employee))
       .slice(0, 12);
+    const employeeMonths = Array.from(new Set(rows.map((row) => String(row.report_date || "").slice(0, 7)).filter(Boolean)))
+      .sort()
+      .slice(-8);
+    const employeeMonthRank = new Map();
+    employeeMonthlyTotals.forEach((tons, key) => {
+      const separator = key.indexOf("|");
+      const month = key.slice(0, separator);
+      const employee = key.slice(separator + 1);
+      if (employeeMonths.includes(month)) {
+        employeeMonthRank.set(employee, (employeeMonthRank.get(employee) || 0) + tons);
+      }
+    });
+    const monthlyEmployees = Array.from(employeeMonthRank.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 6)
+      .map(([employee]) => employee);
+    const employeeTonsByMonth = {
+      months: employeeMonths,
+      series: monthlyEmployees.map((employee) => ({
+        employee,
+        tons: employeeMonths.map((month) => roundMetric(employeeMonthlyTotals.get(`${month}|${employee}`) || 0, 0))
+      }))
+    };
     const shiftOrder = ["First", "Second", "Third"];
     const shiftTons = Array.from(shiftTotals.entries())
       .map(([shift, tons]) => ({ shift, tons: roundMetric(tons, 0) }))
@@ -5550,6 +5579,7 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       },
       todayShiftKpis,
       employeeTons,
+      employeeTonsByMonth,
       shiftTons,
       weeklyShiftTons,
       downtimeReasons,
