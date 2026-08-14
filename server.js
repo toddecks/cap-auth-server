@@ -54,6 +54,7 @@ app.get("/api/deploy-status", (_req, res) => {
     service: "cap-auth-server",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
+    shiftReportDashboardMode: "weekly-v2",
     node: process.version
   });
 });
@@ -237,6 +238,12 @@ const requireWebsiteLeadAccess = requireRoleAccess(
   "Website traffic access is required.",
   "Website traffic",
   ["kyle@coilsteelprocessing.com", "josh@coilsteelprocessing.com"]
+);
+
+const requireShiftReportAccess = requireRoleAccess(
+  ["admin", "shift_reports"],
+  "Shift report dashboard access is required.",
+  "Shift report dashboard"
 );
 
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -5374,6 +5381,188 @@ app.get("/api/web-visits/admin", requireWebsiteLeadAccess, async (req, res) => {
   } catch (error) {
     console.error("Website traffic endpoint failed:", error);
     return res.status(500).json({ error: error.message || "Website traffic endpoint failed." });
+  }
+});
+
+const easternDateKey = (value = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const get = (type) => parts.find((part) => part.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+};
+
+const normalizeShiftReportShift = (value) => {
+  const text = String(value || "").trim();
+  const normalized = text.toLowerCase();
+  if (normalized === "1" || normalized.startsWith("first") || normalized.startsWith("1st")) return "First";
+  if (normalized === "2" || normalized.startsWith("second") || normalized.startsWith("2nd")) return "Second";
+  if (normalized === "3" || normalized.startsWith("third") || normalized.startsWith("3rd")) return "Third";
+  return text || "Unassigned";
+};
+
+const shiftReportWeekKey = (dateKey) => {
+  const match = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return date.toISOString().slice(0, 10);
+};
+
+app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, res) => {
+  if (!chartSupabase) {
+    return res.status(503).json({ error: "Shift report dashboard storage is not configured." });
+  }
+
+  try {
+    const sourceRows = await fetchChartRows(
+      "pro_shift_report_submissions",
+      "submission_id,submitted_at,report_date,operator,shift,hours_worked,tons,linear_feet,stroke_count,total_coils_ran,planned_downtime_minutes,planned_downtime_details,unplanned_downtime_minutes,unplanned_downtime_details",
+      { orderBy: "report_date", ascending: true, limit: 50000 }
+    );
+
+    const latestByReport = new Map();
+    sourceRows.forEach((row) => {
+      const reportDate = String(row.report_date || "").slice(0, 10);
+      const operator = String(row.operator || "").trim();
+      if (!reportDate || !operator || /\btest\b/i.test(operator)) return;
+
+      const shift = normalizeShiftReportShift(row.shift);
+      const key = `${reportDate}|${shift.toLowerCase()}|${operator.toLowerCase()}`;
+      const previous = latestByReport.get(key);
+      const currentTime = Date.parse(row.submitted_at || "") || 0;
+      const previousTime = Date.parse(previous?.submitted_at || "") || 0;
+      if (!previous || currentTime >= previousTime) {
+        latestByReport.set(key, { ...row, report_date: reportDate, operator, shift });
+      }
+    });
+
+    const rows = Array.from(latestByReport.values());
+    const today = easternDateKey();
+    const todayRows = rows.filter((row) => row.report_date === today);
+    const sum = (list, field) => list.reduce((total, row) => total + toNumberSafe(row[field]), 0);
+    const employeeTotals = new Map();
+    const shiftTotals = new Map();
+    const weeklyShiftTotals = new Map();
+    const downtimeReasonTotals = new Map();
+
+    rows.forEach((row) => {
+      const employees = Array.from(new Set(
+        String(row.operator || "")
+          .split("/")
+          .map((name) => name.trim())
+          .filter(Boolean)
+          .map((name) => /^matt$/i.test(name) ? "Matt Bocanegra" : name)
+      ));
+      const tonsPerEmployee = employees.length ? toNumberSafe(row.tons) / employees.length : 0;
+      employees.forEach((employee) => {
+        employeeTotals.set(employee, (employeeTotals.get(employee) || 0) + tonsPerEmployee);
+      });
+      shiftTotals.set(row.shift, (shiftTotals.get(row.shift) || 0) + toNumberSafe(row.tons));
+
+      const week = shiftReportWeekKey(row.report_date);
+      if (week) {
+        const weeklyKey = `${week}|${row.shift}`;
+        weeklyShiftTotals.set(weeklyKey, (weeklyShiftTotals.get(weeklyKey) || 0) + toNumberSafe(row.tons));
+      }
+
+      [
+        {
+          type: "Planned",
+          minutes: toNumberSafe(row.planned_downtime_minutes),
+          reason: String(row.planned_downtime_details || "").trim()
+        },
+        {
+          type: "Unplanned",
+          minutes: toNumberSafe(row.unplanned_downtime_minutes),
+          reason: String(row.unplanned_downtime_details || "").trim()
+        }
+      ].forEach((item) => {
+        if (!week || (!item.minutes && !item.reason)) return;
+        const reason = item.reason || "No reason entered";
+        const key = `${week}|${row.shift}|${item.type}|${reason.toLowerCase()}`;
+        const previous = downtimeReasonTotals.get(key) || {
+          week,
+          shift: row.shift,
+          type: item.type,
+          reason,
+          minutes: 0,
+          occurrences: 0
+        };
+        previous.minutes += item.minutes;
+        previous.occurrences += 1;
+        downtimeReasonTotals.set(key, previous);
+      });
+    });
+
+    const employeeTons = Array.from(employeeTotals.entries())
+      .map(([employee, tons]) => ({ employee, tons: roundMetric(tons, 0) }))
+      .sort((a, b) => b.tons - a.tons || a.employee.localeCompare(b.employee))
+      .slice(0, 12);
+    const shiftOrder = ["First", "Second", "Third"];
+    const shiftTons = Array.from(shiftTotals.entries())
+      .map(([shift, tons]) => ({ shift, tons: roundMetric(tons, 0) }))
+      .sort((a, b) => {
+        const aIndex = shiftOrder.indexOf(a.shift);
+        const bIndex = shiftOrder.indexOf(b.shift);
+        return (aIndex < 0 ? 99 : aIndex) - (bIndex < 0 ? 99 : bIndex) || a.shift.localeCompare(b.shift);
+      });
+    const todayShiftKpis = shiftOrder.map((shift) => {
+      const shiftRows = todayRows.filter((row) => row.shift === shift);
+      return {
+        shift,
+        reports: shiftRows.length,
+        tons: roundMetric(sum(shiftRows, "tons"), 0),
+        downtimeMinutes: Math.round(
+          sum(shiftRows, "planned_downtime_minutes") + sum(shiftRows, "unplanned_downtime_minutes")
+        )
+      };
+    });
+    const allWeeks = Array.from(new Set(rows.map((row) => shiftReportWeekKey(row.report_date)).filter(Boolean))).sort();
+    const visibleWeeks = allWeeks.slice(-12);
+    const weeklyShiftTons = visibleWeeks.map((week) => ({
+      week,
+      First: roundMetric(weeklyShiftTotals.get(`${week}|First`) || 0, 0),
+      Second: roundMetric(weeklyShiftTotals.get(`${week}|Second`) || 0, 0),
+      Third: roundMetric(weeklyShiftTotals.get(`${week}|Third`) || 0, 0)
+    }));
+    const downtimeReasons = Array.from(downtimeReasonTotals.values())
+      .filter((item) => visibleWeeks.includes(item.week))
+      .map((item) => ({ ...item, minutes: Math.round(item.minutes) }))
+      .sort((a, b) => b.week.localeCompare(a.week) || shiftOrder.indexOf(a.shift) - shiftOrder.indexOf(b.shift) || b.minutes - a.minutes);
+    const reportDates = rows.map((row) => row.report_date).filter(Boolean).sort();
+
+    return res.json({
+      today,
+      kpis: {
+        reports: todayRows.length,
+        tons: roundMetric(sum(todayRows, "tons"), 0),
+        coils: Math.round(sum(todayRows, "total_coils_ran")),
+        linearFeet: Math.round(sum(todayRows, "linear_feet")),
+        downtimeMinutes: Math.round(
+          sum(todayRows, "planned_downtime_minutes") + sum(todayRows, "unplanned_downtime_minutes")
+        )
+      },
+      todayShiftKpis,
+      employeeTons,
+      shiftTons,
+      weeklyShiftTons,
+      downtimeReasons,
+      history: {
+        reports: rows.length,
+        sourceRows: sourceRows.length,
+        firstDate: reportDates[0] || null,
+        lastDate: reportDates[reportDates.length - 1] || null
+      },
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Shift report dashboard endpoint failed:", error);
+    return res.status(500).json({ error: error.message || "Unable to load shift report dashboard data." });
   }
 });
 
