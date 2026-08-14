@@ -54,7 +54,7 @@ app.get("/api/deploy-status", (_req, res) => {
     service: "cap-auth-server",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
-    shiftReportDashboardMode: "monthly-employees-weekly-shifts-v3",
+    shiftReportDashboardMode: "current-month-employees-weekly-shifts-v4",
     shiftReportAccessMode: "production-v1",
     node: process.version
   });
@@ -5533,6 +5533,15 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
         tons: employeeMonths.map((month) => roundMetric(employeeMonthlyTotals.get(`${month}|${employee}`) || 0, 0))
       }))
     };
+    const currentMonth = today.slice(0, 7);
+    const employeeTonsCurrentMonth = Array.from(employeeTotals.keys())
+      .map((employee) => ({
+        employee,
+        tons: roundMetric(employeeMonthlyTotals.get(`${currentMonth}|${employee}`) || 0, 0)
+      }))
+      .filter((row) => row.tons > 0)
+      .sort((a, b) => b.tons - a.tons || a.employee.localeCompare(b.employee))
+      .slice(0, 8);
     const shiftOrder = ["First", "Second", "Third"];
     const shiftTons = Array.from(shiftTotals.entries())
       .map(([shift, tons]) => ({ shift, tons: roundMetric(tons, 0) }))
@@ -5580,6 +5589,7 @@ app.get("/api/shift-report-dashboard", requireShiftReportAccess, async (_req, re
       todayShiftKpis,
       employeeTons,
       employeeTonsByMonth,
+      employeeTonsCurrentMonth,
       shiftTons,
       weeklyShiftTons,
       downtimeReasons,
