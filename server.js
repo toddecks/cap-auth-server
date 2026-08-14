@@ -55,6 +55,7 @@ app.get("/api/deploy-status", (_req, res) => {
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "weekly-v2",
+    shiftReportAccessMode: "production-v1",
     node: process.version
   });
 });
