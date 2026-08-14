@@ -3304,6 +3304,30 @@ app.post("/api/pro/forms/submit", async (req, res) => {
   const rawChartRows = Array.isArray(body.chartRows) ? body.chartRows : [];
   const rawMaintenanceOrders = Array.isArray(body.maintenanceOrders) ? body.maintenanceOrders : [];
   const isTestSubmission = /\btest\b/i.test(String(formLabel || ""));
+  const clientSubmissionToken = coerceText(body.submissionToken || body.submission_token, 160);
+
+  // Older hosted form bundles did not send a client token. Keep those safe by
+  // deriving a short-lived, deterministic key from the request contents. This
+  // collapses repeated clicks/browser retries in the same minute without
+  // preventing a genuinely new report submitted later.
+  const submissionMinute = new Date();
+  submissionMinute.setUTCSeconds(0, 0);
+  const automaticFingerprint = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({
+      formKey,
+      formLabel,
+      submittedBy,
+      dimensions,
+      metrics,
+      payload,
+      notes,
+      submissionMinute: submissionMinute.toISOString()
+    }))
+    .digest("hex");
+  const idempotencyKey = clientSubmissionToken
+    ? `client:${clientSubmissionToken}`
+    : `auto:${automaticFingerprint}`;
 
   if (!formKey) {
     return res.status(400).json({ error: "formKey is required." });
@@ -3315,6 +3339,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
 
   try {
     const submissionRow = {
+      idempotency_key: idempotencyKey,
       form_key: formKey,
       form_label: formLabel || formKey,
       submitted_at: submittedAt,
@@ -3336,6 +3361,28 @@ app.post("/api/pro/forms/submit", async (req, res) => {
       .single();
 
     if (submissionError || !submission?.id) {
+      if (submissionError?.code === "23505") {
+        const { data: existingSubmission } = await chartSupabase
+          .from("pro_form_submissions")
+          .select("id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+
+        return res.json({
+          success: true,
+          duplicate: true,
+          submissionId: existingSubmission?.id || null,
+          chartRowsInserted: 0,
+          maintenanceOrdersCreated: 0,
+          maintenanceOrders: [],
+          notification: {
+            sent: false,
+            duplicateSuppressed: true,
+            reason: "Duplicate submission ignored; the original report was already saved and emailed."
+          },
+          maintenanceNotifications: []
+        });
+      }
       console.error("Pro submission insert failed:", submissionError);
       return res.status(400).json({ error: submissionError?.message || "Failed to store form submission." });
     }
@@ -3531,6 +3578,7 @@ app.post("/api/pro/forms/submit", async (req, res) => {
 
     return res.json({
       success: true,
+      duplicate: false,
       submissionId: submission.id,
       formSpecificTable: formSpecificSubmission?.table || null,
       chartRowsInserted: chartRows.length,
