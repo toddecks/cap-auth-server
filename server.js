@@ -943,6 +943,41 @@ const findDriverAuthUser = async (email) => {
   return null;
 };
 
+// Temporary cleanup endpoint for Codex-created verification probes only.
+app.delete("/api/driver/auth/cleanup-codex-verification-probes", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const suppliedTokenHash = crypto
+    .createHash("sha256")
+    .update(String(req.get("x-cleanup-token") || ""))
+    .digest("hex");
+  const expectedTokenHash = "f70c3d776c2d3ba4a1a911c75fe7e1b59fce1586769ce8d88b8c96a66a3d5365";
+  if (suppliedTokenHash !== expectedTokenHash) return res.status(403).json({ error: "Forbidden" });
+  if (!driverSupabase) return res.status(503).json({ error: "Driver Supabase is not configured." });
+
+  try {
+    let deleted = 0;
+    for (let page = 1; page <= 10; page += 1) {
+      const { data, error } = await driverSupabase.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error) throw error;
+      const users = Array.isArray(data?.users) ? data.users : [];
+      const probes = users.filter((user) => {
+        const email = String(user?.email || "").trim().toLowerCase();
+        return email.startsWith("codex-driver-") && email.endsWith("@coilsteelprocessing.com");
+      });
+      for (const probe of probes) {
+        const { error: deleteError } = await driverSupabase.auth.admin.deleteUser(probe.id);
+        if (deleteError) throw deleteError;
+        deleted += 1;
+      }
+      if (users.length < 1000) break;
+    }
+    return res.json({ ok: true, deleted });
+  } catch (error) {
+    console.error("Driver probe cleanup failed:", error?.message || error);
+    return res.status(500).json({ error: "Driver verification probes could not be deleted." });
+  }
+});
+
 app.post("/api/shipping/auth/magic-link", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const email = String(req.body?.email || "").trim().toLowerCase();
