@@ -849,21 +849,38 @@ const sendDriverVerificationCode = async ({ email, password, profile }) => {
   });
   if (!html) throw new Error("Driver verification email template is unavailable.");
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: SHIPPING_AUTH_FROM_EMAIL,
-      to: [email],
-      subject: `${code} is your CSP Driver verification code`,
-      html
-    })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.message || "Resend rejected the driver verification email.");
+  const sendFrom = async (from) => {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: `${code} is your CSP Driver verification code`,
+        html
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    return { response, payload };
+  };
+
+  let delivery = await sendFrom(SHIPPING_AUTH_FROM_EMAIL);
+  const fallbackFrom = String(PRO_FORMS_FROM_EMAIL || "").trim();
+  if (!delivery.response.ok && fallbackFrom && fallbackFrom !== SHIPPING_AUTH_FROM_EMAIL) {
+    console.warn(
+      "Driver verification sender was rejected; retrying with the established forms sender:",
+      delivery.payload?.message || delivery.response.status
+    );
+    delivery = await sendFrom(fallbackFrom);
+  }
+  if (!delivery.response.ok) {
+    const error = new Error(delivery.payload?.message || "Resend rejected the driver verification email.");
+    error.code = "driver_email_delivery_failed";
+    throw error;
+  }
 
   return verificationType;
 };
@@ -902,10 +919,15 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
   } catch (error) {
     console.error("Driver verification email failed:", error?.message || error);
     const statusCode = Number(error?.statusCode) || 500;
+    const safeMessage = error?.code === "driver_email_delivery_failed"
+      ? `Verification email could not be delivered: ${String(error.message || "Resend rejected the request.").slice(0, 240)}`
+      : error?.message === "Driver verification email template is unavailable."
+        ? error.message
+        : "We could not send the verification code. Try again shortly.";
     return res.status(statusCode).json({
       error: statusCode === 409
         ? error.message
-        : "We could not send the verification code. Try again shortly."
+        : safeMessage
     });
   }
 });
