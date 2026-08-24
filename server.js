@@ -63,6 +63,12 @@ app.get("/api/deploy-status", (_req, res) => {
       && process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY
       && (process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     ),
+    driverSignupDependencies: {
+      resend: Boolean(process.env.RESEND_API_KEY),
+      supabaseUrl: Boolean(process.env.DRIVER_SUPABASE_URL),
+      supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
+      fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
+    },
     node: process.version
   });
 });
