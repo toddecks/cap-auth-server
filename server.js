@@ -56,7 +56,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
-    driverSignupMode: "resend-otp-v1",
+    driverSignupMode: "resend-otp-v3",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
       && process.env.DRIVER_SUPABASE_URL
@@ -923,7 +923,7 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
       ? `Verification email could not be delivered: ${String(error.message || "Resend rejected the request.").slice(0, 240)}`
       : error?.message === "Driver verification email template is unavailable."
         ? error.message
-        : "We could not send the verification code. Try again shortly.";
+        : `Verification failed: ${String(error?.message || "Unknown server error.").slice(0, 240)}`;
     return res.status(statusCode).json({
       error: statusCode === 409
         ? error.message
