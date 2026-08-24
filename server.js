@@ -838,8 +838,8 @@ const sendDriverVerificationCode = async ({ email, password, profile }) => {
   }
 
   const code = String(linkData?.properties?.email_otp || "").trim();
-  if (!/^\d{6}$/.test(code)) {
-    throw new Error("Supabase did not return a six-digit verification code.");
+  if (!/^\d{6,10}$/.test(code)) {
+    throw new Error("Supabase did not return a valid email verification code.");
   }
 
   const html = renderStoredTemplate("driver_verification_code", {
@@ -914,7 +914,7 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
     return res.json({
       ok: true,
       verificationType,
-      message: "Check your email for the six-digit CSP Driver verification code."
+      message: "Check your email for the CSP Driver verification code."
     });
   } catch (error) {
     console.error("Driver verification email failed:", error?.message || error);
