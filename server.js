@@ -57,6 +57,12 @@ app.get("/api/deploy-status", (_req, res) => {
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
     driverSignupMode: "resend-otp-v1",
+    driverSignupConfigured: Boolean(
+      process.env.RESEND_API_KEY
+      && process.env.DRIVER_SUPABASE_URL
+      && process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY
+      && (process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
+    ),
     node: process.version
   });
 });
