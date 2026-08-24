@@ -921,6 +921,37 @@ const findDriverAuthUser = async (email) => {
   return null;
 };
 
+// Temporary one-time cleanup route for the explicitly requested test account.
+// The plaintext token is never stored on the server or in source control.
+app.delete("/api/driver/auth/cleanup-viqtory-test-account", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const suppliedTokenHash = crypto
+    .createHash("sha256")
+    .update(String(req.get("x-cleanup-token") || ""))
+    .digest("hex");
+  const expectedTokenHash = "7a61a54e329593f25c4c3409ed8715c4ec9c8e58ca31b2d284bb42d51242b293";
+
+  if (suppliedTokenHash !== expectedTokenHash) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "Driver Supabase is not configured." });
+  }
+
+  try {
+    const email = "todd@viqtorystats.io";
+    const user = await findDriverAuthUser(email);
+    if (!user) return res.json({ ok: true, deleted: false, email });
+
+    const { error } = await driverSupabase.auth.admin.deleteUser(user.id);
+    if (error) throw error;
+    return res.json({ ok: true, deleted: true, email });
+  } catch (error) {
+    console.error("Driver test-account cleanup failed:", error?.message || error);
+    return res.status(500).json({ error: "The driver test account could not be deleted." });
+  }
+});
+
 app.post("/api/shipping/auth/magic-link", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const email = String(req.body?.email || "").trim().toLowerCase();
