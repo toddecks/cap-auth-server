@@ -56,6 +56,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
+    driverSignupMode: "resend-otp-v1",
     node: process.version
   });
 });
@@ -482,6 +483,36 @@ const FORKLIFT_FAILURE_RECIPIENTS = parseEmailRecipients(
 );
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
+const DRIVER_SUPABASE_URL = String(process.env.DRIVER_SUPABASE_URL || "").trim();
+const DRIVER_SUPABASE_SERVICE_ROLE_KEY = String(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const SHIPPING_AUTH_FROM_EMAIL = String(
+  process.env.SHIPPING_AUTH_FROM_EMAIL
+  || process.env.PRO_FORMS_FROM_EMAIL
+  || process.env.HR_INVITE_FROM_EMAIL
+  || ""
+).trim();
+const SHIPPING_PORTAL_BASE_URL = String(
+  process.env.SHIPPING_PORTAL_BASE_URL || "https://shipping.coilsteelprocessing.com"
+).trim().replace(/\/+$/, "");
+const SHIPPING_AUTH_MEMBERS = new Map(
+  String(process.env.SHIPPING_AUTH_ALLOWED_EMAILS || "todd@coilsteelprocessing.com:admin")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [rawEmail, rawRole] = entry.split(":");
+      const email = String(rawEmail || "").trim().toLowerCase();
+      const role = String(rawRole || "shipping").trim().toLowerCase() === "admin" ? "admin" : "shipping";
+      return [email, role];
+    })
+    .filter(([email]) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+);
+const driverSupabase = DRIVER_SUPABASE_URL && DRIVER_SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(DRIVER_SUPABASE_URL, DRIVER_SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    })
+  : null;
+const shippingAuthAttempts = new Map();
 const EXPANSION_LEAD_RECIPIENTS = String(
   process.env.EXPANSION_LEAD_RECIPIENTS
   || "kyle@coilsteelprocessing.com,josh@coilsteelprocessing.com"
@@ -718,6 +749,242 @@ const renderStoredTemplate = (name, values) => {
     .replace(/\{\{\{\s*([a-zA-Z0-9_]+)\s*\}\}\}/g, (_, key) => String(values?.[key] ?? ""))
     .replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => escapeHtml(values?.[key] ?? ""));
 };
+
+const consumeShippingAuthAttempt = (req, email) => {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const key = `${String(req.ip || req.socket?.remoteAddress || "unknown")}:${email}`;
+  const recent = (shippingAuthAttempts.get(key) || []).filter((value) => now - value < windowMs);
+  if (recent.length >= 5) return false;
+  recent.push(now);
+  shippingAuthAttempts.set(key, recent);
+
+  if (shippingAuthAttempts.size > 500) {
+    for (const [attemptKey, values] of shippingAuthAttempts.entries()) {
+      const active = values.filter((value) => now - value < windowMs);
+      if (active.length) shippingAuthAttempts.set(attemptKey, active);
+      else shippingAuthAttempts.delete(attemptKey);
+    }
+  }
+  return true;
+};
+
+const DRIVER_LANGUAGES = new Set(["English", "Español", "Français", "Українська", "Русский"]);
+
+const normalizeDriverSignup = (body = {}) => ({
+  email: String(body.email || "").trim().toLowerCase(),
+  password: String(body.password || ""),
+  fullName: coerceText(body.fullName ?? body.name, 120),
+  haulingFor: coerceText(body.haulingFor, 160),
+  driverCompany: coerceText(body.driverCompany, 160),
+  preferredLanguage: DRIVER_LANGUAGES.has(body.preferredLanguage)
+    ? body.preferredLanguage
+    : "English"
+});
+
+const sendDriverVerificationCode = async ({ email, password, profile }) => {
+  let authUser = await findDriverAuthUser(email);
+  if (authUser?.email_confirmed_at) {
+    const error = new Error("An account already exists for this email. Sign in instead.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const metadata = {
+    full_name: profile.fullName,
+    hauling_for: profile.haulingFor,
+    driver_company: profile.driverCompany,
+    preferred_language: profile.preferredLanguage
+  };
+  let verificationType = "signup";
+  let linkData;
+
+  if (authUser) {
+    const { error: updateError } = await driverSupabase.auth.admin.updateUserById(authUser.id, {
+      password,
+      user_metadata: metadata
+    });
+    if (updateError) throw updateError;
+
+    verificationType = "magiclink";
+    const { data, error } = await driverSupabase.auth.admin.generateLink({
+      type: "magiclink",
+      email,
+      options: { data: metadata }
+    });
+    if (error) throw error;
+    linkData = data;
+  } else {
+    const { data, error } = await driverSupabase.auth.admin.generateLink({
+      type: "signup",
+      email,
+      password,
+      options: { data: metadata }
+    });
+    if (error) throw error;
+    linkData = data;
+  }
+
+  const code = String(linkData?.properties?.email_otp || "").trim();
+  if (!/^\d{6}$/.test(code)) {
+    throw new Error("Supabase did not return a six-digit verification code.");
+  }
+
+  const html = renderStoredTemplate("driver_verification_code", {
+    driver_name: profile.fullName,
+    verification_code: code,
+    recipient_email: email
+  });
+  if (!html) throw new Error("Driver verification email template is unavailable.");
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: SHIPPING_AUTH_FROM_EMAIL,
+      to: [email],
+      subject: `${code} is your CSP Driver verification code`,
+      html
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.message || "Resend rejected the driver verification email.");
+
+  return verificationType;
+};
+
+app.post("/api/driver/auth/signup-code", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const profile = normalizeDriverSignup(req.body);
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (profile.password.length < 8 || profile.password.length > 72) {
+    return res.status(400).json({ error: "Use a password between 8 and 72 characters." });
+  }
+  if (!profile.fullName || !profile.haulingFor || !profile.driverCompany) {
+    return res.status(400).json({ error: "Complete all driver information fields." });
+  }
+  if (!consumeShippingAuthAttempt(req, `driver-signup:${profile.email}`)) {
+    return res.status(429).json({ error: "Too many verification requests. Wait 15 minutes and try again." });
+  }
+  if (!driverSupabase || !RESEND_API_KEY || !SHIPPING_AUTH_FROM_EMAIL) {
+    return res.status(503).json({ error: "Driver verification email is not configured on the server." });
+  }
+
+  try {
+    const verificationType = await sendDriverVerificationCode({
+      email: profile.email,
+      password: profile.password,
+      profile
+    });
+    return res.json({
+      ok: true,
+      verificationType,
+      message: "Check your email for the six-digit CSP Driver verification code."
+    });
+  } catch (error) {
+    console.error("Driver verification email failed:", error?.message || error);
+    const statusCode = Number(error?.statusCode) || 500;
+    return res.status(statusCode).json({
+      error: statusCode === 409
+        ? error.message
+        : "We could not send the verification code. Try again shortly."
+    });
+  }
+});
+
+const findDriverAuthUser = async (email) => {
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await driverSupabase.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    const users = Array.isArray(data?.users) ? data.users : [];
+    const match = users.find((user) => String(user?.email || "").trim().toLowerCase() === email);
+    if (match || users.length < 1000) return match || null;
+  }
+  return null;
+};
+
+app.post("/api/shipping/auth/magic-link", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const role = SHIPPING_AUTH_MEMBERS.get(email);
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid CSP employee email address." });
+  }
+  if (!role) {
+    return res.status(403).json({ error: "This email has not been approved for CSP Shipping access." });
+  }
+  if (!consumeShippingAuthAttempt(req, email)) {
+    return res.status(429).json({ error: "Too many sign-in requests. Wait 15 minutes and try again." });
+  }
+  if (!driverSupabase || !RESEND_API_KEY || !SHIPPING_AUTH_FROM_EMAIL) {
+    return res.status(503).json({ error: "Shipping email sign-in is not configured on the server." });
+  }
+
+  try {
+    let authUser = await findDriverAuthUser(email);
+    if (!authUser) {
+      const { data, error } = await driverSupabase.auth.admin.createUser({
+        email,
+        email_confirm: true,
+        app_metadata: { csp_role: role },
+        user_metadata: { full_name: email === "todd@coilsteelprocessing.com" ? "Todd Yarberry" : "CSP Shipping" }
+      });
+      if (error) throw error;
+      authUser = data?.user;
+    } else if (authUser?.app_metadata?.csp_role !== role) {
+      const { data, error } = await driverSupabase.auth.admin.updateUserById(authUser.id, {
+        app_metadata: { ...(authUser.app_metadata || {}), csp_role: role }
+      });
+      if (error) throw error;
+      authUser = data?.user || authUser;
+    }
+
+    const { data: linkData, error: linkError } = await driverSupabase.auth.admin.generateLink({
+      type: "magiclink",
+      email
+    });
+    if (linkError || !linkData?.properties?.hashed_token) {
+      throw linkError || new Error("Supabase did not return a secure sign-in token.");
+    }
+
+    const signInUrl = new URL(SHIPPING_PORTAL_BASE_URL);
+    signInUrl.searchParams.set("token_hash", linkData.properties.hashed_token);
+    signInUrl.searchParams.set("type", "magiclink");
+    const html = renderStoredTemplate("shipping_magic_link", {
+      magic_link: signInUrl.toString(),
+      recipient_email: email
+    });
+    if (!html) throw new Error("Shipping sign-in email template is unavailable.");
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: SHIPPING_AUTH_FROM_EMAIL,
+        to: [email],
+        subject: "Sign in to CSP Shipping",
+        html
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.message || "Resend rejected the sign-in email.");
+
+    return res.json({ ok: true, message: "Check your email for the CSP Shipping sign-in link." });
+  } catch (error) {
+    console.error("Shipping magic-link email failed:", error?.message || error);
+    return res.status(500).json({ error: "We could not send the sign-in email. Try again shortly." });
+  }
+});
 
 const formatEmailLabel = (value) =>
   String(value || "")
