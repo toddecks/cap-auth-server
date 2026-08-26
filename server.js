@@ -56,7 +56,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
-    driverSignupMode: "resend-otp-v3",
+    driverSignupMode: "resend-otp-v4-dynamic-length",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
       && process.env.DRIVER_SUPABASE_URL
@@ -882,7 +882,10 @@ const sendDriverVerificationCode = async ({ email, password, profile }) => {
     throw error;
   }
 
-  return verificationType;
+  return {
+    verificationType,
+    verificationCodeLength: code.length
+  };
 };
 
 app.post("/api/driver/auth/signup-code", async (req, res) => {
@@ -906,14 +909,15 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
   }
 
   try {
-    const verificationType = await sendDriverVerificationCode({
+    const verification = await sendDriverVerificationCode({
       email: profile.email,
       password: profile.password,
       profile
     });
     return res.json({
       ok: true,
-      verificationType,
+      verificationType: verification.verificationType,
+      verificationCodeLength: verification.verificationCodeLength,
       message: "Check your email for the CSP Driver verification code."
     });
   } catch (error) {
