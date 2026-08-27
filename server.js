@@ -5281,9 +5281,6 @@ const FANTASY_FOOTBALL_INVITE_TESTS = {
     artworkName: "fantasy-gold.png"
   }
 };
-const FANTASY_FOOTBALL_UPDATE_RUN_ID = "F988351C-FB12-44C2-9026-5AD3073601C6";
-let fantasyFootballUpdateInProgress = false;
-let fantasyFootballUpdateResults = null;
 
 app.post("/api/fantasy-football-invite-test", async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -5332,129 +5329,6 @@ app.post("/api/fantasy-football-invite-test", async (req, res) => {
   } catch (error) {
     console.error("Fantasy football invite test failed:", error?.message || error);
     return res.status(502).json({ error: error?.message || "The fantasy invite test could not be sent." });
-  }
-});
-
-app.post("/api/fantasy-football-draft-update-blast", async (req, res) => {
-  res.set("Cache-Control", "no-store");
-  if (req.body?.campaignRunId !== FANTASY_FOOTBALL_UPDATE_RUN_ID) {
-    return res.status(403).json({ error: "This fantasy update campaign is not authorized." });
-  }
-  if (fantasyFootballUpdateResults) {
-    return res.json({ ok: true, repeated: true, ...fantasyFootballUpdateResults });
-  }
-  if (fantasyFootballUpdateInProgress) {
-    return res.status(409).json({ error: "The fantasy update campaign is already sending." });
-  }
-
-  const recipients = (Array.isArray(req.body?.recipients) ? req.body.recipients : [])
-    .slice(0, 20)
-    .map((entry) => ({
-      firstName: expansionLeadText(entry?.firstName, 80),
-      email: expansionLeadText(entry?.email, 254).toLowerCase(),
-      league: expansionLeadText(entry?.league, 20).toLowerCase()
-    }));
-  const uniqueEmails = new Set(recipients.map((entry) => entry.email));
-  const blueCount = recipients.filter((entry) => entry.league === "blue").length;
-  const goldCount = recipients.filter((entry) => entry.league === "gold").length;
-  const validRecipients = recipients.every((entry) =>
-    entry.firstName
-    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry.email)
-    && FANTASY_FOOTBALL_INVITE_TESTS[entry.league]
-  );
-  if (recipients.length !== 16 || uniqueEmails.size !== 16 || blueCount !== 8 || goldCount !== 8 || !validRecipients) {
-    return res.status(400).json({ error: "The update must contain eight unique Blue and eight unique Gold recipients." });
-  }
-  if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL) {
-    return res.status(503).json({ error: "Fantasy football email delivery is not configured." });
-  }
-
-  fantasyFootballUpdateInProgress = true;
-  const artworkByLeague = Object.fromEntries(
-    Object.entries(FANTASY_FOOTBALL_INVITE_TESTS).map(([league, config]) => [
-      league,
-      fs.readFileSync(path.join(EMAIL_ASSETS_DIR, config.artworkName)).toString("base64")
-    ])
-  );
-  const deliveries = [];
-
-  try {
-    for (const recipient of recipients) {
-      const config = FANTASY_FOOTBALL_INVITE_TESTS[recipient.league];
-      try {
-        const html = renderStoredTemplate(config.templateName, { first_name: recipient.firstName });
-        if (!html) throw new Error(`${config.leagueName} email template is unavailable.`);
-        const recipientKey = crypto.createHash("sha256").update(recipient.email).digest("hex").slice(0, 20);
-        const providerId = await sendFantasyFootballEmail({
-          to: recipient.email,
-          replyTo: FANTASY_FOOTBALL_ADMIN_RECIPIENTS[0] || null,
-          subject: `Schedule Update: ${config.leagueName} Draft Is Sunday at 1 PM ET`,
-          html,
-          attachments: [{
-            content: artworkByLeague[recipient.league],
-            filename: config.artworkName,
-            content_id: "fantasy-helmet"
-          }],
-          tags: [
-            { name: "campaign", value: "csp-fantasy-2026-update" },
-            { name: "league", value: recipient.league },
-            { name: "delivery", value: "schedule-update" }
-          ],
-          idempotencyKey: `fantasy-2026-schedule-update-${recipient.league}-${recipientKey}`
-        });
-        deliveries.push({ ...recipient, accepted: true, providerId });
-      } catch (error) {
-        deliveries.push({
-          ...recipient,
-          accepted: false,
-          providerId: null,
-          error: expansionLeadText(error?.message, 500) || "Resend rejected this message."
-        });
-      }
-      await new Promise((resolve) => setTimeout(resolve, 650));
-    }
-
-    fantasyFootballUpdateResults = {
-      sentAt: new Date().toISOString(),
-      accepted: deliveries.filter((entry) => entry.accepted).length,
-      failed: deliveries.filter((entry) => !entry.accepted).length,
-      deliveries
-    };
-    return res.status(fantasyFootballUpdateResults.failed ? 207 : 200).json({
-      ok: fantasyFootballUpdateResults.failed === 0,
-      ...fantasyFootballUpdateResults
-    });
-  } finally {
-    fantasyFootballUpdateInProgress = false;
-  }
-});
-
-app.get("/api/fantasy-football-draft-update-delivery", async (req, res) => {
-  res.set("Cache-Control", "no-store");
-  if (req.query?.campaignRunId !== FANTASY_FOOTBALL_UPDATE_RUN_ID) {
-    return res.status(403).json({ error: "This fantasy update campaign is not authorized." });
-  }
-  if (!fantasyFootballUpdateResults) {
-    return res.status(404).json({ error: "The fantasy update has not been sent from this server instance." });
-  }
-
-  try {
-    const response = await fetch("https://api.resend.com/emails?limit=100", {
-      headers: { Authorization: `Bearer ${RESEND_API_KEY}` }
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.message || "Resend delivery history could not be loaded.");
-    const historyById = new Map(
-      (Array.isArray(payload?.data) ? payload.data : []).map((entry) => [entry.id, entry])
-    );
-    const deliveries = fantasyFootballUpdateResults.deliveries.map((entry) => ({
-      ...entry,
-      lastEvent: entry.providerId ? historyById.get(entry.providerId)?.last_event || "pending" : "failed"
-    }));
-    return res.json({ ok: true, sentAt: fantasyFootballUpdateResults.sentAt, deliveries });
-  } catch (error) {
-    console.error("Fantasy football update delivery lookup failed:", error?.message || error);
-    return res.status(502).json({ error: error?.message || "Delivery status could not be loaded." });
   }
 });
 
