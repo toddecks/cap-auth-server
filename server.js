@@ -733,6 +733,7 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#39;");
 
 const EMAIL_TEMPLATES_DIR = path.join(__dirname, "email-templates");
+const EMAIL_ASSETS_DIR = path.join(__dirname, "email-assets");
 const emailTemplateCache = new Map();
 
 const readEmailTemplate = (name) => {
@@ -5230,7 +5231,15 @@ const expansionLeadIp = (req) => {
   return expansionLeadText(forwarded || req.ip || "", 100);
 };
 
-const sendFantasyFootballEmail = async ({ to, replyTo, subject, html }) => {
+const sendFantasyFootballEmail = async ({
+  to,
+  replyTo,
+  subject,
+  html,
+  attachments = [],
+  tags = [],
+  idempotencyKey = ""
+}) => {
   if (!RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL) {
     throw new Error("Fantasy football email delivery is not configured.");
   }
@@ -5239,14 +5248,17 @@ const sendFantasyFootballEmail = async ({ to, replyTo, subject, html }) => {
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
     body: JSON.stringify({
       from: PRO_FORMS_FROM_EMAIL,
       to: Array.isArray(to) ? to : [to],
       ...(replyTo ? { reply_to: replyTo } : {}),
       subject,
-      html
+      html,
+      ...(attachments.length ? { attachments } : {}),
+      ...(tags.length ? { tags } : {})
     })
   });
 
@@ -5256,6 +5268,69 @@ const sendFantasyFootballEmail = async ({ to, replyTo, subject, html }) => {
   }
   return payload?.id || null;
 };
+
+const FANTASY_FOOTBALL_INVITE_TESTS = {
+  blue: {
+    leagueName: "CSP Blue",
+    templateName: "fantasy_football_invite_blue",
+    artworkName: "fantasy-blue.png"
+  },
+  gold: {
+    leagueName: "CSP Gold",
+    templateName: "fantasy_football_invite_gold",
+    artworkName: "fantasy-gold.png"
+  }
+};
+
+app.post("/api/fantasy-football-invite-test", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const leagueKey = expansionLeadText(req.body?.league, 20).toLowerCase();
+  const testRunId = expansionLeadText(req.body?.testRunId, 60);
+  const config = FANTASY_FOOTBALL_INVITE_TESTS[leagueKey];
+
+  if (!config) return res.status(400).json({ error: "Choose the Blue or Gold test email." });
+  if (!/^[0-9a-f-]{20,60}$/i.test(testRunId)) {
+    return res.status(400).json({ error: "A valid test run ID is required." });
+  }
+  if (!consumeShippingAuthAttempt(req, `fantasy-invite-test:${leagueKey}`)) {
+    return res.status(429).json({ error: "Too many fantasy invite tests. Wait 15 minutes and try again." });
+  }
+
+  const recipient = FANTASY_FOOTBALL_ADMIN_RECIPIENTS[0];
+  if (!recipient || !RESEND_API_KEY || !PRO_FORMS_FROM_EMAIL) {
+    return res.status(503).json({ error: "Fantasy football test email delivery is not configured." });
+  }
+
+  try {
+    const html = renderStoredTemplate(config.templateName, { first_name: "Todd" });
+    if (!html) throw new Error(`${config.leagueName} email template is unavailable.`);
+
+    const artworkPath = path.join(EMAIL_ASSETS_DIR, config.artworkName);
+    const artwork = fs.readFileSync(artworkPath).toString("base64");
+    const providerId = await sendFantasyFootballEmail({
+      to: recipient,
+      replyTo: recipient,
+      subject: `[RESEND TEST] Your ${config.leagueName} Fantasy Football Invite`,
+      html,
+      attachments: [{
+        content: artwork,
+        filename: config.artworkName,
+        content_id: "fantasy-helmet"
+      }],
+      tags: [
+        { name: "campaign", value: "csp-fantasy-2026" },
+        { name: "league", value: leagueKey },
+        { name: "delivery", value: "test" }
+      ],
+      idempotencyKey: `fantasy-invite-test-${leagueKey}-${testRunId}`
+    });
+
+    return res.json({ ok: true, league: config.leagueName, recipient, providerId });
+  } catch (error) {
+    console.error("Fantasy football invite test failed:", error?.message || error);
+    return res.status(502).json({ error: error?.message || "The fantasy invite test could not be sent." });
+  }
+});
 
 app.post("/api/fantasy-football-signups", async (req, res) => {
   res.set("Cache-Control", "no-store");
