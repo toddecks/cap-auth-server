@@ -57,7 +57,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
     driverSignupMode: "resend-otp-v4-dynamic-length",
-    shippingAuthMode: "bi-master-v1",
+    shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
       && process.env.DRIVER_SUPABASE_URL
@@ -1028,6 +1028,27 @@ const issueDriverShippingSession = async (biUser, shippingRole) => {
   return sessionData.session;
 };
 
+const shippingSessionIssues = new Map();
+const issueDriverShippingSessionOnce = (biUser, shippingRole) => {
+  const key = `${biUser.id}:${shippingRole}`;
+  const now = Date.now();
+  const existing = shippingSessionIssues.get(key);
+  if (existing && existing.expiresAt > now) return existing.promise;
+
+  const entry = {
+    expiresAt: now + 15000,
+    promise: issueDriverShippingSession(biUser, shippingRole)
+  };
+  shippingSessionIssues.set(key, entry);
+  entry.promise.catch(() => {
+    if (shippingSessionIssues.get(key) === entry) shippingSessionIssues.delete(key);
+  });
+  setTimeout(() => {
+    if (shippingSessionIssues.get(key) === entry) shippingSessionIssues.delete(key);
+  }, 15000).unref?.();
+  return entry.promise;
+};
+
 app.post("/api/shipping/auth/session", async (req, res) => {
   res.set("Cache-Control", "no-store");
   if (!driverSupabase) {
@@ -1049,7 +1070,7 @@ app.post("/api/shipping/auth/session", async (req, res) => {
       return res.status(403).json({ error: "Your BI account does not have CSP Shipping access." });
     }
 
-    const driverSession = await issueDriverShippingSession(biUser, shippingRole);
+    const driverSession = await issueDriverShippingSessionOnce(biUser, shippingRole);
     return res.json({
       ok: true,
       authSource: "bi",
