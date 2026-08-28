@@ -57,6 +57,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
     driverSignupMode: "resend-otp-v4-dynamic-length",
+    shippingAuthMode: "bi-master-v1",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
       && process.env.DRIVER_SUPABASE_URL
@@ -519,6 +520,12 @@ const SHIPPING_AUTH_MEMBERS = new Map(
     })
     .filter(([email]) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
 );
+const SHIPPING_BI_ACCESS_ROLES = new Set(
+  String(process.env.SHIPPING_BI_ACCESS_ROLES || "admin,shipping_overview,shipping_performance")
+    .split(",")
+    .map(normalizeRoleName)
+    .filter(Boolean)
+);
 const driverSupabase = DRIVER_SUPABASE_URL && DRIVER_SUPABASE_SERVICE_ROLE_KEY
   ? createClient(DRIVER_SUPABASE_URL, DRIVER_SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false }
@@ -937,9 +944,9 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
   }
 });
 
-const findDriverAuthUser = async (email) => {
+const findAuthUserByEmail = async (authClient, email) => {
   for (let page = 1; page <= 10; page += 1) {
-    const { data, error } = await driverSupabase.auth.admin.listUsers({ page, perPage: 1000 });
+    const { data, error } = await authClient.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw error;
     const users = Array.isArray(data?.users) ? data.users : [];
     const match = users.find((user) => String(user?.email || "").trim().toLowerCase() === email);
@@ -948,44 +955,140 @@ const findDriverAuthUser = async (email) => {
   return null;
 };
 
+const findDriverAuthUser = (email) => findAuthUserByEmail(driverSupabase, email);
+
+const resolveBiShippingRole = async (biUser) => {
+  if (!biUser?.id) return null;
+  const email = String(biUser.email || "").trim().toLowerCase();
+  const roleRows = await fetchUserRoleRows(biUser.id);
+  const roles = roleNamesFromRows(roleRows).map(normalizeRoleName);
+  const allowlistedRole = SHIPPING_AUTH_MEMBERS.get(email) || null;
+  const approved = roles.some((role) => SHIPPING_BI_ACCESS_ROLES.has(role)) || Boolean(allowlistedRole);
+  if (!approved) return null;
+  return roles.includes("admin") || allowlistedRole === "admin" ? "admin" : "shipping";
+};
+
+const issueDriverShippingSession = async (biUser, shippingRole) => {
+  const email = String(biUser?.email || "").trim().toLowerCase();
+  if (!email || !driverSupabase) throw new Error("Shipping authentication is not configured.");
+
+  let driverUser = await findDriverAuthUser(email);
+  const displayName = String(
+    biUser?.user_metadata?.full_name
+    || [biUser?.user_metadata?.first_name, biUser?.user_metadata?.last_name].filter(Boolean).join(" ")
+    || email.split("@")[0]
+    || "CSP Shipping"
+  ).trim();
+
+  if (!driverUser) {
+    const { data, error } = await driverSupabase.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      app_metadata: { csp_role: shippingRole, bi_user_id: biUser.id },
+      user_metadata: { full_name: displayName }
+    });
+    if (error || !data?.user) throw error || new Error("Unable to create the Shipping data account.");
+    driverUser = data.user;
+  } else {
+    const currentRole = String(driverUser.app_metadata?.csp_role || "").trim().toLowerCase();
+    const currentBiUserId = String(driverUser.app_metadata?.bi_user_id || "").trim();
+    if (currentRole !== shippingRole || currentBiUserId !== biUser.id) {
+      const { data, error } = await driverSupabase.auth.admin.updateUserById(driverUser.id, {
+        app_metadata: {
+          ...(driverUser.app_metadata || {}),
+          csp_role: shippingRole,
+          bi_user_id: biUser.id
+        }
+      });
+      if (error) throw error;
+      driverUser = data?.user || driverUser;
+    }
+  }
+
+  const { data: linkData, error: linkError } = await driverSupabase.auth.admin.generateLink({
+    type: "magiclink",
+    email
+  });
+  const tokenHash = String(linkData?.properties?.hashed_token || "").trim();
+  if (linkError || !tokenHash) {
+    throw linkError || new Error("Unable to create the Shipping data session.");
+  }
+
+  const sessionClient = createClient(DRIVER_SUPABASE_URL, DRIVER_SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false }
+  });
+  const { data: sessionData, error: sessionError } = await sessionClient.auth.verifyOtp({
+    token_hash: tokenHash,
+    type: "magiclink"
+  });
+  if (sessionError || !sessionData?.session?.access_token || !sessionData?.session?.refresh_token) {
+    throw sessionError || new Error("Unable to establish the Shipping data session.");
+  }
+
+  return sessionData.session;
+};
+
+app.post("/api/shipping/auth/session", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "Shipping authentication is not configured on the server." });
+  }
+
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in with your BI account." });
+
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    const biUser = data?.user;
+    if (error || !biUser?.id || !biUser?.email) {
+      return res.status(401).json({ error: error?.message || "Your BI session is invalid or expired." });
+    }
+
+    const shippingRole = await resolveBiShippingRole(biUser);
+    if (!shippingRole) {
+      return res.status(403).json({ error: "Your BI account does not have CSP Shipping access." });
+    }
+
+    const driverSession = await issueDriverShippingSession(biUser, shippingRole);
+    return res.json({
+      ok: true,
+      authSource: "bi",
+      shippingRole,
+      session: {
+        access_token: driverSession.access_token,
+        refresh_token: driverSession.refresh_token,
+        expires_at: driverSession.expires_at || null,
+        expires_in: driverSession.expires_in || null
+      }
+    });
+  } catch (error) {
+    console.error("BI-master Shipping session failed:", error?.message || error);
+    return res.status(500).json({ error: "We could not establish the Shipping session. Try again shortly." });
+  }
+});
+
 app.post("/api/shipping/auth/magic-link", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const email = String(req.body?.email || "").trim().toLowerCase();
-  const role = SHIPPING_AUTH_MEMBERS.get(email);
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: "Enter a valid CSP employee email address." });
   }
-  if (!role) {
-    return res.status(403).json({ error: "This email has not been approved for CSP Shipping access." });
-  }
   if (!consumeShippingAuthAttempt(req, email)) {
     return res.status(429).json({ error: "Too many sign-in requests. Wait 15 minutes and try again." });
   }
-  if (!driverSupabase || !RESEND_API_KEY || !SHIPPING_AUTH_FROM_EMAIL) {
+  if (!RESEND_API_KEY || !SHIPPING_AUTH_FROM_EMAIL) {
     return res.status(503).json({ error: "Shipping email sign-in is not configured on the server." });
   }
 
   try {
-    let authUser = await findDriverAuthUser(email);
-    if (!authUser) {
-      const { data, error } = await driverSupabase.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        app_metadata: { csp_role: role },
-        user_metadata: { full_name: email === "todd@coilsteelprocessing.com" ? "Todd Yarberry" : "CSP Shipping" }
-      });
-      if (error) throw error;
-      authUser = data?.user;
-    } else if (authUser?.app_metadata?.csp_role !== role) {
-      const { data, error } = await driverSupabase.auth.admin.updateUserById(authUser.id, {
-        app_metadata: { ...(authUser.app_metadata || {}), csp_role: role }
-      });
-      if (error) throw error;
-      authUser = data?.user || authUser;
+    const biUser = await findAuthUserByEmail(supabase, email);
+    const shippingRole = await resolveBiShippingRole(biUser);
+    if (!biUser || !shippingRole) {
+      return res.status(403).json({ error: "This BI account does not have CSP Shipping access." });
     }
 
-    const { data: linkData, error: linkError } = await driverSupabase.auth.admin.generateLink({
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: "magiclink",
       email
     });
@@ -994,7 +1097,7 @@ app.post("/api/shipping/auth/magic-link", async (req, res) => {
     }
 
     const signInUrl = new URL(SHIPPING_PORTAL_BASE_URL);
-    signInUrl.searchParams.set("token_hash", linkData.properties.hashed_token);
+    signInUrl.searchParams.set("bi_token_hash", linkData.properties.hashed_token);
     signInUrl.searchParams.set("type", "magiclink");
     const html = renderStoredTemplate("shipping_magic_link", {
       magic_link: signInUrl.toString(),
