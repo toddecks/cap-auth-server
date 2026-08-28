@@ -1025,6 +1025,91 @@ app.post("/api/shipping/auth/magic-link", async (req, res) => {
   }
 });
 
+app.post("/api/shipping/close-stale-visit", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "Shipping visit management is not configured on the server." });
+  }
+
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in to manage driver visits." });
+
+  const arrivalId = Number(req.body?.arrivalId);
+  const conversationId = String(req.body?.conversationId || "").trim();
+  if (!Number.isSafeInteger(arrivalId) || arrivalId < 1) {
+    return res.status(400).json({ error: "Choose a valid driver visit." });
+  }
+  if (conversationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+    return res.status(400).json({ error: "The conversation identifier is invalid." });
+  }
+
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) {
+      return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    }
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to close a visit." });
+    }
+
+    const { data: arrival, error: arrivalError } = await driverSupabase
+      .from("driver_arrivals")
+      .select("id,user_id,event_type,facility_id,facility_name,occurred_at,profile_snapshot")
+      .eq("id", arrivalId)
+      .maybeSingle();
+    if (arrivalError) throw arrivalError;
+    if (!arrival || !["geofence_enter", "manual_check_in"].includes(arrival.event_type)) {
+      return res.status(404).json({ error: "This open driver visit could not be found." });
+    }
+
+    const closeTime = new Date();
+    const enteredAt = new Date(arrival.occurred_at).getTime();
+    const debouncedCloseTime = new Date(Math.min(
+      closeTime.getTime(),
+      Math.max(
+        Number.isFinite(enteredAt) ? enteredAt + 1000 : 0,
+        closeTime.getTime() - 125000
+      )
+    ));
+    const { error: exitError } = await driverSupabase
+      .from("driver_arrivals")
+      .upsert({
+        client_event_id: `shipping-close-${arrivalId}`,
+        event_type: "geofence_exit",
+        facility_id: arrival.facility_id,
+        facility_name: arrival.facility_name,
+        release_number: null,
+        occurred_at: debouncedCloseTime.toISOString(),
+        user_id: arrival.user_id,
+        profile_snapshot: arrival.profile_snapshot || {}
+      }, { onConflict: "client_event_id", ignoreDuplicates: true });
+    if (exitError) throw exitError;
+
+    if (conversationId) {
+      const { error: conversationError } = await driverSupabase
+        .from("driver_conversations")
+        .update({ status: "closed", shipping_last_read_at: closeTime.toISOString() })
+        .eq("id", conversationId)
+        .eq("user_id", arrival.user_id)
+        .eq("facility_id", arrival.facility_id)
+        .eq("status", "open");
+      if (conversationError) throw conversationError;
+    }
+
+    return res.json({
+      ok: true,
+      arrivalId,
+      closedAt: closeTime.toISOString(),
+      conversationClosed: Boolean(conversationId)
+    });
+  } catch (error) {
+    console.error("Shipping stale visit close failed:", error?.message || error);
+    return res.status(500).json({ error: "The stale driver visit could not be closed. Try again." });
+  }
+});
+
 const formatEmailLabel = (value) =>
   String(value || "")
     .replace(/_/g, " ")
