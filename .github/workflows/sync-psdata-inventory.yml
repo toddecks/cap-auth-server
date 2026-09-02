@@ -1,15 +1,12 @@
 name: Sync PSData Inventory
 
 on:
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       apply_changes:
         description: "Write the snapshot to Supabase and close missing tags"
-        required: true
-        default: false
-        type: boolean
-      allow_large_close:
-        description: "One-time override when replacing accumulated historical active rows"
         required: true
         default: false
         type: boolean
@@ -45,6 +42,6 @@ jobs:
           PSDSTEEL_INVENTORY_START_DATE: "2025-06-01"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          INVENTORY_SYNC_DRY_RUN: ${{ inputs.apply_changes != true }}
+          INVENTORY_SYNC_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_changes != true }}
           INVENTORY_SYNC_MIN_ACTIVE_TAGS: "1000"
-          INVENTORY_SYNC_MIN_PREVIOUS_RATIO: ${{ inputs.allow_large_close == true && '0' || '0.65' }}
+          INVENTORY_SYNC_MIN_PREVIOUS_RATIO: "0.65"
