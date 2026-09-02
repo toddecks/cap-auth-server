@@ -1,0 +1,45 @@
+name: Sync PSData Inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_changes:
+        description: "Write the snapshot to Supabase and close missing tags"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-psdata-inventory
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download and reconcile inventory
+        run: node scripts/sync-psdata-inventory.mjs
+        env:
+          PSDSTEEL_API_USERNAME: ${{ secrets.PSDSTEEL_API_USERNAME }}
+          PSDSTEEL_API_PASSWORD: ${{ secrets.PSDSTEEL_API_PASSWORD }}
+          PSDSTEEL_API_APP_NAME: API CALL
+          PSDSTEEL_API_DBID: "19"
+          PSDSTEEL_INVENTORY_RECORDSET: api_custInv
+          PSDSTEEL_INVENTORY_START_DATE: "2025-06-01"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          INVENTORY_SYNC_DRY_RUN: ${{ inputs.apply_changes != true }}
+          INVENTORY_SYNC_MIN_ACTIVE_TAGS: "1000"
+          INVENTORY_SYNC_MIN_PREVIOUS_RATIO: "0.65"
