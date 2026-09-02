@@ -10,6 +10,11 @@ on:
         required: true
         default: false
         type: boolean
+      start_date:
+        description: "Earliest PSDSteel inventory date to request"
+        required: true
+        default: "2025-06-01"
+        type: string
 
 permissions:
   contents: read
@@ -39,7 +44,7 @@ jobs:
           PSDSTEEL_API_APP_NAME: API CALL
           PSDSTEEL_API_DBID: "19"
           PSDSTEEL_INVENTORY_RECORDSET: api_custInv
-          PSDSTEEL_INVENTORY_START_DATE: "2025-06-01"
+          PSDSTEEL_INVENTORY_START_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.start_date || '2025-06-01' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           INVENTORY_SNAPSHOT_TIME_ZONE: America/New_York
