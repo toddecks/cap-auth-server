@@ -42,6 +42,7 @@ jobs:
           PSDSTEEL_INVENTORY_START_DATE: "2025-06-01"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          INVENTORY_SNAPSHOT_TIME_ZONE: America/New_York
           INVENTORY_SYNC_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_changes != true }}
           INVENTORY_SYNC_MIN_ACTIVE_TAGS: "1000"
           INVENTORY_SYNC_MIN_PREVIOUS_RATIO: "0.65"

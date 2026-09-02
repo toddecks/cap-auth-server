@@ -27,6 +27,7 @@ const config = {
   ),
   supabaseUrl: String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, ""),
   supabaseServiceKey: String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
+  snapshotTimeZone: String(process.env.INVENTORY_SNAPSHOT_TIME_ZONE || "America/New_York").trim(),
   dryRun: /^(1|true|yes)$/i.test(String(process.env.INVENTORY_SYNC_DRY_RUN || "false").trim())
 };
 
@@ -282,6 +283,36 @@ const finalizeSnapshot = async (snapshotAt, activeCount) => {
   return Number(result?.closed_count ?? result ?? 0) || 0;
 };
 
+const dateInTimeZone = (date, timeZone) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+const updateMonthlySnapshot = async () => {
+  const snapshotFor = dateInTimeZone(new Date(), config.snapshotTimeZone);
+  const { body } = await requestJson(
+    `${config.supabaseUrl}/rest/v1/rpc/take_inventory_monthly_snapshot`,
+    {
+      method: "POST",
+      headers: supabaseHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ snapshot_for: snapshotFor, force: true })
+    },
+    "Supabase monthly inventory snapshot"
+  );
+  const result = Array.isArray(body) ? body[0] : body;
+  console.log(
+    `Monthly snapshot updated: ${result?.snapshot_month || snapshotFor} ` +
+    `(${Number(result?.active_tags || 0).toLocaleString()} active tags, ` +
+    `${Number(result?.active_tons || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} active tons).`
+  );
+};
+
 const main = async () => {
   required("PSDSTEEL_API_USERNAME", config.steelUsername);
   required("PSDSTEEL_API_PASSWORD", config.steelPassword);
@@ -315,6 +346,7 @@ const main = async () => {
 
   await upsertSnapshot(rows, snapshotAt);
   const closedCount = await finalizeSnapshot(snapshotAt, activeCount);
+  await updateMonthlySnapshot();
   console.log(`Inventory sync complete: ${activeCount.toLocaleString()} active, ${closedCount.toLocaleString()} closed.`);
 };
 
