@@ -2,6 +2,8 @@
 
 import process from "node:process";
 
+const configuredMinimumPreviousRatio = Number(process.env.INVENTORY_SYNC_MIN_PREVIOUS_RATIO ?? 0.65);
+
 const config = {
   steelBaseUrl: String(process.env.PSDSTEEL_API_BASE_URL || "https://steelapi.mysteelsoftware.com")
     .trim()
@@ -21,7 +23,7 @@ const config = {
   minimumActiveTags: Math.max(1, Number(process.env.INVENTORY_SYNC_MIN_ACTIVE_TAGS || 1000) || 1000),
   minimumPreviousRatio: Math.min(
     1,
-    Math.max(0, Number(process.env.INVENTORY_SYNC_MIN_PREVIOUS_RATIO || 0.65) || 0.65)
+    Math.max(0, Number.isFinite(configuredMinimumPreviousRatio) ? configuredMinimumPreviousRatio : 0.65)
   ),
   supabaseUrl: String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, ""),
   supabaseServiceKey: String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
