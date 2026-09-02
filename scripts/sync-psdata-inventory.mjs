@@ -290,12 +290,21 @@ const main = async () => {
   const rows = await fetchCompleteSnapshot();
   const snapshotAt = new Date().toISOString();
   const activeCount = rows.filter((row) => row.status === "A").length;
+  const activeTons = rows
+    .filter((row) => row.status === "A")
+    .reduce((total, row) => total + (Number(row.tons) || 0), 0);
+  const statusCounts = rows.reduce((counts, row) => {
+    counts[row.status] = (counts[row.status] || 0) + 1;
+    return counts;
+  }, {});
   const previousActiveCount = await getCurrentActiveCount();
-  validateSnapshot(activeCount, previousActiveCount);
 
   console.log(`Snapshot received: ${rows.length.toLocaleString()} unique tags`);
   console.log(`Active tags in snapshot: ${activeCount.toLocaleString()}`);
+  console.log(`Active tons in snapshot: ${activeTons.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+  console.log(`Snapshot status counts: ${JSON.stringify(statusCounts)}`);
   console.log(`Active tags currently in Supabase: ${previousActiveCount.toLocaleString()}`);
+  validateSnapshot(activeCount, previousActiveCount);
 
   if (config.dryRun) {
     console.log("Dry run complete. Supabase was not changed.");
