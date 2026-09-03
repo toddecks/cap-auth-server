@@ -1270,7 +1270,7 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
     ).trim();
     const onboardingStep = profileName
       ? (profileCompany ? "ready" : "awaiting_company")
-      : "awaiting_name";
+      : "awaiting_details";
     const initialRelease = onboardingStep === "ready" ? body.slice(0, 100) : null;
     const { error } = await driverSupabase.from("driver_sms_contacts").insert({
       phone_e164: phone,
@@ -1290,16 +1290,25 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
         releaseNumber: initialRelease
       };
     }
-    return { reply: "Welcome to CSP text check-in. What is your full name?" };
+    return { reply: "Welcome to CSP text check-in. Please tell us your Full Name, Release Number, and Company." };
   }
 
   const update = { last_seen_at: now };
   let reply = "";
   let releaseNumber = "";
-  if (existing.onboarding_step === "awaiting_name") {
-    update.full_name = body.slice(0, 120);
-    update.onboarding_step = "awaiting_company";
-    reply = `Thanks, ${update.full_name}. What trucking company are you driving for?`;
+  if (["awaiting_details", "awaiting_name"].includes(existing.onboarding_step)) {
+    const details = body.split(/\s*(?:\||,|\n)\s*/).filter(Boolean);
+    if (details.length >= 3) {
+      update.full_name = details[0].slice(0, 120);
+      releaseNumber = details[1].slice(0, 100);
+      update.driver_company = details.slice(2).join(", ").slice(0, 160);
+      update.last_release_number = releaseNumber;
+      update.onboarding_step = "ready";
+      reply = `You're checked in. CSP Shipping has release ${releaseNumber}. Reply here if you need help.`;
+    } else {
+      update.onboarding_step = "awaiting_details";
+      reply = "Please reply in this format: Full Name, Release Number, Company.";
+    }
   } else if (existing.onboarding_step === "awaiting_company") {
     update.driver_company = body.slice(0, 160);
     update.onboarding_step = "awaiting_release";
