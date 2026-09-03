@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v3-arrivals-queue",
+    shippingSmsMode: "twilio-two-way-v4-explicit-sender",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1336,6 +1336,7 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
   const sent = await twilioClient.messages.create({
     to: phone,
+    from: TWILIO_PHONE_NUMBER,
     body,
     messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
     statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
@@ -1541,6 +1542,7 @@ app.post("/api/shipping/send-message", async (req, res) => {
     try {
       const sent = await twilioClient.messages.create({
         to: conversation.sms_phone_e164,
+        from: TWILIO_PHONE_NUMBER,
         body,
         messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
         statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
