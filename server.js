@@ -1199,7 +1199,7 @@ const findOrCreateSmsConversation = async (phone) => {
   const facilityId = "csp-toledo-main";
   const { data: matchedProfile, error: profileError } = await driverSupabase
     .from("driver_profiles")
-    .select("user_id")
+    .select("user_id,full_name,driver_company,hauling_for")
     .eq("phone_e164", phone)
     .maybeSingle();
   if (profileError) throw profileError;
@@ -1224,7 +1224,7 @@ const findOrCreateSmsConversation = async (phone) => {
         .is("user_id", null);
       if (linkError) throw linkError;
     }
-    return existing.data.id;
+    return { id: existing.data.id, created: false, matchedProfile };
   }
 
   const lastFour = phone.replace(/\D/g, "").slice(-4) || "driver";
@@ -1240,16 +1240,111 @@ const findOrCreateSmsConversation = async (phone) => {
     })
     .select("id")
     .single();
-  if (!created.error && created.data?.id) return created.data.id;
+  if (!created.error && created.data?.id) {
+    return { id: created.data.id, created: true, matchedProfile };
+  }
 
   // Two first-time messages can arrive together. The unique open-thread index
   // lets the second request safely reuse the conversation created by the first.
   if (created.error?.code === "23505") {
     const raced = await openQuery();
     if (raced.error) throw raced.error;
-    if (raced.data?.id) return raced.data.id;
+    if (raced.data?.id) return { id: raced.data.id, created: false, matchedProfile };
   }
   throw created.error || new Error("Unable to create the SMS conversation.");
+};
+
+const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProfile }) => {
+  const { data: existing, error: contactError } = await driverSupabase
+    .from("driver_sms_contacts")
+    .select("phone_e164,full_name,driver_company,last_release_number,onboarding_step")
+    .eq("phone_e164", phone)
+    .maybeSingle();
+  if (contactError) throw contactError;
+
+  const now = new Date().toISOString();
+  if (!existing) {
+    const profileName = String(matchedProfile?.full_name || "").trim();
+    const profileCompany = String(
+      matchedProfile?.driver_company || matchedProfile?.hauling_for || ""
+    ).trim();
+    const onboardingStep = profileName
+      ? (profileCompany ? "ready" : "awaiting_company")
+      : "awaiting_name";
+    const initialRelease = onboardingStep === "ready" ? body.slice(0, 100) : null;
+    const { error } = await driverSupabase.from("driver_sms_contacts").insert({
+      phone_e164: phone,
+      full_name: profileName,
+      driver_company: profileCompany,
+      onboarding_step: onboardingStep,
+      last_release_number: initialRelease,
+      last_seen_at: now
+    });
+    if (error) throw error;
+    if (onboardingStep === "awaiting_company") {
+      return { reply: `Welcome ${profileName}. What trucking company are you driving for?` };
+    }
+    if (onboardingStep === "ready") {
+      return {
+        reply: `Welcome back, ${profileName}. You're checked in with release ${initialRelease}. Reply here if you need help.`,
+        releaseNumber: initialRelease
+      };
+    }
+    return { reply: "Welcome to CSP text check-in. What is your full name?" };
+  }
+
+  const update = { last_seen_at: now };
+  let reply = "";
+  let releaseNumber = "";
+  if (existing.onboarding_step === "awaiting_name") {
+    update.full_name = body.slice(0, 120);
+    update.onboarding_step = "awaiting_company";
+    reply = `Thanks, ${update.full_name}. What trucking company are you driving for?`;
+  } else if (existing.onboarding_step === "awaiting_company") {
+    update.driver_company = body.slice(0, 160);
+    update.onboarding_step = "awaiting_release";
+    reply = "What release or pickup number are you checking in with today?";
+  } else if (existing.onboarding_step === "awaiting_release") {
+    releaseNumber = body.slice(0, 100);
+    update.last_release_number = releaseNumber;
+    update.onboarding_step = "ready";
+    reply = `You're checked in. CSP Shipping has release ${releaseNumber}. Reply here if you need help.`;
+  } else if (existing.onboarding_step === "ready" && conversationCreated) {
+    releaseNumber = body.slice(0, 100);
+    update.last_release_number = releaseNumber;
+    reply = `Welcome back, ${existing.full_name || "driver"}. You're checked in with release ${releaseNumber}. Reply here if you need help.`;
+  }
+
+  const { error: updateError } = await driverSupabase
+    .from("driver_sms_contacts")
+    .update(update)
+    .eq("phone_e164", phone);
+  if (updateError) throw updateError;
+  return { reply, releaseNumber };
+};
+
+const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
+  if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
+  const sent = await twilioClient.messages.create({
+    to: phone,
+    body,
+    messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
+    statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
+  });
+  const { error } = await driverSupabase.from("driver_messages").insert({
+    client_message_id: `twilio:auto:${sent.sid}`,
+    conversation_id: conversationId,
+    sender_user_id: null,
+    direction: "shipping_to_driver",
+    driver_phone: phone,
+    body,
+    original_body: body,
+    original_language: "English",
+    sent_at: new Date().toISOString(),
+    delivery_status: sent.status === "sent" ? "sent" : "queued",
+    provider_message_id: sent.sid
+  });
+  if (error) throw error;
 };
 
 app.post(
@@ -1277,7 +1372,8 @@ app.post(
     }
 
     try {
-      const conversationId = await findOrCreateSmsConversation(from);
+      const conversation = await findOrCreateSmsConversation(from);
+      const conversationId = conversation.id;
       const now = new Date().toISOString();
       const { error: messageError } = await driverSupabase
         .from("driver_messages")
@@ -1296,11 +1392,29 @@ app.post(
         }, { onConflict: "client_message_id", ignoreDuplicates: true });
       if (messageError) throw messageError;
 
+      const remembered = await rememberSmsDriver({
+        phone: from,
+        body,
+        conversationCreated: conversation.created,
+        matchedProfile: conversation.matchedProfile
+      });
+
       const { error: conversationError } = await driverSupabase
         .from("driver_conversations")
-        .update({ updated_at: now })
+        .update({
+          updated_at: now,
+          ...(remembered.releaseNumber ? { release_number: remembered.releaseNumber } : {})
+        })
         .eq("id", conversationId);
       if (conversationError) throw conversationError;
+
+      if (remembered.reply) {
+        try {
+          await sendAutomatedSmsReply({ phone: from, conversationId, body: remembered.reply });
+        } catch (replyError) {
+          console.error("Twilio automated check-in reply failed:", replyError?.message || replyError);
+        }
+      }
 
       return res.status(200).send("<Response></Response>");
     } catch (error) {
