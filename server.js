@@ -1555,6 +1555,87 @@ app.post("/api/shipping/send-message", async (req, res) => {
   }
 });
 
+app.post("/api/shipping/add-sms-arrival", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "The SMS arrivals queue is not configured." });
+  }
+
+  const token = getBearerToken(req);
+  const conversationId = String(req.body?.conversationId || "").trim();
+  if (!token) return res.status(401).json({ error: "Sign in to add a driver arrival." });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+    return res.status(400).json({ error: "The conversation identifier is invalid." });
+  }
+
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) {
+      return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    }
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to add an arrival." });
+    }
+
+    const { data: conversation, error: conversationError } = await driverSupabase
+      .from("driver_conversations")
+      .select("id,status,channel,sms_phone_e164,facility_id,release_number")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conversation || conversation.status !== "open" || conversation.channel !== "sms") {
+      return res.status(404).json({ error: "This SMS check-in is no longer available." });
+    }
+
+    const { data: contact, error: contactError } = await driverSupabase
+      .from("driver_sms_contacts")
+      .select("full_name,driver_company,onboarding_step,last_release_number")
+      .eq("phone_e164", conversation.sms_phone_e164)
+      .maybeSingle();
+    if (contactError) throw contactError;
+    if (
+      !contact
+      || contact.onboarding_step !== "ready"
+      || !String(contact.full_name || "").trim()
+      || !String(contact.driver_company || "").trim()
+      || !String(conversation.release_number || contact.last_release_number || "").trim()
+    ) {
+      return res.status(409).json({ error: "Wait until the driver provides their name, company, and release number." });
+    }
+
+    const releaseNumber = String(conversation.release_number || contact.last_release_number).trim();
+    const { data: existing, error: existingError } = await driverSupabase
+      .from("driver_sms_arrivals")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .is("departed_at", null)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.id) return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true });
+
+    const { data: arrival, error: arrivalError } = await driverSupabase
+      .from("driver_sms_arrivals")
+      .insert({
+        phone_e164: conversation.sms_phone_e164,
+        conversation_id: conversationId,
+        facility_id: conversation.facility_id,
+        release_number: releaseNumber,
+        driver_name: String(contact.full_name).trim(),
+        driver_company: String(contact.driver_company).trim(),
+        added_by: staffUser.id
+      })
+      .select("id")
+      .single();
+    if (arrivalError) throw arrivalError;
+    return res.json({ ok: true, arrivalId: arrival.id, alreadyAdded: false });
+  } catch (error) {
+    console.error("SMS driver arrival add failed:", error?.message || error);
+    return res.status(500).json({ error: "The text check-in could not be added to Driver Arrivals." });
+  }
+});
+
 app.post("/api/shipping/close-stale-visit", async (req, res) => {
   res.set("Cache-Control", "no-store");
   if (!driverSupabase) {
@@ -1566,6 +1647,7 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
 
   const arrivalId = Number(req.body?.arrivalId);
   const conversationId = String(req.body?.conversationId || "").trim();
+  const arrivalSource = String(req.body?.arrivalSource || "app").trim().toLowerCase();
   if (!Number.isSafeInteger(arrivalId) || arrivalId < 1) {
     return res.status(400).json({ error: "Choose a valid driver visit." });
   }
@@ -1582,6 +1664,42 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
     }
     if (!new Set(["shipping", "admin"]).has(staffRole)) {
       return res.status(403).json({ error: "CSP Shipping access is required to close a visit." });
+    }
+
+    if (arrivalSource === "sms") {
+      const closeTime = new Date();
+      const { data: smsArrival, error: smsArrivalError } = await driverSupabase
+        .from("driver_sms_arrivals")
+        .select("id,conversation_id")
+        .eq("id", arrivalId)
+        .is("departed_at", null)
+        .maybeSingle();
+      if (smsArrivalError) throw smsArrivalError;
+      if (!smsArrival) return res.status(404).json({ error: "This text-message arrival is no longer open." });
+
+      const { error: closeSmsError } = await driverSupabase
+        .from("driver_sms_arrivals")
+        .update({ departed_at: closeTime.toISOString() })
+        .eq("id", arrivalId);
+      if (closeSmsError) throw closeSmsError;
+
+      const smsConversationId = conversationId || smsArrival.conversation_id;
+      if (smsConversationId) {
+        const { error: closeConversationError } = await driverSupabase
+          .from("driver_conversations")
+          .update({ status: "closed", shipping_last_read_at: closeTime.toISOString() })
+          .eq("id", smsConversationId)
+          .eq("channel", "sms")
+          .eq("status", "open");
+        if (closeConversationError) throw closeConversationError;
+      }
+
+      return res.json({
+        ok: true,
+        arrivalId,
+        closedAt: closeTime.toISOString(),
+        conversationClosed: Boolean(smsConversationId)
+      });
     }
 
     const { data: arrival, error: arrivalError } = await driverSupabase
