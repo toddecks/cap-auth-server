@@ -1180,6 +1180,46 @@ const normalizeSmsPhone = (value) => {
 
 const twilioWebhookUrl = (req) => `${TWILIO_PUBLIC_BASE_URL}${req.originalUrl}`;
 
+const mapTwilioDeliveryStatus = (value) => new Map([
+  ["accepted", "queued"],
+  ["scheduled", "queued"],
+  ["queued", "queued"],
+  ["sending", "queued"],
+  ["sent", "sent"],
+  ["delivered", "delivered"],
+  ["undelivered", "failed"],
+  ["failed", "failed"],
+  ["canceled", "failed"]
+]).get(String(value || "").trim().toLowerCase()) || "queued";
+
+const syncTwilioMessageStatus = async (messageSid) => {
+  if (!messageSid || !twilioClient || !driverSupabase) return;
+  const providerMessage = await twilioClient.messages(messageSid).fetch();
+  const providerStatus = String(providerMessage.status || "").trim().toLowerCase();
+  const { error } = await driverSupabase
+    .from("driver_messages")
+    .update({
+      delivery_status: mapTwilioDeliveryStatus(providerStatus),
+      provider_status: providerStatus || null,
+      provider_error_code: providerMessage.errorCode == null ? null : String(providerMessage.errorCode),
+      provider_error_message: providerMessage.errorMessage || null,
+      provider_status_updated_at: new Date().toISOString()
+    })
+    .eq("provider_message_id", messageSid);
+  if (error) throw error;
+};
+
+const scheduleTwilioStatusSync = (messageSid) => {
+  [1500, 7500, 30000].forEach((delay) => {
+    const timer = setTimeout(() => {
+      syncTwilioMessageStatus(messageSid).catch((error) => {
+        console.error("Twilio message status sync failed:", error?.message || error);
+      });
+    }, delay);
+    timer.unref?.();
+  });
+};
+
 const requireValidTwilioWebhook = (req, res, next) => {
   if (!TWILIO_AUTH_TOKEN) {
     return res.status(503).send("Twilio messaging is not configured.");
@@ -1351,10 +1391,15 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
     original_body: body,
     original_language: "English",
     sent_at: new Date().toISOString(),
-    delivery_status: sent.status === "sent" ? "sent" : "queued",
-    provider_message_id: sent.sid
+    delivery_status: mapTwilioDeliveryStatus(sent.status),
+    provider_message_id: sent.sid,
+    provider_status: sent.status || null,
+    provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
+    provider_error_message: sent.errorMessage || null,
+    provider_status_updated_at: new Date().toISOString()
   });
   if (error) throw error;
+  scheduleTwilioStatusSync(sent.sid);
 };
 
 app.post(
@@ -1443,22 +1488,17 @@ app.post(
 
     const messageSid = String(req.body?.MessageSid || "").trim();
     const twilioStatus = String(req.body?.MessageStatus || "").trim().toLowerCase();
-    const deliveryStatus = new Map([
-      ["accepted", "queued"],
-      ["scheduled", "queued"],
-      ["queued", "queued"],
-      ["sending", "queued"],
-      ["sent", "sent"],
-      ["delivered", "delivered"],
-      ["undelivered", "failed"],
-      ["failed", "failed"],
-      ["canceled", "failed"]
-    ]).get(twilioStatus);
+    const deliveryStatus = mapTwilioDeliveryStatus(twilioStatus);
     if (!messageSid || !deliveryStatus) return res.status(204).send();
 
     const { error } = await driverSupabase
       .from("driver_messages")
-      .update({ delivery_status: deliveryStatus })
+      .update({
+        delivery_status: deliveryStatus,
+        provider_status: twilioStatus || null,
+        provider_error_code: req.body?.ErrorCode ? String(req.body.ErrorCode) : null,
+        provider_status_updated_at: new Date().toISOString()
+      })
       .eq("provider_message_id", messageSid);
     if (error) {
       console.error("Twilio delivery status update failed:", error.message);
@@ -1547,12 +1587,20 @@ app.post("/api/shipping/send-message", async (req, res) => {
         messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
         statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
       });
-      const status = sent.status === "sent" ? "sent" : "queued";
+      const status = mapTwilioDeliveryStatus(sent.status);
       const { error: updateError } = await driverSupabase
         .from("driver_messages")
-        .update({ provider_message_id: sent.sid, delivery_status: status })
+        .update({
+          provider_message_id: sent.sid,
+          delivery_status: status,
+          provider_status: sent.status || null,
+          provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
+          provider_error_message: sent.errorMessage || null,
+          provider_status_updated_at: new Date().toISOString()
+        })
         .eq("id", storedMessage.id);
       if (updateError) throw updateError;
+      scheduleTwilioStatusSync(sent.sid);
       return res.json({ ok: true, channel: "sms", messageId: storedMessage.id, providerMessageId: sent.sid });
     } catch (error) {
       await driverSupabase.from("driver_messages")
