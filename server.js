@@ -12,6 +12,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
 const OpenAI = require("openai");
+const twilio = require("twilio");
 function getOpenAIClient() {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -70,6 +71,13 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
+    shippingSmsMode: "twilio-two-way-v1",
+    shippingSmsConfigured: Boolean(
+      driverSupabase
+      && twilioClient
+      && TWILIO_MESSAGING_SERVICE_SID
+      && TWILIO_PHONE_NUMBER
+    ),
     node: process.version
   });
 });
@@ -498,6 +506,13 @@ const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const PRO_FORMS_FROM_EMAIL = String(process.env.PRO_FORMS_FROM_EMAIL || "").trim();
 const DRIVER_SUPABASE_URL = String(process.env.DRIVER_SUPABASE_URL || "").trim();
 const DRIVER_SUPABASE_SERVICE_ROLE_KEY = String(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || "").trim();
+const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
+const TWILIO_MESSAGING_SERVICE_SID = String(process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim();
+const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "+14195815812").trim();
+const TWILIO_PUBLIC_BASE_URL = String(
+  process.env.TWILIO_PUBLIC_BASE_URL || "https://cap-auth-server.onrender.com"
+).trim().replace(/\/+$/, "");
 const SHIPPING_AUTH_FROM_EMAIL = String(
   process.env.SHIPPING_AUTH_FROM_EMAIL
   || process.env.PRO_FORMS_FROM_EMAIL
@@ -530,6 +545,9 @@ const driverSupabase = DRIVER_SUPABASE_URL && DRIVER_SUPABASE_SERVICE_ROLE_KEY
   ? createClient(DRIVER_SUPABASE_URL, DRIVER_SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false }
     })
+  : null;
+const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
+  ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
 const shippingAuthAttempts = new Map();
 const EXPANSION_LEAD_RECIPIENTS = String(
@@ -797,6 +815,7 @@ const normalizeDriverSignup = (body = {}) => ({
   fullName: coerceText(body.fullName ?? body.name, 120),
   haulingFor: coerceText(body.haulingFor, 160),
   driverCompany: coerceText(body.driverCompany, 160),
+  phone: normalizeSmsPhone(body.phone),
   preferredLanguage: DRIVER_LANGUAGES.has(body.preferredLanguage)
     ? body.preferredLanguage
     : "English"
@@ -814,6 +833,7 @@ const sendDriverVerificationCode = async ({ email, password, profile }) => {
     full_name: profile.fullName,
     hauling_for: profile.haulingFor,
     driver_company: profile.driverCompany,
+    phone_e164: profile.phone,
     preferred_language: profile.preferredLanguage
   };
   let verificationType = "signup";
@@ -906,7 +926,7 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
   if (profile.password.length < 8 || profile.password.length > 72) {
     return res.status(400).json({ error: "Use a password between 8 and 72 characters." });
   }
-  if (!profile.fullName || !profile.haulingFor || !profile.driverCompany) {
+  if (!profile.fullName || !profile.haulingFor || !profile.driverCompany || !profile.phone) {
     return res.status(400).json({ error: "Complete all driver information fields." });
   }
   if (!consumeShippingAuthAttempt(req, `driver-signup:${profile.email}`)) {
@@ -1146,6 +1166,278 @@ app.post("/api/shipping/auth/magic-link", async (req, res) => {
   } catch (error) {
     console.error("Shipping magic-link email failed:", error?.message || error);
     return res.status(500).json({ error: "We could not send the sign-in email. Try again shortly." });
+  }
+});
+
+const normalizeSmsPhone = (value) => {
+  const input = String(value || "").trim();
+  if (/^\+[1-9]\d{7,14}$/.test(input)) return input;
+  const digits = input.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+  return "";
+};
+
+const twilioWebhookUrl = (req) => `${TWILIO_PUBLIC_BASE_URL}${req.originalUrl}`;
+
+const requireValidTwilioWebhook = (req, res, next) => {
+  if (!TWILIO_AUTH_TOKEN) {
+    return res.status(503).send("Twilio messaging is not configured.");
+  }
+  const signature = String(req.get("X-Twilio-Signature") || "");
+  const valid = signature && twilio.validateRequest(
+    TWILIO_AUTH_TOKEN,
+    signature,
+    twilioWebhookUrl(req),
+    req.body || {}
+  );
+  if (!valid) return res.status(403).send("Invalid Twilio signature.");
+  return next();
+};
+
+const findOrCreateSmsConversation = async (phone) => {
+  const facilityId = "csp-toledo-main";
+  const { data: matchedProfile, error: profileError } = await driverSupabase
+    .from("driver_profiles")
+    .select("user_id")
+    .eq("phone_e164", phone)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  const matchedUserId = matchedProfile?.user_id || null;
+  const openQuery = () => driverSupabase
+    .from("driver_conversations")
+    .select("id")
+    .eq("channel", "sms")
+    .eq("sms_phone_e164", phone)
+    .eq("facility_id", facilityId)
+    .eq("status", "open")
+    .maybeSingle();
+
+  const existing = await openQuery();
+  if (existing.error) throw existing.error;
+  if (existing.data?.id) {
+    if (matchedUserId) {
+      const { error: linkError } = await driverSupabase
+        .from("driver_conversations")
+        .update({ user_id: matchedUserId })
+        .eq("id", existing.data.id)
+        .is("user_id", null);
+      if (linkError) throw linkError;
+    }
+    return existing.data.id;
+  }
+
+  const lastFour = phone.replace(/\D/g, "").slice(-4) || "driver";
+  const created = await driverSupabase
+    .from("driver_conversations")
+    .insert({
+      user_id: matchedUserId,
+      release_number: `Text ${lastFour}`,
+      facility_id: facilityId,
+      status: "open",
+      channel: "sms",
+      sms_phone_e164: phone
+    })
+    .select("id")
+    .single();
+  if (!created.error && created.data?.id) return created.data.id;
+
+  // Two first-time messages can arrive together. The unique open-thread index
+  // lets the second request safely reuse the conversation created by the first.
+  if (created.error?.code === "23505") {
+    const raced = await openQuery();
+    if (raced.error) throw raced.error;
+    if (raced.data?.id) return raced.data.id;
+  }
+  throw created.error || new Error("Unable to create the SMS conversation.");
+};
+
+app.post(
+  "/api/twilio/inbound-sms",
+  requireValidTwilioWebhook,
+  async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.type("text/xml");
+    if (!driverSupabase) {
+      return res.status(503).send("<Response></Response>");
+    }
+
+    const from = normalizeSmsPhone(req.body?.From);
+    const to = normalizeSmsPhone(req.body?.To);
+    const messageSid = String(req.body?.MessageSid || req.body?.SmsMessageSid || "").trim();
+    const textBody = String(req.body?.Body || "").trim();
+    const mediaCount = Number(req.body?.NumMedia || 0);
+    const body = textBody || (mediaCount > 0 ? "[Media message received]" : "");
+
+    if (!from || !messageSid || !body) {
+      return res.status(400).send("<Response></Response>");
+    }
+    if (TWILIO_PHONE_NUMBER && to !== normalizeSmsPhone(TWILIO_PHONE_NUMBER)) {
+      return res.status(403).send("<Response></Response>");
+    }
+
+    try {
+      const conversationId = await findOrCreateSmsConversation(from);
+      const now = new Date().toISOString();
+      const { error: messageError } = await driverSupabase
+        .from("driver_messages")
+        .upsert({
+          client_message_id: `twilio:${messageSid}`,
+          conversation_id: conversationId,
+          sender_user_id: null,
+          direction: "driver_to_shipping",
+          driver_phone: from,
+          body,
+          original_body: body,
+          original_language: "English",
+          sent_at: now,
+          delivery_status: "received",
+          provider_message_id: messageSid
+        }, { onConflict: "client_message_id", ignoreDuplicates: true });
+      if (messageError) throw messageError;
+
+      const { error: conversationError } = await driverSupabase
+        .from("driver_conversations")
+        .update({ updated_at: now })
+        .eq("id", conversationId);
+      if (conversationError) throw conversationError;
+
+      return res.status(200).send("<Response></Response>");
+    } catch (error) {
+      console.error("Twilio inbound SMS failed:", error?.message || error);
+      return res.status(500).send("<Response></Response>");
+    }
+  }
+);
+
+app.post(
+  "/api/twilio/message-status",
+  requireValidTwilioWebhook,
+  async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    if (!driverSupabase) return res.status(503).send("Not configured");
+
+    const messageSid = String(req.body?.MessageSid || "").trim();
+    const twilioStatus = String(req.body?.MessageStatus || "").trim().toLowerCase();
+    const deliveryStatus = new Map([
+      ["accepted", "queued"],
+      ["scheduled", "queued"],
+      ["queued", "queued"],
+      ["sending", "queued"],
+      ["sent", "sent"],
+      ["delivered", "delivered"],
+      ["undelivered", "failed"],
+      ["failed", "failed"],
+      ["canceled", "failed"]
+    ]).get(twilioStatus);
+    if (!messageSid || !deliveryStatus) return res.status(204).send();
+
+    const { error } = await driverSupabase
+      .from("driver_messages")
+      .update({ delivery_status: deliveryStatus })
+      .eq("provider_message_id", messageSid);
+    if (error) {
+      console.error("Twilio delivery status update failed:", error.message);
+      return res.status(500).send("Status update failed");
+    }
+    return res.status(204).send();
+  }
+);
+
+app.post("/api/shipping/send-message", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "Shipping messaging is not configured on the server." });
+  }
+
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in to send a message." });
+
+  const conversationId = String(req.body?.conversationId || "").trim();
+  const body = String(req.body?.body || "").trim();
+  const requestedClientMessageId = String(req.body?.clientMessageId || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+    return res.status(400).json({ error: "The conversation identifier is invalid." });
+  }
+  if (!body || body.length > 1600) {
+    return res.status(400).json({ error: "Enter a message of 1 to 1,600 characters." });
+  }
+
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) {
+      return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    }
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to send messages." });
+    }
+
+    const { data: conversation, error: conversationError } = await driverSupabase
+      .from("driver_conversations")
+      .select("id,status,channel,sms_phone_e164")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conversation || conversation.status !== "open") {
+      return res.status(404).json({ error: "This conversation is no longer open." });
+    }
+
+    const clientMessageId = /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
+      ? requestedClientMessageId
+      : crypto.randomUUID();
+    const now = new Date().toISOString();
+    const isSms = conversation.channel === "sms";
+    const { data: storedMessage, error: insertError } = await driverSupabase
+      .from("driver_messages")
+      .insert({
+        client_message_id: clientMessageId,
+        conversation_id: conversationId,
+        sender_user_id: staffUser.id,
+        direction: "shipping_to_driver",
+        driver_phone: isSms ? conversation.sms_phone_e164 : null,
+        body,
+        original_body: body,
+        original_language: "English",
+        sent_at: now,
+        delivery_status: isSms ? "queued" : "sent"
+      })
+      .select("id")
+      .single();
+    if (insertError) throw insertError;
+
+    if (!isSms) return res.json({ ok: true, channel: "app", messageId: storedMessage.id });
+    if (!twilioClient || !TWILIO_MESSAGING_SERVICE_SID) {
+      await driverSupabase.from("driver_messages")
+        .update({ delivery_status: "failed" })
+        .eq("id", storedMessage.id);
+      return res.status(503).json({ error: "Twilio outbound messaging is not configured." });
+    }
+
+    try {
+      const sent = await twilioClient.messages.create({
+        to: conversation.sms_phone_e164,
+        body,
+        messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
+        statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
+      });
+      const status = sent.status === "sent" ? "sent" : "queued";
+      const { error: updateError } = await driverSupabase
+        .from("driver_messages")
+        .update({ provider_message_id: sent.sid, delivery_status: status })
+        .eq("id", storedMessage.id);
+      if (updateError) throw updateError;
+      return res.json({ ok: true, channel: "sms", messageId: storedMessage.id, providerMessageId: sent.sid });
+    } catch (error) {
+      await driverSupabase.from("driver_messages")
+        .update({ delivery_status: "failed" })
+        .eq("id", storedMessage.id);
+      throw error;
+    }
+  } catch (error) {
+    console.error("Shipping message send failed:", error?.message || error);
+    return res.status(500).json({ error: error?.message || "The message could not be sent." });
   }
 });
 
