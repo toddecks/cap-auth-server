@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v5-delivery-status",
+    shippingSmsMode: "twilio-two-way-v6-delivery-recovery",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1218,6 +1218,23 @@ const scheduleTwilioStatusSync = (messageSid) => {
     }, delay);
     timer.unref?.();
   });
+};
+
+const syncRecentQueuedTwilioMessages = async () => {
+  if (!twilioClient || !driverSupabase) return;
+  const cutoff = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+  const { data, error } = await driverSupabase
+    .from("driver_messages")
+    .select("provider_message_id")
+    .eq("direction", "shipping_to_driver")
+    .eq("delivery_status", "queued")
+    .not("provider_message_id", "is", null)
+    .gte("created_at", cutoff)
+    .limit(50);
+  if (error) throw error;
+  await Promise.allSettled(
+    (data || []).map((message) => syncTwilioMessageStatus(message.provider_message_id))
+  );
 };
 
 const requireValidTwilioWebhook = (req, res, next) => {
@@ -6871,4 +6888,7 @@ app.get("/api/chart-data", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
+  syncRecentQueuedTwilioMessages().catch((error) => {
+    console.error("Initial Twilio message status sync failed:", error?.message || error);
+  });
 });
