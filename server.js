@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v9-first-response",
+    shippingSmsMode: "twilio-two-way-v10-inbound-mms",
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
@@ -1377,7 +1377,7 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
     releaseNumber = body.slice(0, 100);
     update.last_release_number = releaseNumber;
     update.onboarding_step = "ready";
-  } else if (existing.onboarding_step === "ready" && conversationCreated) {
+  } else if (existing.onboarding_step === "ready" && conversationCreated && body) {
     releaseNumber = body.slice(0, 100);
     update.last_release_number = releaseNumber;
   }
@@ -1419,6 +1419,89 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
   scheduleTwilioStatusSync(sent.sid);
 };
 
+const MMS_MAX_BYTES = 10 * 1024 * 1024;
+const MMS_IMAGE_TYPES = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/heic", "heic"],
+  ["image/heif", "heif"],
+  ["image/webp", "webp"]
+]);
+
+const normalizeMmsImageType = (value) => {
+  const mimeType = String(value || "").split(";", 1)[0].trim().toLowerCase();
+  return mimeType === "image/jpg" ? "image/jpeg" : mimeType;
+};
+
+const downloadInboundMmsImage = async (requestBody, index) => {
+  const mediaUrl = String(requestBody?.[`MediaUrl${index}`] || "").trim();
+  const webhookMimeType = normalizeMmsImageType(requestBody?.[`MediaContentType${index}`]);
+  if (!mediaUrl || !MMS_IMAGE_TYPES.has(webhookMimeType)) return null;
+
+  const parsedUrl = new URL(mediaUrl);
+  if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "api.twilio.com") {
+    throw new Error("Twilio MMS media URL was not recognized.");
+  }
+
+  const authHeader = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64");
+  const response = await fetch(parsedUrl, {
+    headers: { Authorization: `Basic ${authHeader}` },
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok) throw new Error(`Twilio MMS download returned ${response.status}.`);
+
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > MMS_MAX_BYTES) throw new Error("Twilio MMS image exceeds 10 MB.");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > MMS_MAX_BYTES) {
+    throw new Error("Twilio MMS image is empty or exceeds 10 MB.");
+  }
+
+  const responseMimeType = normalizeMmsImageType(response.headers.get("content-type"));
+  const mimeType = MMS_IMAGE_TYPES.has(responseMimeType) ? responseMimeType : webhookMimeType;
+  return {
+    bytes,
+    mimeType,
+    extension: MMS_IMAGE_TYPES.get(mimeType)
+  };
+};
+
+const storeInboundMmsImages = async ({ requestBody, conversation, messageSid, phone }) => {
+  const mediaCount = Math.min(Math.max(Number(requestBody?.NumMedia || 0), 0), 10);
+  if (!mediaCount) return [];
+
+  const ownerFolder = conversation.matchedProfile?.user_id
+    ? String(conversation.matchedProfile.user_id)
+    : `sms/${phone.replace(/\D/g, "")}`;
+  const stored = await Promise.all(Array.from({ length: mediaCount }, async (_, index) => {
+    try {
+      const media = await downloadInboundMmsImage(requestBody, index);
+      if (!media) return null;
+      const attachmentName = `sms-photo-${messageSid}-${index + 1}.${media.extension}`;
+      const attachmentPath = `${ownerFolder}/${conversation.id}/${attachmentName}`;
+      const { error: uploadError } = await driverSupabase.storage
+        .from("driver-paperwork")
+        .upload(attachmentPath, media.bytes, {
+          contentType: media.mimeType,
+          cacheControl: "3600",
+          upsert: true
+        });
+      if (uploadError) throw uploadError;
+      return {
+        attachmentPath,
+        attachmentName,
+        attachmentContentType: media.mimeType,
+        attachmentSizeBytes: media.bytes.length,
+        mediaIndex: index
+      };
+    } catch (error) {
+      console.error(`Twilio inbound MMS media ${index} failed:`, error?.message || error);
+      return null;
+    }
+  }));
+  return stored.filter(Boolean);
+};
+
 app.post(
   "/api/twilio/inbound-sms",
   requireValidTwilioWebhook,
@@ -1447,26 +1530,40 @@ app.post(
       const conversation = await findOrCreateSmsConversation(from);
       const conversationId = conversation.id;
       const now = new Date().toISOString();
-      const { error: messageError } = await driverSupabase
-        .from("driver_messages")
-        .upsert({
-          client_message_id: `twilio:${messageSid}`,
+      const storedImages = await storeInboundMmsImages({
+        requestBody: req.body,
+        conversation,
+        messageSid,
+        phone: from
+      });
+      const displayBody = textBody || (storedImages.length ? "Photo received" : body);
+      const messagesToStore = (storedImages.length ? storedImages : [null]).map((image, index) => ({
+          client_message_id: index === 0 ? `twilio:${messageSid}` : `twilio:${messageSid}:media:${index}`,
           conversation_id: conversationId,
           sender_user_id: null,
           direction: "driver_to_shipping",
           driver_phone: from,
-          body,
-          original_body: body,
+          body: index === 0 ? displayBody : `Photo ${index + 1}`,
+          original_body: index === 0 ? displayBody : `Photo ${index + 1}`,
           original_language: "English",
           sent_at: now,
           delivery_status: "received",
-          provider_message_id: messageSid
-        }, { onConflict: "client_message_id", ignoreDuplicates: true });
+          provider_message_id: messageSid,
+          ...(image ? {
+            attachment_path: image.attachmentPath,
+            attachment_name: image.attachmentName,
+            attachment_content_type: image.attachmentContentType,
+            attachment_size_bytes: image.attachmentSizeBytes
+          } : {})
+        }));
+      const { error: messageError } = await driverSupabase
+        .from("driver_messages")
+        .upsert(messagesToStore, { onConflict: "client_message_id" });
       if (messageError) throw messageError;
 
       const remembered = await rememberSmsDriver({
         phone: from,
-        body,
+        body: textBody,
         conversationCreated: conversation.created,
         matchedProfile: conversation.matchedProfile
       });
