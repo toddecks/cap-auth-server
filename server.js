@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v7-approved-campaign",
+    shippingSmsMode: "twilio-two-way-v8-no-checkin-confirmation",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1343,7 +1343,7 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
     }
     if (onboardingStep === "ready") {
       return {
-        reply: `Welcome back, ${profileName}. You're checked in with release ${initialRelease}. Reply here if you need help.`,
+        reply: "",
         releaseNumber: initialRelease
       };
     }
@@ -1363,7 +1363,6 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
       update.driver_company = details.slice(2).join(", ").slice(0, 160);
       update.last_release_number = releaseNumber;
       update.onboarding_step = "ready";
-      reply = `You're checked in. CSP Shipping has release ${releaseNumber}. Reply here if you need help.`;
     } else {
       update.onboarding_step = "awaiting_details";
       reply = "Please reply in this format: Full Name, Release Number, Company.";
@@ -1376,11 +1375,9 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
     releaseNumber = body.slice(0, 100);
     update.last_release_number = releaseNumber;
     update.onboarding_step = "ready";
-    reply = `You're checked in. CSP Shipping has release ${releaseNumber}. Reply here if you need help.`;
   } else if (existing.onboarding_step === "ready" && conversationCreated) {
     releaseNumber = body.slice(0, 100);
     update.last_release_number = releaseNumber;
-    reply = `Welcome back, ${existing.full_name || "driver"}. You're checked in with release ${releaseNumber}. Reply here if you need help.`;
   }
 
   const { error: updateError } = await driverSupabase
