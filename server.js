@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v8-no-checkin-confirmation",
+    shippingSmsMode: "twilio-two-way-v9-first-response",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1348,7 +1348,7 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
       };
     }
     return {
-      reply: "Coil Steel Processing: Welcome to CSP driver text check-in. Please reply with your Full Name, Release Number, and Company. You are opted in to recurring operational messages. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out."
+      reply: "Please reply with:\n\n1. Full name\n2. Release Number\n3. Company\n\nFor faster check-ins, Download the CSP Driver app."
     };
   }
 
