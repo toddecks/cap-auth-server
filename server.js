@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v10-inbound-mms",
+    shippingSmsMode: "twilio-two-way-v11-two-way-mms",
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
@@ -1724,6 +1724,148 @@ app.post("/api/shipping/send-message", async (req, res) => {
   } catch (error) {
     console.error("Shipping message send failed:", error?.message || error);
     return res.status(500).json({ error: error?.message || "The message could not be sent." });
+  }
+});
+
+app.post("/api/shipping/send-photo", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) {
+    return res.status(503).json({ error: "Shipping photo messaging is not configured on the server." });
+  }
+
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in to send a photo." });
+
+  const conversationId = String(req.body?.conversationId || "").trim();
+  const body = String(req.body?.body || "").trim();
+  const requestedClientMessageId = String(req.body?.clientMessageId || "").trim();
+  const mimeType = normalizeMmsImageType(req.body?.mimeType);
+  const base64 = String(req.body?.base64 || "").replace(/\s/g, "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
+    return res.status(400).json({ error: "The conversation identifier is invalid." });
+  }
+  if (body.length > 1600) {
+    return res.status(400).json({ error: "Photo captions can be up to 1,600 characters." });
+  }
+  if (!MMS_IMAGE_TYPES.has(mimeType) || !base64 || base64.length > 14 * 1024 * 1024) {
+    return res.status(400).json({ error: "Choose a JPG, PNG, HEIC, or WebP image up to 10 MB." });
+  }
+
+  let attachmentPath = "";
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) {
+      return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    }
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to send photos." });
+    }
+
+    const { data: conversation, error: conversationError } = await driverSupabase
+      .from("driver_conversations")
+      .select("id,user_id,status,channel,sms_phone_e164")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conversationError) throw conversationError;
+    if (!conversation || conversation.status !== "open") {
+      return res.status(404).json({ error: "This conversation is no longer open." });
+    }
+
+    const bytes = Buffer.from(base64, "base64");
+    if (!bytes.length || bytes.length > MMS_MAX_BYTES) {
+      return res.status(400).json({ error: "Photo must be 10 MB or smaller." });
+    }
+
+    const clientMessageId = /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
+      ? requestedClientMessageId
+      : crypto.randomUUID();
+    const extension = MMS_IMAGE_TYPES.get(mimeType);
+    const requestedName = path.basename(String(req.body?.fileName || "")).replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const attachmentName = (requestedName || `shipping-photo.${extension}`).slice(-180);
+    const ownerFolder = conversation.user_id
+      ? String(conversation.user_id)
+      : `sms/${String(conversation.sms_phone_e164 || "").replace(/\D/g, "") || staffUser.id}`;
+    attachmentPath = `${ownerFolder}/${conversationId}/shipping-photo-${clientMessageId}.${extension}`;
+    const { error: uploadError } = await driverSupabase.storage
+      .from("driver-paperwork")
+      .upload(attachmentPath, bytes, {
+        contentType: mimeType,
+        cacheControl: "3600",
+        upsert: false
+      });
+    if (uploadError) throw uploadError;
+
+    const isSms = conversation.channel === "sms";
+    const storedBody = body || "Photo";
+    const now = new Date().toISOString();
+    const { data: storedMessage, error: insertError } = await driverSupabase
+      .from("driver_messages")
+      .insert({
+        client_message_id: clientMessageId,
+        conversation_id: conversationId,
+        sender_user_id: staffUser.id,
+        direction: "shipping_to_driver",
+        driver_phone: isSms ? conversation.sms_phone_e164 : null,
+        body: storedBody,
+        original_body: storedBody,
+        original_language: "English",
+        sent_at: now,
+        delivery_status: isSms ? "queued" : "sent",
+        attachment_path: attachmentPath,
+        attachment_name: attachmentName,
+        attachment_content_type: mimeType,
+        attachment_size_bytes: bytes.length
+      })
+      .select("id")
+      .single();
+    if (insertError) {
+      await driverSupabase.storage.from("driver-paperwork").remove([attachmentPath]);
+      attachmentPath = "";
+      throw insertError;
+    }
+
+    if (!isSms) return res.json({ ok: true, channel: "app", messageId: storedMessage.id });
+    if (!twilioClient || !TWILIO_MESSAGING_SERVICE_SID) {
+      await driverSupabase.from("driver_messages").update({ delivery_status: "failed" }).eq("id", storedMessage.id);
+      return res.status(503).json({ error: "Twilio outbound photo messaging is not configured." });
+    }
+
+    try {
+      const { data: signedMedia, error: signedError } = await driverSupabase.storage
+        .from("driver-paperwork")
+        .createSignedUrl(attachmentPath, 60 * 60);
+      if (signedError || !signedMedia?.signedUrl) throw signedError || new Error("Photo link could not be created.");
+      const sent = await twilioClient.messages.create({
+        to: conversation.sms_phone_e164,
+        body: body || "CSP Shipping sent a photo.",
+        mediaUrl: [signedMedia.signedUrl],
+        messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
+        statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
+      });
+      const status = mapTwilioDeliveryStatus(sent.status);
+      const { error: updateError } = await driverSupabase
+        .from("driver_messages")
+        .update({
+          provider_message_id: sent.sid,
+          delivery_status: status,
+          provider_status: sent.status || null,
+          provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
+          provider_error_message: sent.errorMessage || null,
+          provider_status_updated_at: new Date().toISOString()
+        })
+        .eq("id", storedMessage.id);
+      if (updateError) throw updateError;
+      scheduleTwilioStatusSync(sent.sid);
+      return res.json({ ok: true, channel: "sms", messageId: storedMessage.id, providerMessageId: sent.sid });
+    } catch (error) {
+      await driverSupabase.from("driver_messages").update({ delivery_status: "failed" }).eq("id", storedMessage.id);
+      throw error;
+    }
+  } catch (error) {
+    console.error("Shipping photo send failed:", error?.message || error);
+    return res.status(500).json({ error: error?.message || "The photo could not be sent." });
   }
 });
 
