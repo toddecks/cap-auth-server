@@ -1778,6 +1778,11 @@ app.post("/api/shipping/send-photo", async (req, res) => {
       return res.status(400).json({ error: "Photo must be 10 MB or smaller." });
     }
 
+    const isSms = conversation.channel === "sms";
+    if (isSms && (bytes.length > 5 * 1024 * 1024 || mimeType === "image/webp")) {
+      return res.status(400).json({ error: "Text-message photos must be JPG, PNG, or HEIC and 5 MB or smaller." });
+    }
+
     const clientMessageId = /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
       ? requestedClientMessageId
       : crypto.randomUUID();
@@ -1787,7 +1792,10 @@ app.post("/api/shipping/send-photo", async (req, res) => {
     const ownerFolder = conversation.user_id
       ? String(conversation.user_id)
       : `sms/${String(conversation.sms_phone_e164 || "").replace(/\D/g, "") || staffUser.id}`;
-    attachmentPath = `${ownerFolder}/${conversationId}/shipping-photo-${clientMessageId}.${extension}`;
+    const storedFileName = isSms
+      ? `p-${clientMessageId.slice(0, 8)}.${extension}`
+      : `shipping-photo-${clientMessageId}.${extension}`;
+    attachmentPath = `${ownerFolder}/${conversationId}/${storedFileName}`;
     const { error: uploadError } = await driverSupabase.storage
       .from("driver-paperwork")
       .upload(attachmentPath, bytes, {
@@ -1797,7 +1805,6 @@ app.post("/api/shipping/send-photo", async (req, res) => {
       });
     if (uploadError) throw uploadError;
 
-    const isSms = conversation.channel === "sms";
     const storedBody = body || "Photo";
     const now = new Date().toISOString();
     const { data: storedMessage, error: insertError } = await driverSupabase
