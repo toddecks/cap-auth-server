@@ -71,7 +71,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v6-delivery-recovery",
+    shippingSmsMode: "twilio-two-way-v7-approved-campaign",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1347,7 +1347,9 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
         releaseNumber: initialRelease
       };
     }
-    return { reply: "Welcome to CSP text check-in. Please tell us your Full Name, Release Number, and Company." };
+    return {
+      reply: "Coil Steel Processing: Welcome to CSP driver text check-in. Please reply with your Full Name, Release Number, and Company. You are opted in to recurring operational messages. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out."
+    };
   }
 
   const update = { last_seen_at: now };
@@ -1393,7 +1395,6 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
   const sent = await twilioClient.messages.create({
     to: phone,
-    from: TWILIO_PHONE_NUMBER,
     body,
     messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
     statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
@@ -1599,7 +1600,6 @@ app.post("/api/shipping/send-message", async (req, res) => {
     try {
       const sent = await twilioClient.messages.create({
         to: conversation.sms_phone_e164,
-        from: TWILIO_PHONE_NUMBER,
         body,
         messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
         statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
