@@ -72,6 +72,7 @@ app.get("/api/deploy-status", (_req, res) => {
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
     shippingSmsMode: "twilio-two-way-v9-first-response",
+    shippingArrivalLogMode: "appointment-aware-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1678,7 +1679,20 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
       return res.status(409).json({ error: "Wait until the driver provides their name, company, and release number." });
     }
 
-    const releaseNumber = String(conversation.release_number || contact.last_release_number).trim();
+    let releaseNumber = String(conversation.release_number || contact.last_release_number).trim();
+    let driverCompany = String(contact.driver_company).trim();
+    if (/^\d{4,}$/.test(driverCompany) && /^[A-Za-z][A-Za-z .&-]*$/.test(releaseNumber)) {
+      [releaseNumber, driverCompany] = [driverCompany, releaseNumber];
+      await Promise.all([
+        driverSupabase.from("driver_sms_contacts").update({
+          driver_company: driverCompany,
+          last_release_number: releaseNumber,
+          updated_at: new Date().toISOString()
+        }).eq("phone_e164", conversation.sms_phone_e164),
+        driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
+          .eq("id", conversationId)
+      ]);
+    }
     const { data: existing, error: existingError } = await driverSupabase
       .from("driver_sms_arrivals")
       .select("id")
@@ -1686,7 +1700,14 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
       .is("departed_at", null)
       .maybeSingle();
     if (existingError) throw existingError;
-    if (existing?.id) return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true });
+    if (existing?.id) {
+      const { error: normalizeExistingError } = await driverSupabase
+        .from("driver_sms_arrivals")
+        .update({ release_number: releaseNumber, driver_company: driverCompany, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+      if (normalizeExistingError) throw normalizeExistingError;
+      return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true });
+    }
 
     const { data: arrival, error: arrivalError } = await driverSupabase
       .from("driver_sms_arrivals")
@@ -1696,7 +1717,7 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
         facility_id: conversation.facility_id,
         release_number: releaseNumber,
         driver_name: String(contact.full_name).trim(),
-        driver_company: String(contact.driver_company).trim(),
+        driver_company: driverCompany,
         added_by: staffUser.id
       })
       .select("id")
@@ -1706,6 +1727,93 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
   } catch (error) {
     console.error("SMS driver arrival add failed:", error?.message || error);
     return res.status(500).json({ error: "The text check-in could not be added to Driver Arrivals." });
+  }
+});
+
+const normalizeShippingRelease = (value) => String(value || "")
+  .trim()
+  .toUpperCase()
+  .replace(/[^A-Z0-9]/g, "");
+
+const psReleaseCandidates = (value) => {
+  const rawParts = String(value || "").toUpperCase().split(/[\/,;|]+/).map((part) => part.trim()).filter(Boolean);
+  const candidates = new Set();
+  const firstDigits = (rawParts[0]?.match(/\d{5,}/) || [])[0] || "";
+  rawParts.forEach((part, index) => {
+    const base = part.replace(/(?:-COIL|#\d+).*$/i, "").trim();
+    const normalized = normalizeShippingRelease(base);
+    if (normalized) candidates.add(normalized);
+    if (index > 0 && /^\d{1,4}$/.test(normalized) && firstDigits.length > normalized.length) {
+      candidates.add(`${firstDigits.slice(0, firstDigits.length - normalized.length)}${normalized}`);
+    }
+  });
+  return candidates;
+};
+
+app.post("/api/shipping/appointment-matches", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase || !chartSupabase) {
+    return res.status(503).json({ error: "Shipping appointment data is not configured." });
+  }
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in to view appointment data." });
+
+  const date = String(req.body?.date || "").trim();
+  const releases = Array.isArray(req.body?.releases)
+    ? req.body.releases.map(normalizeShippingRelease).filter(Boolean).slice(0, 500)
+    : [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Choose a valid log date." });
+  if (!releases.length) return res.json({ matches: {} });
+
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to view appointments." });
+    }
+
+    const selected = new Date(`${date}T12:00:00Z`);
+    const start = new Date(selected); start.setUTCDate(start.getUTCDate() - 1);
+    const end = new Date(selected); end.setUTCDate(end.getUTCDate() + 1);
+    const dateOnly = (value) => value.toISOString().slice(0, 10);
+    const { data, error } = await chartSupabase
+      .from("psdata_loads_api")
+      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad")
+      .gte("scheduleDate", dateOnly(start))
+      .lte("scheduleDate", dateOnly(end))
+      .limit(5000);
+    if (error) throw error;
+
+    const requested = new Set(releases);
+    const matches = {};
+    (data || []).forEach((row) => {
+      if (row.cancelLoad === true || String(row.cancelLoad || "").toLowerCase() === "true") return;
+      const keys = [...psReleaseCandidates(row.poRel)].filter((key) => requested.has(key));
+      keys.forEach((key) => {
+        const appointmentAt = row.scheduleDate && row.scheduleTime
+          ? `${row.scheduleDate}T${String(row.scheduleTime).slice(0, 8)}`
+          : null;
+        if (!appointmentAt) return;
+        const candidate = {
+          appointment_at: appointmentAt,
+          release_reference: row.poRel,
+          carrier_name: row.carrierName || null,
+          location: row.location || null,
+          bol_number: row.bolNumber || row.masterBolNumber || null
+        };
+        const existingDistance = matches[key]
+          ? Math.abs(new Date(matches[key].appointment_at).getTime() - selected.getTime())
+          : Infinity;
+        const candidateDistance = Math.abs(new Date(`${appointmentAt}Z`).getTime() - selected.getTime());
+        if (candidateDistance < existingDistance) matches[key] = candidate;
+      });
+    });
+    return res.json({ matches });
+  } catch (error) {
+    console.error("Shipping appointment match failed:", error?.message || error);
+    return res.status(500).json({ error: "Appointment data could not be loaded." });
   }
 });
 
