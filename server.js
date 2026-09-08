@@ -73,6 +73,7 @@ app.get("/api/deploy-status", (_req, res) => {
     },
     shippingSmsMode: "twilio-two-way-v9-first-response",
     shippingArrivalLogMode: "appointment-aware-v1",
+    shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
       && twilioClient
@@ -1727,6 +1728,117 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
   } catch (error) {
     console.error("SMS driver arrival add failed:", error?.message || error);
     return res.status(500).json({ error: "The text check-in could not be added to Driver Arrivals." });
+  }
+});
+
+app.post("/api/shipping/edit-arrival", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!driverSupabase) return res.status(503).json({ error: "Shipping arrival editing is not configured." });
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Sign in to edit an arrival." });
+
+  const arrivalId = Number(req.body?.arrivalId);
+  const arrivalSource = String(req.body?.arrivalSource || "app").trim().toLowerCase();
+  const checkInArrivalId = Number(req.body?.checkInArrivalId);
+  const conversationId = String(req.body?.conversationId || "").trim();
+  const driverName = String(req.body?.driverName || "").trim().slice(0, 120);
+  const driverCompany = String(req.body?.driverCompany || "").trim().slice(0, 160);
+  const releaseNumber = String(req.body?.releaseNumber || "").trim().slice(0, 120);
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!Number.isSafeInteger(arrivalId) || arrivalId < 1 || !["app", "sms"].includes(arrivalSource)) {
+    return res.status(400).json({ error: "Choose a valid driver arrival." });
+  }
+  if (!driverName || !driverCompany || !releaseNumber) {
+    return res.status(400).json({ error: "Full name, company, and release number are required." });
+  }
+  if (conversationId && !uuidPattern.test(conversationId)) {
+    return res.status(400).json({ error: "The conversation identifier is invalid." });
+  }
+
+  try {
+    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
+    const staffUser = userData?.user;
+    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
+    if (userError || !staffUser?.id) return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
+    if (!new Set(["shipping", "admin"]).has(staffRole)) {
+      return res.status(403).json({ error: "CSP Shipping access is required to edit arrivals." });
+    }
+
+    if (arrivalSource === "sms") {
+      const { data: arrival, error: lookupError } = await driverSupabase
+        .from("driver_sms_arrivals")
+        .select("id,phone_e164,conversation_id")
+        .eq("id", arrivalId)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      if (!arrival) return res.status(404).json({ error: "This text arrival no longer exists." });
+      const results = await Promise.all([
+        driverSupabase.from("driver_sms_arrivals").update({
+          driver_name: driverName,
+          driver_company: driverCompany,
+          release_number: releaseNumber,
+          updated_at: new Date().toISOString()
+        }).eq("id", arrival.id),
+        driverSupabase.from("driver_sms_contacts").update({
+          full_name: driverName,
+          driver_company: driverCompany,
+          last_release_number: releaseNumber,
+          updated_at: new Date().toISOString()
+        }).eq("phone_e164", arrival.phone_e164),
+        driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
+          .eq("id", arrival.conversation_id)
+      ]);
+      const failed = results.find((result) => result.error);
+      if (failed?.error) throw failed.error;
+      return res.json({ ok: true, arrivalId, arrivalSource });
+    }
+
+    const { data: arrival, error: lookupError } = await driverSupabase
+      .from("driver_arrivals")
+      .select("id,user_id,facility_id,event_type,profile_snapshot")
+      .eq("id", arrivalId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!arrival || !["geofence_enter", "manual_check_in"].includes(arrival.event_type)) {
+      return res.status(404).json({ error: "This app arrival no longer exists." });
+    }
+
+    const profileSnapshot = {
+      ...(arrival.profile_snapshot || {}),
+      name: driverName,
+      driverCompany
+    };
+    const updates = [
+      driverSupabase.from("driver_profiles").update({
+        full_name: driverName,
+        driver_company: driverCompany,
+        updated_at: new Date().toISOString()
+      }).eq("user_id", arrival.user_id),
+      driverSupabase.from("driver_arrivals").update({ profile_snapshot: profileSnapshot })
+        .eq("id", arrival.id)
+    ];
+    if (arrival.event_type === "manual_check_in") {
+      updates.push(driverSupabase.from("driver_arrivals").update({
+        release_number: releaseNumber,
+        profile_snapshot: profileSnapshot
+      }).eq("id", arrival.id));
+    } else if (Number.isSafeInteger(checkInArrivalId) && checkInArrivalId > 0) {
+      updates.push(driverSupabase.from("driver_arrivals").update({
+        release_number: releaseNumber,
+        profile_snapshot: profileSnapshot
+      }).eq("id", checkInArrivalId).eq("user_id", arrival.user_id).eq("facility_id", arrival.facility_id).eq("event_type", "manual_check_in"));
+    }
+    if (conversationId) {
+      updates.push(driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
+        .eq("id", conversationId).eq("user_id", arrival.user_id).eq("facility_id", arrival.facility_id));
+    }
+    const results = await Promise.all(updates);
+    const failed = results.find((result) => result.error);
+    if (failed?.error) throw failed.error;
+    return res.json({ ok: true, arrivalId, arrivalSource });
+  } catch (error) {
+    console.error("Shipping arrival edit failed:", error?.message || error);
+    return res.status(500).json({ error: "The driver arrival could not be updated." });
   }
 });
 
