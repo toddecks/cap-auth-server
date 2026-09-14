@@ -1,0 +1,2 @@
+-- Deleting a visit/thread must continue to remove its associated records.
+alter table public.driver_review_requests drop constraint driver_review_requests_arrival_id_fkey, add constraint driver_review_requests_arrival_id_fkey foreign key (arrival_id) references public.driver_sms_arrivals(id) on delete cascade; alter table public.driver_review_requests drop constraint driver_review_requests_conversation_id_fkey, add constraint driver_review_requests_conversation_id_fkey foreign key (conversation_id) references public.driver_conversations(id) on delete cascade;
