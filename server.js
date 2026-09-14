@@ -1071,6 +1071,8 @@ const issueDriverShippingSessionOnce = (biUser, shippingRole) => {
   return entry.promise;
 };
 
+require("./shipping-bug-reports")({app,supabase,resolveBiShippingRole,apiKey:RESEND_API_KEY,from:SHIPPING_AUTH_FROM_EMAIL});
+
 app.post("/api/shipping/auth/session", async (req, res) => {
   res.set("Cache-Control", "no-store");
   if (!driverSupabase) {
