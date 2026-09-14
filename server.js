@@ -57,7 +57,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
-    driverSignupMode: "resend-otp-v4-dynamic-length",
+    driverSignupMode: "resend-otp-v5-legacy-phone-compatible",
     shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
@@ -837,7 +837,7 @@ const sendDriverVerificationCode = async ({ email, password, profile }) => {
     full_name: profile.fullName,
     hauling_for: profile.haulingFor,
     driver_company: profile.driverCompany,
-    phone_e164: profile.phone,
+    phone_e164: profile.phone || null,
     preferred_language: profile.preferredLanguage
   };
   let verificationType = "signup";
@@ -924,15 +924,8 @@ app.post("/api/driver/auth/signup-code", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const profile = normalizeDriverSignup(req.body);
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) {
-    return res.status(400).json({ error: "Enter a valid email address." });
-  }
-  if (profile.password.length < 8 || profile.password.length > 72) {
-    return res.status(400).json({ error: "Use a password between 8 and 72 characters." });
-  }
-  if (!profile.fullName || !profile.haulingFor || !profile.driverCompany || !profile.phone) {
-    return res.status(400).json({ error: "Complete all driver information fields." });
-  }
+  const validationError = require("./driver-signup-validation").validateDriverSignup(profile, req.body);
+  if (validationError) return res.status(400).json({ error: validationError });
   if (!consumeShippingAuthAttempt(req, `driver-signup:${profile.email}`)) {
     return res.status(429).json({ error: "Too many verification requests. Wait 15 minutes and try again." });
   }
