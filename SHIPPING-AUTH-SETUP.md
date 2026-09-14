@@ -13,6 +13,8 @@ The portal requests a branded BI magic-link email from:
 
 `POST /api/shipping/auth/magic-link`
 
+The dedicated `shipping_app` role grants Shipping web app access without BI report permissions.
+
 BI users with `admin`, `shipping_overview`, or `shipping_performance` are
 authorized by default. `SHIPPING_AUTH_ALLOWED_EMAILS` remains a fallback
 allowlist for explicitly approved employees.

@@ -985,7 +985,7 @@ const resolveBiShippingRole = async (biUser) => {
   const roleRows = await fetchUserRoleRows(biUser.id);
   const roles = roleNamesFromRows(roleRows).map(normalizeRoleName);
   const allowlistedRole = SHIPPING_AUTH_MEMBERS.get(email) || null;
-  const approved = roles.some((role) => SHIPPING_BI_ACCESS_ROLES.has(role)) || Boolean(allowlistedRole);
+  const approved = roles.includes("shipping_app") || roles.some((role) => SHIPPING_BI_ACCESS_ROLES.has(role)) || Boolean(allowlistedRole);
   if (!approved) return null;
   return roles.includes("admin") || allowlistedRole === "admin" ? "admin" : "shipping";
 };
