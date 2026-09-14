@@ -72,6 +72,8 @@ app.get("/api/deploy-status", (_req, res) => {
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
     shippingSmsMode: "twilio-two-way-v12-mms-limits",
+    shippingReviewMode: "departure-review-v1",
+    shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
@@ -7349,10 +7351,16 @@ app.get("/api/chart-data", async (req, res) => {
   }
 });
 
+const driverReviewWorker = require("./driver-reviews").createReviewWorker({
+  db: driverSupabase, twilio: twilioClient, messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
+  publicBaseUrl: TWILIO_PUBLIC_BASE_URL, scheduleStatusSync: scheduleTwilioStatusSync
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
+  driverReviewWorker.start();
   syncRecentQueuedTwilioMessages().catch((error) => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
   });
