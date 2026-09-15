@@ -4891,6 +4891,12 @@ app.post("/api/pro/forms/submit", async (req, res) => {
   const dimensions = sanitizePlainObject(body.dimensions);
   const metrics = sanitizePlainObject(body.metrics);
   const payload = sanitizePlainObject(body.payload);
+  if(formKey==='shift_report') {
+    const maintenanceError=require('./maintenance-call-types').validateMaintenanceTypes(payload);
+    if(maintenanceError)return res.status(400).json({error:maintenanceError});
+    const details=require('./maintenance-call-types').maintenanceTypeDetails(payload);
+    if(details.length)payload.maintenanceReason=[...details,payload.maintenanceReason].filter(Boolean).join('\n');
+  }
   const notes = coerceText(body.notes, 5000);
   const rawChartRows = Array.isArray(body.chartRows) ? body.chartRows : [];
   const rawMaintenanceOrders = Array.isArray(body.maintenanceOrders) ? body.maintenanceOrders : [];
