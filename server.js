@@ -57,6 +57,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
+    shiftMaintenanceMode: "phone-onsite-v1",
     driverSignupMode: "resend-otp-v5-legacy-phone-compatible",
     shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
@@ -2582,12 +2583,12 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
     ),
     maintenance_calls_list: buildItemList(
       "Maintenance Calls",
-      getArray(payload.maintenanceTimes).map((row) => {
+      [...require('./maintenance-call-types').maintenanceTypeDetails(payload), ...getArray(payload.maintenanceTimes).map((row) => {
         const callTime = row.maintenanceCallTime || "n/a";
         const arrivalTime = row.maintenanceArrivalTime || "n/a";
         const completionTime = row.maintenanceCompletionTime || "n/a";
         return `Call: ${callTime} | Arrival: ${arrivalTime} | Completion: ${completionTime}`;
-      }),
+      })],
       "No maintenance calls recorded."
     ),
     comments_block: notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Comments</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
@@ -4728,6 +4729,12 @@ app.post("/api/todd-requests", async (req, res) => {
   const dateRequested = coerceDateText(body.dateRequested || body.date_requested) || new Date().toISOString().slice(0, 10);
   const dateNeeded = coerceDateText(body.dateNeeded || body.date_needed);
   const priority = normalizeToddPriority(body.priority);
+  if(formKey==='shift_report') {
+    const maintenanceError=require('./maintenance-call-types').validateMaintenanceTypes(payload);
+    if(maintenanceError)return res.status(400).json({error:maintenanceError});
+    const details=require('./maintenance-call-types').maintenanceTypeDetails(payload);
+    if(details.length)payload.maintenanceReason=[...details,payload.maintenanceReason].filter(Boolean).join('\n');
+  }
   const notes = coerceText(body.notes, 5000);
   let uploadedAttachment = null;
 
