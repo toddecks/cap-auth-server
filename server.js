@@ -57,7 +57,7 @@ app.get("/api/deploy-status", (_req, res) => {
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
     shiftReportAccessMode: "production-v1",
-    shiftMaintenanceMode: "phone-onsite-v1",
+    shiftMaintenanceMode: "phone-onsite-email-v2",
     driverSignupMode: "resend-otp-v5-legacy-phone-compatible",
     shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
@@ -2581,14 +2581,14 @@ const buildShiftReportEmail = ({ submittedBy, submittedAt, dimensions, metrics, 
       getArray(payload.skippedOrders).map((row) => `${row.skippedOrderNumber || "Order"}: ${row.skippedOrderReason || "No reason provided"}`),
       "No skipped orders recorded."
     ),
-    maintenance_calls_list: buildItemList(
-      "Maintenance Calls",
-      [...require('./maintenance-call-types').maintenanceTypeDetails(payload), ...getArray(payload.maintenanceTimes).map((row) => {
+    maintenance_calls_list: buildEmailTable("Maintenance", require("./maintenance-call-types").maintenanceEmailRows(payload)) + buildItemList(
+      "Maintenance Call Times",
+      getArray(payload.maintenanceTimes).map((row) => {
         const callTime = row.maintenanceCallTime || "n/a";
         const arrivalTime = row.maintenanceArrivalTime || "n/a";
         const completionTime = row.maintenanceCompletionTime || "n/a";
         return `Call: ${callTime} | Arrival: ${arrivalTime} | Completion: ${completionTime}`;
-      })],
+      }),
       "No maintenance calls recorded."
     ),
     comments_block: notes ? `<h3 style="margin:22px 0 8px;color:#172742;font-size:16px;">Comments</h3><p style="margin:0;color:#233658;">${escapeHtml(notes)}</p>` : ""
@@ -2733,6 +2733,7 @@ const buildShiftMaintenanceEmail = ({ submittedBy, submittedAt, dimensions, payl
     { label: "Completion", value: call.maintenanceCompletionTime || "-" }
   ])).join("");
   const callDetails = buildEmailTable("Maintenance Call Details", [
+    ...require("./maintenance-call-types").maintenanceEmailRows(payload),
     { label: "Maintenance tech", value: dimensions.maintenance_tech || payload.maintenanceTech || "Not selected" },
     { label: "Reason / details", value: payload.maintenanceReason || "No details supplied" }
   ]);
