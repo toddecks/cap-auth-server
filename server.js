@@ -72,7 +72,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v14-safe-checkin",
+    shippingSmsMode: "twilio-two-way-v15-simple-reply",
     shippingReviewMode: "departure-review-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
@@ -1950,7 +1950,7 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
   const driverCompany = String(req.body?.driverCompany || "").trim().slice(0, 160);
   const releaseNumber = String(req.body?.releaseNumber || "").trim().slice(0, 120);
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (!Number.isSafeInteger(arrivalId) || arrivalId < 1 || !["app", "sms"].includes(arrivalSource)) {
+  if (!(arrivalSource === "sms" && uuidPattern.test(conversationId)) && (!Number.isSafeInteger(arrivalId) || arrivalId < 1 || !["app", "sms"].includes(arrivalSource))) {
     return res.status(400).json({ error: "Choose a valid driver arrival." });
   }
   if (!driverName || !driverCompany || !releaseNumber) {
@@ -1969,6 +1969,20 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
       return res.status(403).json({ error: "CSP Shipping access is required to edit arrivals." });
     }
 
+    if (arrivalSource === "sms" && (!Number.isSafeInteger(arrivalId) || arrivalId < 1)) {
+      const {data:conversation,error:lookupError}=await driverSupabase.from('driver_conversations').select('id,sms_phone_e164,status,channel').eq('id',conversationId).maybeSingle();
+      if(lookupError)throw lookupError;
+      if(!conversation||conversation.channel!=='sms'||conversation.status!=='open')return res.status(404).json({error:'Open text conversation not found.'});
+      if(releaseNumber.length>100)return res.status(400).json({error:'Release number must be 100 characters or less.'});
+      const contactResult=await driverSupabase.from('driver_sms_contacts').upsert({phone_e164:conversation.sms_phone_e164,full_name:driverName,driver_company:driverCompany,last_release_number:releaseNumber,onboarding_step:'ready',updated_at:new Date().toISOString()},{onConflict:'phone_e164'});
+      if(contactResult.error)throw contactResult.error;
+      const results=await Promise.all([
+        driverSupabase.from('driver_conversations').update({release_number:releaseNumber}).eq('id',conversationId),
+        driverSupabase.from('driver_sms_arrivals').update({driver_name:driverName,driver_company:driverCompany,release_number:releaseNumber}).eq('conversation_id',conversationId).is('departed_at',null)
+      ]);
+      const failure=results.find(r=>r.error);if(failure)throw failure.error;
+      return res.json({ok:true,conversationId,arrivalSource});
+    }
     if (arrivalSource === "sms") {
       const { data: arrival, error: lookupError } = await driverSupabase
         .from("driver_sms_arrivals")

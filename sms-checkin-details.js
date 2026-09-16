@@ -42,9 +42,9 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated}){
  const missing=[!contact.full_name&&'Name: your full name',!contact.driver_company&&'Company: your trucking company',!contact.last_release_number&&'Release: your release or pickup number'].filter(Boolean);
  contact.onboarding_step=missing.length?'awaiting_details':'ready';
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
- let reply='';
- if(missing.length)reply=`Please send the missing check-in details (any order, together or in separate texts):\n${missing.join('\n')}\nYou can correct a number with "Release: 1234567".`;
- else if(changed||!existing||prior.onboarding_step!=='ready')reply=`Check-in details received: ${contact.full_name}, ${contact.driver_company}, release ${contact.last_release_number}. Shipping will review them. To correct a number, reply "Release: [correct number]".`;
+ const reply=(conversationCreated||!existing)&&missing.length
+  ? "Please reply with:\n\n1. Full name\n2. Release Number\n3. Company\n\nFor faster check-ins, Download the CSP Driver app."
+  : '';
  return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed};
 }
 module.exports={parseDetails,nextCheckin};
