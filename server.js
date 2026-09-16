@@ -72,7 +72,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v16-first-reply-only",
+    shippingSmsMode: "twilio-two-way-v17-visit-type",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
@@ -1314,7 +1314,7 @@ const findOrCreateSmsConversation = async (phone) => {
 const rememberSmsDriverUnlocked = async ({ phone, body, conversationCreated, matchedProfile }) => {
   const { data: existing, error: contactError } = await driverSupabase
     .from("driver_sms_contacts")
-    .select("phone_e164,full_name,driver_company,last_release_number,onboarding_step")
+    .select("phone_e164,full_name,driver_company,last_release_number,onboarding_step,visit_type,visit_started_at")
     .eq("phone_e164", phone)
     .maybeSingle();
   if (contactError) throw contactError;
@@ -1521,7 +1521,8 @@ app.post(
         .from("driver_conversations")
         .update({
           updated_at: now,
-          ...(remembered.releaseNumber ? { release_number: remembered.releaseNumber } : {})
+          ...(remembered.releaseNumber ? { release_number: remembered.releaseNumber } : {}),
+          ...(remembered.visitType ? { visit_type: remembered.visitType } : {})
         })
         .eq("id", conversationId);
       if (conversationError) throw conversationError;
@@ -1871,7 +1872,7 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
 
     const { data: conversation, error: conversationError } = await driverSupabase
       .from("driver_conversations")
-      .select("id,status,channel,sms_phone_e164,facility_id,release_number")
+      .select("id,status,channel,sms_phone_e164,facility_id,release_number,visit_type")
       .eq("id", conversationId)
       .maybeSingle();
     if (conversationError) throw conversationError;
@@ -1881,22 +1882,24 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
 
     const { data: contact, error: contactError } = await driverSupabase
       .from("driver_sms_contacts")
-      .select("full_name,driver_company,onboarding_step,last_release_number")
+      .select("full_name,driver_company,onboarding_step,last_release_number,visit_type")
       .eq("phone_e164", conversation.sms_phone_e164)
       .maybeSingle();
     if (contactError) throw contactError;
-    if (
+    const visitType = conversation.visit_type || contact?.visit_type;
+    if (!['pickup','dropoff'].includes(visitType)) return res.status(409).json({error:'Choose pick-up or drop-off in Edit contact first.'});
+    if (visitType === 'pickup' && (
       !contact
       || contact.onboarding_step !== "ready"
       || !String(contact.full_name || "").trim()
       || !String(contact.driver_company || "").trim()
       || !String(conversation.release_number || contact.last_release_number || "").trim()
-    ) {
+    )) {
       return res.status(409).json({ error: "Wait until the driver provides their name, company, and release number." });
     }
 
-    let releaseNumber = String(conversation.release_number || contact.last_release_number).trim();
-    let driverCompany = String(contact.driver_company).trim();
+    let releaseNumber = String(visitType === 'dropoff' ? 'Drop-off' : conversation.release_number || contact.last_release_number).trim();
+    let driverCompany = String(contact?.driver_company || 'Not provided').trim();
     if (/^\d{4,}$/.test(driverCompany) && /^[A-Za-z][A-Za-z .&-]*$/.test(releaseNumber)) {
       [releaseNumber, driverCompany] = [driverCompany, releaseNumber];
       await Promise.all([
@@ -1909,6 +1912,15 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
           .eq("id", conversationId)
       ]);
     }
+    const sendInstructions = async (arrivalId) => {
+      try {
+        await require('./checkin-instructions').sendCheckinInstructions({db:driverSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync,conversation,arrivalId,staffId:staffUser.id,visitType});
+        return null;
+      } catch(error) {
+        console.error('Check-in instructions failed:',error?.message||error);
+        return 'Driver checked in, but the instructions text could not be confirmed. Check the conversation before sending it manually.';
+      }
+    };
     const { data: existing, error: existingError } = await driverSupabase
       .from("driver_sms_arrivals")
       .select("id")
@@ -1922,7 +1934,7 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
         .update({ release_number: releaseNumber, driver_company: driverCompany, updated_at: new Date().toISOString() })
         .eq("id", existing.id);
       if (normalizeExistingError) throw normalizeExistingError;
-      return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true });
+      return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true, warning: await sendInstructions(existing.id) });
     }
 
     const { data: arrival, error: arrivalError } = await driverSupabase
@@ -1932,14 +1944,15 @@ app.post("/api/shipping/add-sms-arrival", async (req, res) => {
         conversation_id: conversationId,
         facility_id: conversation.facility_id,
         release_number: releaseNumber,
-        driver_name: String(contact.full_name).trim(),
+        driver_name: String(contact?.full_name || conversation.sms_phone_e164).trim(),
+        visit_type: visitType,
         driver_company: driverCompany,
         added_by: staffUser.id
       })
       .select("id")
       .single();
     if (arrivalError) throw arrivalError;
-    return res.json({ ok: true, arrivalId: arrival.id, alreadyAdded: false });
+    return res.json({ ok: true, arrivalId: arrival.id, alreadyAdded: false, warning: await sendInstructions(arrival.id) });
   } catch (error) {
     console.error("SMS driver arrival add failed:", error?.message || error);
     return res.status(500).json({ error: "The text check-in could not be added to Driver Arrivals." });
@@ -1956,6 +1969,9 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
   const arrivalSource = String(req.body?.arrivalSource || "app").trim().toLowerCase();
   const checkInArrivalId = Number(req.body?.checkInArrivalId);
   const conversationId = String(req.body?.conversationId || "").trim();
+  const visitType = String(req.body?.visitType || '').trim();
+  if (visitType && !['pickup','dropoff'].includes(visitType)) return res.status(400).json({error:'Choose pick-up or drop-off.'});
+  const typeUpdate = visitType ? {visit_type:visitType} : {};
   const driverName = String(req.body?.driverName || "").trim().slice(0, 120);
   const driverCompany = String(req.body?.driverCompany || "").trim().slice(0, 160);
   const releaseNumber = String(req.body?.releaseNumber || "").trim().slice(0, 120);
@@ -1984,11 +2000,11 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
       if(lookupError)throw lookupError;
       if(!conversation||conversation.channel!=='sms'||conversation.status!=='open')return res.status(404).json({error:'Open text conversation not found.'});
       if(releaseNumber.length>100)return res.status(400).json({error:'Release number must be 100 characters or less.'});
-      const contactResult=await driverSupabase.from('driver_sms_contacts').upsert({phone_e164:conversation.sms_phone_e164,full_name:driverName,driver_company:driverCompany,last_release_number:releaseNumber,onboarding_step:'ready',updated_at:new Date().toISOString()},{onConflict:'phone_e164'});
+      const contactResult=await driverSupabase.from('driver_sms_contacts').upsert({phone_e164:conversation.sms_phone_e164,full_name:driverName,driver_company:driverCompany,last_release_number:releaseNumber,...typeUpdate,onboarding_step:'ready',updated_at:new Date().toISOString()},{onConflict:'phone_e164'});
       if(contactResult.error)throw contactResult.error;
       const results=await Promise.all([
-        driverSupabase.from('driver_conversations').update({release_number:releaseNumber}).eq('id',conversationId),
-        driverSupabase.from('driver_sms_arrivals').update({driver_name:driverName,driver_company:driverCompany,release_number:releaseNumber}).eq('conversation_id',conversationId).is('departed_at',null)
+        driverSupabase.from('driver_conversations').update({release_number:releaseNumber,...typeUpdate}).eq('id',conversationId),
+        driverSupabase.from('driver_sms_arrivals').update({driver_name:driverName,driver_company:driverCompany,release_number:releaseNumber,...typeUpdate}).eq('conversation_id',conversationId).is('departed_at',null)
       ]);
       const failure=results.find(r=>r.error);if(failure)throw failure.error;
       return res.json({ok:true,conversationId,arrivalSource});
@@ -2006,15 +2022,17 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
           driver_name: driverName,
           driver_company: driverCompany,
           release_number: releaseNumber,
+          ...typeUpdate,
           updated_at: new Date().toISOString()
         }).eq("id", arrival.id),
         driverSupabase.from("driver_sms_contacts").update({
           full_name: driverName,
           driver_company: driverCompany,
           last_release_number: releaseNumber,
+          ...typeUpdate,
           updated_at: new Date().toISOString()
         }).eq("phone_e164", arrival.phone_e164),
-        driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
+        driverSupabase.from("driver_conversations").update({ release_number: releaseNumber, ...typeUpdate })
           .eq("id", arrival.conversation_id)
       ]);
       const failed = results.find((result) => result.error);
@@ -2043,22 +2061,24 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
         driver_company: driverCompany,
         updated_at: new Date().toISOString()
       }).eq("user_id", arrival.user_id),
-      driverSupabase.from("driver_arrivals").update({ profile_snapshot: profileSnapshot })
+      driverSupabase.from("driver_arrivals").update({ profile_snapshot: profileSnapshot, ...typeUpdate })
         .eq("id", arrival.id)
     ];
     if (arrival.event_type === "manual_check_in") {
       updates.push(driverSupabase.from("driver_arrivals").update({
         release_number: releaseNumber,
+          ...typeUpdate,
         profile_snapshot: profileSnapshot
       }).eq("id", arrival.id));
     } else if (Number.isSafeInteger(checkInArrivalId) && checkInArrivalId > 0) {
       updates.push(driverSupabase.from("driver_arrivals").update({
         release_number: releaseNumber,
+          ...typeUpdate,
         profile_snapshot: profileSnapshot
       }).eq("id", checkInArrivalId).eq("user_id", arrival.user_id).eq("facility_id", arrival.facility_id).eq("event_type", "manual_check_in"));
     }
     if (conversationId) {
-      updates.push(driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
+      updates.push(driverSupabase.from("driver_conversations").update({ release_number: releaseNumber, ...typeUpdate })
         .eq("id", conversationId).eq("user_id", arrival.user_id).eq("facility_id", arrival.facility_id));
     }
     const results = await Promise.all(updates);

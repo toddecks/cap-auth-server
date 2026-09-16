@@ -5,12 +5,12 @@ const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|d
 function parseDetails(text, existing={}) {
  const found={},rest=[];
  // Labels are accepted in any order, even when separated only by spaces.
- const marked=clean(text).replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company)\s*[:=]\s*/gi,'\n$1: ');
+ const marked=clean(text).replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
  for(let part of marked.split(/[\n,;|]+/).map(clean).filter(Boolean)){
   part=part.replace(/^\d[.)]\s*/,'');
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.full_name=clean(m[1]).slice(0,120);continue;}
-  m=part.match(/^(?:trucking\s+)?company\s*[:=]\s*(.+)$/i);
+  m=part.match(/^(?:(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.driver_company=clean(m[1]).slice(0,160);continue;}
   m=part.match(/^(?:(?:(?:correct|new|actual)\s+)?(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?\s*(?:is|[:=#])?\s*)([a-z0-9][a-z0-9-]{2,29})[.!]?$/i);
   if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
@@ -36,15 +36,20 @@ function parseDetails(text, existing={}) {
  }
  return found;
 }
-function nextCheckin({existing,matchedProfile,body,conversationCreated}){
- const prior=existing||{},base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:conversationCreated?'':clean(prior.last_release_number)};
- const parsed=parseDetails(body,base),contact={...base,...parsed};
- const missing=[!contact.full_name&&'Name: your full name',!contact.driver_company&&'Company: your trucking company',!contact.last_release_number&&'Release: your release or pickup number'].filter(Boolean);
- contact.onboarding_step=missing.length?'awaiting_details':'ready';
+function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new Date()}){
+ const flow=require('./driver-visit-flow');
+ const prior=existing||{},fresh=conversationCreated||!existing;
+ const previousType=fresh?null:prior.visit_type;
+ const chosen=flow.visitType(body),type=chosen||previousType||null;
+ const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
+ const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
+ const detailText=String(body||'').replace(/\b(pick[ -]?up|picking up|drop[ -]?off|dropping off|delivery|delivering)\b/gi,'');
+ const parsed=parseDetails(detailText,base),contact={...base,...parsed,visit_type:type,visit_started_at:started};
+ contact.onboarding_step=type==='dropoff'||(type==='pickup'&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
- const reply=(conversationCreated||!existing)
-  ? "Please reply with:\n\n1. Full name\n2. Release Number\n3. Company\n\nFor faster check-ins, Download the CSP Driver app."
-  : '';
- return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed};
+ let reply='';
+ if(!type&&fresh)reply=flow.TYPE_PROMPT;
+ else if(type&&(fresh||type!==previousType))reply=type==='pickup'?flow.PICKUP_PROMPT:flow.dropoffReply(started);
+ return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed,visitType:type};
 }
 module.exports={parseDetails,nextCheckin};
