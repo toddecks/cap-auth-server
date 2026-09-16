@@ -72,7 +72,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v13-flexible-checkin",
+    shippingSmsMode: "twilio-two-way-v14-safe-checkin",
     shippingReviewMode: "departure-review-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
@@ -1321,7 +1321,7 @@ const rememberSmsDriverUnlocked = async ({ phone, body, conversationCreated, mat
 
   const result = require('./sms-checkin-details').nextCheckin({existing,matchedProfile,body,conversationCreated});
   const {error} = await driverSupabase.from('driver_sms_contacts').upsert({
-    phone_e164:phone,...result.contact,last_seen_at:new Date().toISOString()
+    phone_e164:phone,...result.contact,last_release_number:result.contact.last_release_number||null,last_seen_at:new Date().toISOString()
   },{onConflict:'phone_e164'});
   if(error)throw error;
   return result;
@@ -1507,12 +1507,15 @@ app.post(
         .upsert(messagesToStore, { onConflict: "client_message_id" });
       if (messageError) throw messageError;
 
-      const remembered = await rememberSmsDriver({
+      let remembered={reply:"",releaseNumber:"",detailsChanged:false};
+      try { remembered = await rememberSmsDriver({
         phone: from,
         body: textBody,
         conversationCreated: conversation.created,
         matchedProfile: conversation.matchedProfile
-      });
+      }); } catch(checkinError) {
+        console.error("SMS check-in parsing failed; incoming message retained:",checkinError?.message||checkinError);
+      }
 
       const { error: conversationError } = await driverSupabase
         .from("driver_conversations")
@@ -1530,7 +1533,7 @@ app.post(
           release_number:remembered.contact.last_release_number,
           updated_at:now
         }).eq('conversation_id',conversationId).is('departed_at',null);
-        if(arrivalError)throw arrivalError;
+        if(arrivalError)console.error("SMS arrival correction failed; incoming message retained:",arrivalError.message);
       }
 
       if (remembered.reply) {
