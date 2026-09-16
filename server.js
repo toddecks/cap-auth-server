@@ -72,8 +72,8 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v15-simple-reply",
-    shippingReviewMode: "departure-review-v1",
+    shippingSmsMode: "twilio-two-way-v16-first-reply-only",
+    shippingReviewMode: "disabled-shipping-takes-over",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingArrivalEditMode: "name-company-release-v1",
@@ -7342,7 +7342,7 @@ const driverReviewWorker = require("./driver-reviews").createReviewWorker({
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
-  driverReviewWorker.start();
+  // Shipping takes over after the first welcome text; no automatic departure SMS.
   syncRecentQueuedTwilioMessages().catch((error) => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
   });

@@ -11,3 +11,5 @@ test('new visit does not reuse prior release; asks only missing detail',()=>{con
 test('unclear message asks for clarification instead of accepting a release',()=>{const r=nextCheckin({body:'I am here'});assert.equal(r.contact.onboarding_step,'awaiting_details');assert(!r.releaseNumber);});
 
 test('original short autoreply is sent once, without repeated correction instructions',()=>{const first=nextCheckin({body:'Hi',conversationCreated:true});assert.equal(first.reply,'Please reply with:\n\n1. Full name\n2. Release Number\n3. Company\n\nFor faster check-ins, Download the CSP Driver app.');assert.equal(nextCheckin({existing:first.contact,body:'Thanks'}).reply,'');});
+
+test('first text gets original welcome even if it already contains all details',()=>{const r=nextCheckin({body:'Kyle Huston, 7666373, Huston Trucking',conversationCreated:true});assert.match(r.reply,/Please reply with:/);assert.equal(nextCheckin({existing:r.contact,body:'Release: 9999999'}).reply,'');});
