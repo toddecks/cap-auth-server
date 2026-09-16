@@ -72,7 +72,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v12-mms-limits",
+    shippingSmsMode: "twilio-two-way-v13-flexible-checkin",
     shippingReviewMode: "departure-review-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
@@ -1311,7 +1311,7 @@ const findOrCreateSmsConversation = async (phone) => {
   throw created.error || new Error("Unable to create the SMS conversation.");
 };
 
-const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProfile }) => {
+const rememberSmsDriverUnlocked = async ({ phone, body, conversationCreated, matchedProfile }) => {
   const { data: existing, error: contactError } = await driverSupabase
     .from("driver_sms_contacts")
     .select("phone_e164,full_name,driver_company,last_release_number,onboarding_step")
@@ -1319,73 +1319,21 @@ const rememberSmsDriver = async ({ phone, body, conversationCreated, matchedProf
     .maybeSingle();
   if (contactError) throw contactError;
 
-  const now = new Date().toISOString();
-  if (!existing) {
-    const profileName = String(matchedProfile?.full_name || "").trim();
-    const profileCompany = String(
-      matchedProfile?.driver_company || matchedProfile?.hauling_for || ""
-    ).trim();
-    const onboardingStep = profileName
-      ? (profileCompany ? "ready" : "awaiting_company")
-      : "awaiting_details";
-    const initialRelease = onboardingStep === "ready" ? body.slice(0, 100) : null;
-    const { error } = await driverSupabase.from("driver_sms_contacts").insert({
-      phone_e164: phone,
-      full_name: profileName,
-      driver_company: profileCompany,
-      onboarding_step: onboardingStep,
-      last_release_number: initialRelease,
-      last_seen_at: now
-    });
-    if (error) throw error;
-    if (onboardingStep === "awaiting_company") {
-      return { reply: `Welcome ${profileName}. What trucking company are you driving for?` };
-    }
-    if (onboardingStep === "ready") {
-      return {
-        reply: "",
-        releaseNumber: initialRelease
-      };
-    }
-    return {
-      reply: "Please reply with:\n\n1. Full name\n2. Release Number\n3. Company\n\nFor faster check-ins, Download the CSP Driver app."
-    };
-  }
+  const result = require('./sms-checkin-details').nextCheckin({existing,matchedProfile,body,conversationCreated});
+  const {error} = await driverSupabase.from('driver_sms_contacts').upsert({
+    phone_e164:phone,...result.contact,last_seen_at:new Date().toISOString()
+  },{onConflict:'phone_e164'});
+  if(error)throw error;
+  return result;
+};
 
-  const update = { last_seen_at: now };
-  let reply = "";
-  let releaseNumber = "";
-  if (["awaiting_details", "awaiting_name"].includes(existing.onboarding_step)) {
-    const details = body.split(/\s*(?:\||,|\n)\s*/).filter(Boolean);
-    if (details.length >= 3) {
-      update.full_name = details[0].slice(0, 120);
-      releaseNumber = details[1].slice(0, 100);
-      update.driver_company = details.slice(2).join(", ").slice(0, 160);
-      update.last_release_number = releaseNumber;
-      update.onboarding_step = "ready";
-    } else {
-      update.onboarding_step = "awaiting_details";
-      reply = "Please reply in this format: Full Name, Release Number, Company.";
-    }
-  } else if (existing.onboarding_step === "awaiting_company") {
-    update.driver_company = body.slice(0, 160);
-    update.onboarding_step = "awaiting_release";
-    reply = "What release or pickup number are you checking in with today?";
-  } else if (existing.onboarding_step === "awaiting_release") {
-    releaseNumber = body.slice(0, 100);
-    update.last_release_number = releaseNumber;
-    update.onboarding_step = "ready";
-  } else if (existing.onboarding_step === "ready" && conversationCreated && body) {
-    releaseNumber = body.slice(0, 100);
-    update.last_release_number = releaseNumber;
-  }
-
-  const { error: updateError } = await driverSupabase
-    .from("driver_sms_contacts")
-    .update(update)
-    .eq("phone_e164", phone);
-  if (updateError) throw updateError;
-  return { reply, releaseNumber };
+// Keep rapid replies from the same phone from overwriting partial check-in details.
+const smsContactUpdates = new Map();
+const rememberSmsDriver = async (input) => {
+  const prior=smsContactUpdates.get(input.phone)||Promise.resolve();
+  const task=prior.catch(()=>{}).then(()=>rememberSmsDriverUnlocked(input));
+  smsContactUpdates.set(input.phone,task);
+  try{return await task;}finally{if(smsContactUpdates.get(input.phone)===task)smsContactUpdates.delete(input.phone);}
 };
 
 const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
@@ -1574,6 +1522,16 @@ app.post(
         })
         .eq("id", conversationId);
       if (conversationError) throw conversationError;
+
+      if(remembered.detailsChanged){
+        const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').update({
+          driver_name:remembered.contact.full_name,
+          driver_company:remembered.contact.driver_company,
+          release_number:remembered.contact.last_release_number,
+          updated_at:now
+        }).eq('conversation_id',conversationId).is('departed_at',null);
+        if(arrivalError)throw arrivalError;
+      }
 
       if (remembered.reply) {
         try {
