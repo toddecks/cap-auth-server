@@ -73,7 +73,7 @@ app.get("/api/deploy-status", (_req, res) => {
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
     shippingSmsMode: "twilio-two-way-v16-first-reply-only",
-    shippingReviewMode: "disabled-shipping-takes-over",
+    shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingArrivalEditMode: "name-company-release-v1",
@@ -1591,7 +1591,8 @@ app.post("/api/shipping/send-message", async (req, res) => {
   if (!token) return res.status(401).json({ error: "Sign in to send a message." });
 
   const conversationId = String(req.body?.conversationId || "").trim();
-  const body = String(req.body?.body || "").trim();
+  const reviewRequest = req.body?.reviewRequest === true;
+  const body = reviewRequest ? require("./driver-reviews").REVIEW_BODY : String(req.body?.body || "").trim();
   const requestedClientMessageId = String(req.body?.clientMessageId || "").trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
     return res.status(400).json({ error: "The conversation identifier is invalid." });
@@ -1617,11 +1618,11 @@ app.post("/api/shipping/send-message", async (req, res) => {
       .eq("id", conversationId)
       .maybeSingle();
     if (conversationError) throw conversationError;
-    if (!conversation || conversation.status !== "open") {
+    if (!conversation || (!reviewRequest && conversation.status !== "open")) {
       return res.status(404).json({ error: "This conversation is no longer open." });
     }
 
-    const clientMessageId = /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
+    const clientMessageId = reviewRequest ? `manual-review:${conversationId}` : /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
       ? requestedClientMessageId
       : crypto.randomUUID();
     const now = new Date().toISOString();
@@ -1642,6 +1643,15 @@ app.post("/api/shipping/send-message", async (req, res) => {
       })
       .select("id")
       .single();
+    if (insertError?.code === "23505" && reviewRequest) {
+      const { data: previous, error: previousError } = await driverSupabase.from("driver_messages")
+        .select("id,delivery_status").eq("client_message_id", clientMessageId).eq("conversation_id", conversationId).maybeSingle();
+      if (previousError) throw previousError;
+      if (previous && previous.delivery_status !== "failed") {
+        return res.json({ ok: true, messageId: previous.id, alreadySent: true });
+      }
+      return res.status(409).json({ error: "A review request was already attempted. Check its delivery status before sending another message." });
+    }
     if (insertError) throw insertError;
 
     if (!isSms) return res.json({ ok: true, channel: "app", messageId: storedMessage.id });
