@@ -9,7 +9,7 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
  try{
   if(!twilio||!messagingServiceSid)throw Error('Text messaging is not configured.');
   const sent=await twilio.messages.create({to:conversation.sms_phone_e164,body:PICKUP_CHECKIN,messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
-  const result=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:'sent',provider_status_updated_at:new Date().toISOString()}).eq('id',message.id);
+  const result=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:['queued','sent','delivered','failed'].includes(sent.status)?sent.status:'queued',provider_status_updated_at:new Date().toISOString()}).eq('id',message.id);
   if(result.error)throw result.error;
   scheduleStatusSync(sent.sid);
  }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',message.id);throw error;}

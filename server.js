@@ -1529,9 +1529,9 @@ app.post(
 
       if(remembered.detailsChanged){
         const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').update({
-          driver_name:remembered.contact.full_name,
-          driver_company:remembered.contact.driver_company,
-          release_number:remembered.contact.last_release_number,
+          ...(remembered.contact.full_name ? {driver_name:remembered.contact.full_name} : {}),
+          ...(remembered.contact.driver_company ? {driver_company:remembered.contact.driver_company} : {}),
+          ...(remembered.contact.last_release_number ? {release_number:remembered.contact.last_release_number} : {}),
           updated_at:now
         }).eq('conversation_id',conversationId).is('departed_at',null);
         if(arrivalError)console.error("SMS arrival correction failed; incoming message retained:",arrivalError.message);
