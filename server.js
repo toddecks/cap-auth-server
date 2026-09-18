@@ -61,6 +61,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shiftReportAccessMode: "production-v1",
     shiftMaintenanceMode: "phone-onsite-email-v2",
     driverSignupMode: "resend-otp-v5-legacy-phone-compatible",
+    shippingOwnership: shippingOwnership.health,
     shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
@@ -1026,6 +1027,9 @@ const issueDriverShippingSession = async (biUser, shippingRole) => {
     }
   }
 
+  const { error: directoryError } = await driverSupabase.from('shipping_staff_directory').upsert({user_id:driverUser.id,email,display_name:displayName,active:true},{onConflict:'user_id'});
+  if (directoryError) throw directoryError;
+
   const { data: linkData, error: linkError } = await driverSupabase.auth.admin.generateLink({
     type: "magiclink",
     email
@@ -1584,6 +1588,8 @@ app.post(
     return res.status(204).send();
   }
 );
+
+const shippingOwnership = require('./shipping-ownership').register({app,db:driverSupabase,auth:supabase,findUser:findAuthUserByEmail,issueSession:issueDriverShippingSession,getBearerToken});
 
 app.post("/api/shipping/send-message", async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -7382,6 +7388,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
   releaseValidationWorker.start();
+  void shippingOwnership.provision();
   // Shipping takes over after the first welcome text; no automatic departure SMS.
   syncRecentQueuedTwilioMessages().catch((error) => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
