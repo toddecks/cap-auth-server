@@ -53,7 +53,8 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
-    fallFestivalMode: "signup-v1",
+    fallFestivalMode: "signup-v2",
+    formsHubMode: "recipient-access-v1",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
@@ -6621,7 +6622,9 @@ app.post("/api/fantasy-football-invite-test", async (req, res) => {
   }
 });
 
-require("./fall-festival").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
+require("./forms-hub").register(app, {auth:supabase,chart:chartSupabase,roleRows:fetchUserRoleRows,roleNames:roleNamesFromRows,recipients:{fantasy:FANTASY_FOOTBALL_ADMIN_RECIPIENTS,shift:SHIFT_REPORT_RECIPIENTS,forklift:FORKLIFT_INSPECTION_RECIPIENTS,crane:CRANE_INSPECTION_RECIPIENTS,pro:PRO_FORMS_RECIPIENTS,expansion:EXPANSION_LEAD_RECIPIENTS,maintenance:SHIFT_MAINTENANCE_RECIPIENTS}});
+
+require("./fall-festival").register(app, {db:supabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
 app.post("/api/fantasy-football-signups", async (req, res) => {
   res.set("Cache-Control", "no-store");
