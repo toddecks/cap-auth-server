@@ -13,7 +13,7 @@ function register(app,{db,sendEmail,escapeHtml,consumeAttempt}){
   res.set('Cache-Control','no-store');
   if(req.body?.website)return res.json({success:true});
   let signup;try{signup=validate(req.body)}catch(e){return res.status(400).json({error:e.message})}
-  if(!consumeAttempt(req,'fall-festival'))return res.status(429).json({error:'Too many attempts. Please try again in 15 minutes.'});
+  if(!consumeAttempt(req,'fall-festival:'+signup.employee_name.toLowerCase()))return res.status(429).json({error:'Too many attempts. Please try again in 15 minutes.'});
   if(!db)return res.status(503).json({error:'Signups are temporarily unavailable. Please try again shortly.'});
   try{
    const {data:prior,error:lookupError}=await db.from('fall_festival_signups').select('*').eq('submission_token',signup.submission_token).maybeSingle();if(lookupError)throw lookupError;
