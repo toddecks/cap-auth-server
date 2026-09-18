@@ -1,0 +1,27 @@
+'use strict';
+const{parseDetails}=require('./sms-checkin-details');
+const FIRST='The release number provided is not valid. Please verify the number and try again.';
+const SECOND='The release number provided is still not valid. Please contact your dispatch to confirm the correct release number before trying again.';
+function fresh(at,now=Date.now()){const age=now-Date.parse(at);return Number.isFinite(age)&&age>=120000&&age<=48*3600000;}
+function createWorker({db,chart,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,normalize,candidates}){
+ let busy=false,snapshot=null;const health={state:'waiting',lastChecked:null,lastIngest:null,error:null};
+ async function load(){const {data:latest,error}=await chart.from('psdata_loads_api').select('ingested_at').order('ingested_at',{ascending:false}).limit(1);if(error)throw error;const at=latest?.[0]?.ingested_at;health.lastIngest=at||null;if(!fresh(at)){health.state='waiting_for_fresh_ingest';return null;}if(snapshot?.at===at)return snapshot;
+ const rows=[];for(let offset=0;;offset+=1000){if(offset>=250000)throw Error('PS snapshot exceeds validation limit');const{data,error}=await chart.from('psdata_loads_api').select('id,poRel,cancelLoad').order('id').range(offset,offset+999);if(error)throw error;rows.push(...data);if(data.length<1000)break;}
+ const{count,error:countError}=await chart.from('psdata_loads_api').select('id',{count:'exact',head:true});if(countError)throw countError;
+ const{data:again,error:againError}=await chart.from('psdata_loads_api').select('ingested_at').order('ingested_at',{ascending:false}).limit(1);if(againError)throw againError;if(!rows.length||count!==rows.length||again?.[0]?.ingested_at!==at){health.state='ingest_in_progress';return null;}
+ const releases=new Set();for(const r of rows)if(r.cancelLoad!==true&&String(r.cancelLoad).toLowerCase()!=='true')for(const key of candidates(r.poRel))releases.add(key);if(!releases.size)return null;snapshot={at,releases};return snapshot;
+ }
+ async function send(c,source,body){const clientId='release-check:'+source.client_message_id;const{data:stored,error}=await db.from('driver_messages').insert({client_message_id:clientId,conversation_id:c.id,related_arrival_id:c.arrival_id,direction:'shipping_to_driver',sender_user_id:null,driver_phone:c.sms_phone_e164||null,body,original_body:body,original_language:'English',sent_at:new Date().toISOString(),delivery_status:c.channel==='sms'?'queued':'sent'}).select('id').single();if(error?.code==='23505')return;if(error)throw error;if(c.channel!=='sms')return;
+ try{const sent=await twilio.messages.create({to:c.sms_phone_e164,body,messagingServiceSid,statusCallback:publicBaseUrl+'/api/twilio/message-status'});const{error:updateError}=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:'queued'}).eq('id',stored.id);if(updateError)throw updateError;scheduleStatusSync(sent.sid);}catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message).slice(0,500)}).eq('id',stored.id);throw error;}}
+ async function tick(){if(busy||!db||!chart)return;busy=true;try{health.lastChecked=new Date().toISOString();const source=await load();if(!source)return;const{data:conversations,error}=await db.from('driver_conversations').select('id,release_number,visit_type,channel,sms_phone_e164,arrival_id').eq('status','open').eq('visit_type','pickup');if(error)throw error;
+ for(const c of conversations||[]){if(c.channel==='sms'&&(!twilio||!messagingServiceSid))continue;let release=normalize(c.release_number);if(!release||/^TEXT\d+$/.test(release))continue;
+ const{data:messages,error:messageError}=await db.from('driver_messages').select('client_message_id,body,created_at').eq('conversation_id',c.id).eq('direction','driver_to_shipping').gte('created_at',new Date(Date.now()-24*3600000).toISOString()).order('created_at',{ascending:false}).limit(50);if(messageError)throw messageError;
+ const message=messages.find(m=>{const parsed=normalize(parseDetails(m.body).last_release_number);return parsed&&(c.channel==='app'||parsed===release)});if(!message)continue;const originalRelease=release;if(c.channel==='app')release=normalize(parseDetails(message.body).last_release_number);
+ // Recheck the current record immediately before claiming to avoid replying to a corrected number.
+ const{data:current,error:currentError}=await db.from('driver_conversations').select('release_number,status,visit_type').eq('id',c.id).single();if(currentError)throw currentError;if(current.status!=='open'||current.visit_type!=='pickup'||normalize(current.release_number)!==originalRelease)continue;
+ const valid=source.releases.has(release);const{data:attempt,error:claimError}=await db.rpc('claim_driver_release_check',{p_key:message.client_message_id,p_conversation:c.id,p_release:release,p_outcome:valid?'valid':'invalid',p_ingested:source.at});if(claimError)throw claimError;if(!valid&&attempt>0&&attempt<=2)await send(c,message,attempt===1?FIRST:SECOND);
+ }health.state='ready';health.error=null;}catch(error){health.state='unavailable';health.error=String(error.message||error);console.error('Release validation:',health.error);}finally{busy=false;}}
+ function start(){void tick();const timer=setInterval(()=>void tick(),60000);timer.unref?.();}
+ return{start,tick,health};
+}
+module.exports={createWorker,fresh,FIRST,SECOND};

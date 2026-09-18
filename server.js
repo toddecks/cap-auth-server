@@ -78,6 +78,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
+    shippingReleaseValidation: releaseValidationWorker.health,
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
@@ -7374,10 +7375,13 @@ const driverReviewWorker = require("./driver-reviews").createReviewWorker({
   publicBaseUrl: TWILIO_PUBLIC_BASE_URL, scheduleStatusSync: scheduleTwilioStatusSync
 });
 
+const releaseValidationWorker=require('./release-validation').createWorker({db:driverSupabase,chart:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync: scheduleTwilioStatusSync,normalize:normalizeShippingRelease,candidates:psReleaseCandidates});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
+  releaseValidationWorker.start();
   // Shipping takes over after the first welcome text; no automatic departure SMS.
   syncRecentQueuedTwilioMessages().catch((error) => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
