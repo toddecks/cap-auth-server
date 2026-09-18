@@ -53,6 +53,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
+    fallFestivalMode: "signup-v1",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
@@ -6619,6 +6620,8 @@ app.post("/api/fantasy-football-invite-test", async (req, res) => {
     return res.status(502).json({ error: error?.message || "The fantasy invite test could not be sent." });
   }
 });
+
+require("./fall-festival").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
 app.post("/api/fantasy-football-signups", async (req, res) => {
   res.set("Cache-Control", "no-store");
