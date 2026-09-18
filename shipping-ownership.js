@@ -1,5 +1,5 @@
 'use strict';
-const names=[['kayleigh@coilsteelprocessing.com','Kayleigh'],['nicole@coilsteelprocessing.com','Nicole'],['jplace@coilsteelprocessing.com','Jplace']];
+const names=[['kayleigh@coilsteelprocessing.com','Kayleigh'],['nicole@coilsteelprocessing.com','Nicole'],['jplace@coilsteelprocessing.com','Jplace'],['tino@coilsteelprocessing.com','Tino']];
 function register({app,db,auth,findUser,issueSession,getBearerToken}) {
  const health={mode:'shared-inbox-v1',accounts:'pending',error:null};
  async function provision(){try{for(const[email,name]of names){const{data:done,error:doneError}=await db.from('shipping_staff_provisioning').select('email').eq('email',email).maybeSingle();if(doneError)throw doneError;if(done)continue;

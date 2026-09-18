@@ -62,6 +62,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shiftMaintenanceMode: "phone-onsite-email-v2",
     driverSignupMode: "resend-otp-v5-legacy-phone-compatible",
     shippingOwnership: shippingOwnership.health,
+    shippingNativeAccess: 'staff-email-code-v1',
     shippingAuthMode: "bi-master-v2-session-dedupe",
     driverSignupConfigured: Boolean(
       process.env.RESEND_API_KEY
@@ -1113,6 +1114,27 @@ app.post("/api/shipping/auth/session", async (req, res) => {
     console.error("BI-master Shipping session failed:", error?.message || error);
     return res.status(500).json({ error: "We could not establish the Shipping session. Try again shortly." });
   }
+});
+
+app.post('/api/shipping/auth/app-code', async (req,res) => {
+  res.set('Cache-Control','no-store');
+  const email=String(req.body?.email||'').trim().toLowerCase();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({error:'Enter your work email address.'});
+  if(!consumeShippingAuthAttempt(req,'staff-app:'+email))return res.status(429).json({error:'Too many requests. Wait 15 minutes and try again.'});
+  try {
+    const user=await findAuthUserByEmail(supabase,email);
+    const role=await resolveBiShippingRole(user);
+    if(!user||!role)return res.status(403).json({error:'This account does not have Shipping access.'});
+    if(!RESEND_API_KEY||!SHIPPING_AUTH_FROM_EMAIL||!driverSupabase)throw Error('Email sign-in is not configured.');
+    await issueDriverShippingSession(user,role);
+    const {data,error}=await driverSupabase.auth.admin.generateLink({type:'magiclink',email});
+    if(error)throw error;
+    const code=String(data?.properties?.email_otp||'');
+    if(!/^\d{6,10}$/.test(code))throw Error('Could not create a sign-in code.');
+    const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:SHIPPING_AUTH_FROM_EMAIL,to:[email],subject:'Your CSP Shipping sign-in code',html:`<h2>Sign in to CSP Shipping</h2><p>Enter this code in the CSP Driver app:</p><p style="font-size:32px;font-weight:bold;letter-spacing:6px">${code}</p><p>If you did not request this code, you can ignore this email.</p>`})});
+    if(!response.ok)throw Error('The sign-in email could not be sent.');
+    return res.json({verificationType:'magiclink',verificationCodeLength:code.length,message:'Check your work email and enter the sign-in code.'});
+  }catch(error){console.error('Shipping app code:',error.message);return res.status(500).json({error:'Could not send the sign-in code. Please try again.'});}
 });
 
 app.post("/api/shipping/auth/magic-link", async (req, res) => {
