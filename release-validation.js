@@ -2,10 +2,10 @@
 const{parseDetails}=require('./sms-checkin-details');
 const FIRST='The release number provided is not valid. Please verify the number and try again.';
 const SECOND='The release number provided is still not valid. Please contact your dispatch to confirm the correct release number before trying again.';
-function fresh(at,now=Date.now()){const age=now-Date.parse(at);return Number.isFinite(age)&&age>=120000&&age<=48*3600000;}
+function fresh(at,now=Date.now()){const age=now-Date.parse(at);return Number.isFinite(age)&&age>=120000;}
 function createWorker({db,chart,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,normalize,candidates}){
  let busy=false,snapshot=null;const health={state:'waiting',lastChecked:null,lastIngest:null,error:null};
- async function load(){const {data:latest,error}=await chart.from('psdata_loads_api').select('ingested_at').order('ingested_at',{ascending:false}).limit(1);if(error)throw error;const at=latest?.[0]?.ingested_at;health.lastIngest=at||null;if(!fresh(at)){health.state='waiting_for_fresh_ingest';return null;}if(snapshot?.at===at)return snapshot;
+ async function load(){const {data:latest,error}=await chart.from('psdata_loads_api').select('ingested_at').order('ingested_at',{ascending:false}).limit(1);if(error)throw error;const at=latest?.[0]?.ingested_at;health.lastIngest=at||null;if(!fresh(at)){health.state='waiting_for_settled_ingest';return null;}if(snapshot?.at===at)return snapshot;
  const rows=[];for(let offset=0;;offset+=1000){if(offset>=250000)throw Error('PS snapshot exceeds validation limit');const{data,error}=await chart.from('psdata_loads_api').select('id,poRel,cancelLoad').order('id').range(offset,offset+999);if(error)throw error;rows.push(...data);if(data.length<1000)break;}
  const{count,error:countError}=await chart.from('psdata_loads_api').select('id',{count:'exact',head:true});if(countError)throw countError;
  const{data:again,error:againError}=await chart.from('psdata_loads_api').select('ingested_at').order('ingested_at',{ascending:false}).limit(1);if(againError)throw againError;if(!rows.length||count!==rows.length||again?.[0]?.ingested_at!==at){health.state='ingest_in_progress';return null;}
