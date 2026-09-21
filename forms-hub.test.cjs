@@ -8,3 +8,19 @@ test('authorized export reads beyond first 1000 rows, unauthorized export denied
  await handler({params:{id:'fall-festival'},formsUser:{email:'unrelated@csp.com'},formsRoles:[]},res);assert.equal(res.code,403);assert.equal(queries,0);
  res.code=200;await handler({params:{id:'fall-festival'},formsUser:{email:'lindsey@coilsteelprocessing.com'},formsRoles:[]},res);assert.equal(res.code,200);assert(res.value.includes('Person 1200'));assert.equal(queries,3);
 });
+test('Kim can list and export Fall Festival without access to other forms',async()=>{
+ const routes={},queried=[];
+ const db={from(table){queried.push(table);const q={select(){return q},eq(){return q},lte(){return q},order(){return q},range(){return q},then(resolve){return Promise.resolve({data:[{employee_name:'Test attendee'}],count:1}).then(resolve)}};return q}};
+ register({get(path,...handlers){routes[path]=handlers}},{auth:db,chart:db,roleRows:async()=>[],roleNames:x=>x,recipients:{fantasy:[],shift:[],forklift:[],crane:[],pro:[],expansion:[],maintenance:[]}});
+ const req={formsUser:{email:'Kim@coilsteelprocessing.com'},formsRoles:[]};
+ const res={code:200,set(){},status(n){this.code=n;return this},json(v){this.value=v},send(v){this.value=v}};
+ await routes['/api/forms-hub'].at(-1)(req,res);
+ assert.deepEqual(res.value.forms.map(f=>f.id),['fall-festival']);
+ await routes['/api/forms-hub/:id.csv'].at(-1)({...req,params:{id:'fall-festival'}},res);
+ assert.equal(res.code,200);assert(res.value.includes('Test attendee'));
+ const readCount=queried.length;
+ await routes['/api/forms-hub/:id.csv'].at(-1)({...req,params:{id:'todd-requests'}},res);
+ assert.equal(res.code,403);assert.equal(queried.length,readCount);
+ await routes['/api/forms-hub/:id.csv'].at(-1)({...req,formsUser:{email:'kim@coilsteelprocessing.com.evil'},params:{id:'fall-festival'}},res);
+ assert.equal(res.code,403);assert.equal(queried.length,readCount);
+});

@@ -54,7 +54,7 @@ app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
     fallFestivalMode: "signup-v2",
-    formsHubMode: "recipient-access-v1",
+    formsHubMode: "recipient-access-v2",
     roleUpdateMode: "hr-admin-v1",
     formSubmissionMode: "idempotent-v1",
     shiftReportDashboardMode: "current-week-shifts-v5",
