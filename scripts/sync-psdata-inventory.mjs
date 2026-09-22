@@ -20,6 +20,8 @@ const config = {
   batchSize: Math.min(1000, Math.max(50, Number(process.env.INVENTORY_SYNC_BATCH_SIZE || 500) || 500)),
   requestTimeoutMs: Math.max(10000, Number(process.env.PSDSTEEL_REQUEST_TIMEOUT_MS || 120000) || 120000),
   requestAttempts: Math.min(5, Math.max(1, Number(process.env.PSDSTEEL_REQUEST_ATTEMPTS || 3) || 3)),
+  supabaseRequestTimeoutMs: Math.max(10000, Number(process.env.INVENTORY_DATABASE_TIMEOUT_MS || 60000) || 60000),
+  supabaseRequestAttempts: Math.min(5, Math.max(1, Number(process.env.INVENTORY_DATABASE_ATTEMPTS || 5) || 5)),
   minimumActiveTags: Math.max(1, Number(process.env.INVENTORY_SYNC_MIN_ACTIVE_TAGS || 1000) || 1000),
   minimumPreviousRatio: Math.min(
     1,
@@ -78,10 +80,13 @@ const findAuthToken = (payload, depth = 0) => {
 };
 
 const requestJson = async (url, options = {}, label = "Request") => {
+  const databaseRequest = label.startsWith("Supabase ");
+  const attempts = databaseRequest ? config.supabaseRequestAttempts : config.requestAttempts;
+  const timeoutMs = databaseRequest ? config.supabaseRequestTimeoutMs : config.requestTimeoutMs;
   let lastError;
-  for (let attempt = 1; attempt <= config.requestAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       const text = await response.text();
@@ -96,10 +101,17 @@ const requestJson = async (url, options = {}, label = "Request") => {
       }
       return { body, headers: response.headers, status: response.status };
     } catch (error) {
-      lastError = error;
+      // Include the stage without logging request URLs, headers, or credentials.
+      const reason = controller.signal.aborted
+        ? `timed out after ${timeoutMs / 1000}s`
+        : (error?.message || "request failed");
+      lastError = new Error(`${label}: ${reason} (attempt ${attempt}/${attempts})`, { cause: error });
       const retryable = error?.retryable !== false;
-      if (!retryable || attempt === config.requestAttempts) throw error;
-      await sleep(attempt * 2000);
+      if (!retryable || attempt === attempts) throw lastError;
+      const delayMs = databaseRequest ? Math.min(120000, 15000 * 2 ** (attempt - 1)) : attempt * 2000;
+      clearTimeout(timer);
+      console.warn(`${lastError.message}; retrying in ${delayMs / 1000}s.`);
+      await sleep(delayMs);
     } finally {
       clearTimeout(timer);
     }
@@ -212,6 +224,7 @@ const getCurrentActiveCount = async () => {
   const { headers } = await requestJson(
     `${config.supabaseUrl}/rest/v1/psdata_cust_inv?status=eq.A&select=tag_number`,
     {
+      method: "HEAD",
       headers: supabaseHeaders({ Prefer: "count=exact", Range: "0-0" })
     },
     "Supabase active-count check"
@@ -320,6 +333,8 @@ const main = async () => {
   required("SUPABASE_SERVICE_ROLE_KEY", config.supabaseServiceKey);
 
   console.log(`Starting ${config.dryRun ? "dry-run " : ""}inventory synchronization.`);
+  console.log("Checking Supabase availability and current active inventory count.");
+  const previousActiveCount = await getCurrentActiveCount();
   const rows = await fetchCompleteSnapshot();
   const snapshotAt = new Date().toISOString();
   const activeCount = rows.filter((row) => row.status === "A").length;
@@ -330,7 +345,6 @@ const main = async () => {
     counts[row.status] = (counts[row.status] || 0) + 1;
     return counts;
   }, {});
-  const previousActiveCount = await getCurrentActiveCount();
 
   console.log(`Snapshot received: ${rows.length.toLocaleString()} unique tags`);
   console.log(`Active tags in snapshot: ${activeCount.toLocaleString()}`);
