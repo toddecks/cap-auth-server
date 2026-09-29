@@ -81,6 +81,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingReleaseValidation: releaseValidationWorker.health,
+    shippingStaffCheckinMode: "staff-verified-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
@@ -1877,118 +1878,10 @@ app.post("/api/shipping/send-photo", async (req, res) => {
   }
 });
 
-app.post("/api/shipping/add-sms-arrival", async (req, res) => {
-  res.set("Cache-Control", "no-store");
-  if (!driverSupabase) {
-    return res.status(503).json({ error: "The SMS arrivals queue is not configured." });
-  }
+const staffCheckinHandler = require('./staff-checkin').createHandler({db:driverSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
+app.post('/api/shipping/staff-check-in', staffCheckinHandler);
+app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
-  const token = getBearerToken(req);
-  const conversationId = String(req.body?.conversationId || "").trim();
-  if (!token) return res.status(401).json({ error: "Sign in to add a driver arrival." });
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId)) {
-    return res.status(400).json({ error: "The conversation identifier is invalid." });
-  }
-
-  try {
-    const { data: userData, error: userError } = await driverSupabase.auth.getUser(token);
-    const staffUser = userData?.user;
-    const staffRole = String(staffUser?.app_metadata?.csp_role || "").trim().toLowerCase();
-    if (userError || !staffUser?.id) {
-      return res.status(401).json({ error: "Your shipping session has expired. Sign in again." });
-    }
-    if (!new Set(["shipping", "admin"]).has(staffRole)) {
-      return res.status(403).json({ error: "CSP Shipping access is required to add an arrival." });
-    }
-
-    const { data: conversation, error: conversationError } = await driverSupabase
-      .from("driver_conversations")
-      .select("id,status,channel,sms_phone_e164,facility_id,release_number,visit_type")
-      .eq("id", conversationId)
-      .maybeSingle();
-    if (conversationError) throw conversationError;
-    if (!conversation || conversation.status !== "open" || conversation.channel !== "sms") {
-      return res.status(404).json({ error: "This SMS check-in is no longer available." });
-    }
-
-    const { data: contact, error: contactError } = await driverSupabase
-      .from("driver_sms_contacts")
-      .select("full_name,driver_company,onboarding_step,last_release_number,visit_type")
-      .eq("phone_e164", conversation.sms_phone_e164)
-      .maybeSingle();
-    if (contactError) throw contactError;
-    const visitType = conversation.visit_type || contact?.visit_type;
-    if (!['pickup','dropoff'].includes(visitType)) return res.status(409).json({error:'Choose pick-up or drop-off in Edit contact first.'});
-    if (visitType === 'pickup' && (
-      !contact
-      || contact.onboarding_step !== "ready"
-      || !String(contact.full_name || "").trim()
-      || !String(contact.driver_company || "").trim()
-      || !String(conversation.release_number || contact.last_release_number || "").trim()
-    )) {
-      return res.status(409).json({ error: "Wait until the driver provides their name, company, and release number." });
-    }
-
-    let releaseNumber = String(visitType === 'dropoff' ? 'Drop-off' : conversation.release_number || contact.last_release_number).trim();
-    let driverCompany = String(contact?.driver_company || 'Not provided').trim();
-    if (/^\d{4,}$/.test(driverCompany) && /^[A-Za-z][A-Za-z .&-]*$/.test(releaseNumber)) {
-      [releaseNumber, driverCompany] = [driverCompany, releaseNumber];
-      await Promise.all([
-        driverSupabase.from("driver_sms_contacts").update({
-          driver_company: driverCompany,
-          last_release_number: releaseNumber,
-          updated_at: new Date().toISOString()
-        }).eq("phone_e164", conversation.sms_phone_e164),
-        driverSupabase.from("driver_conversations").update({ release_number: releaseNumber })
-          .eq("id", conversationId)
-      ]);
-    }
-    const sendInstructions = async (arrivalId) => {
-      try {
-        await require('./checkin-instructions').sendCheckinInstructions({db:driverSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync,conversation,arrivalId,staffId:staffUser.id,visitType});
-        return null;
-      } catch(error) {
-        console.error('Check-in instructions failed:',error?.message||error);
-        return 'Driver checked in, but the instructions text could not be confirmed. Check the conversation before sending it manually.';
-      }
-    };
-    const { data: existing, error: existingError } = await driverSupabase
-      .from("driver_sms_arrivals")
-      .select("id")
-      .eq("conversation_id", conversationId)
-      .is("departed_at", null)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existing?.id) {
-      const { error: normalizeExistingError } = await driverSupabase
-        .from("driver_sms_arrivals")
-        .update({ release_number: releaseNumber, driver_company: driverCompany, updated_at: new Date().toISOString() })
-        .eq("id", existing.id);
-      if (normalizeExistingError) throw normalizeExistingError;
-      return res.json({ ok: true, arrivalId: existing.id, alreadyAdded: true, warning: await sendInstructions(existing.id) });
-    }
-
-    const { data: arrival, error: arrivalError } = await driverSupabase
-      .from("driver_sms_arrivals")
-      .insert({
-        phone_e164: conversation.sms_phone_e164,
-        conversation_id: conversationId,
-        facility_id: conversation.facility_id,
-        release_number: releaseNumber,
-        driver_name: String(contact?.full_name || conversation.sms_phone_e164).trim(),
-        visit_type: visitType,
-        driver_company: driverCompany,
-        added_by: staffUser.id
-      })
-      .select("id")
-      .single();
-    if (arrivalError) throw arrivalError;
-    return res.json({ ok: true, arrivalId: arrival.id, alreadyAdded: false, warning: await sendInstructions(arrival.id) });
-  } catch (error) {
-    console.error("SMS driver arrival add failed:", error?.message || error);
-    return res.status(500).json({ error: "The text check-in could not be added to Driver Arrivals." });
-  }
-});
 
 app.post("/api/shipping/edit-arrival", async (req, res) => {
   res.set("Cache-Control", "no-store");
