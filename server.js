@@ -82,7 +82,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingTranslation: driverTranslationWorker.health,
-    shippingCheckinMediaMode: "prosperity-map-v1",
+    shippingCheckinMediaMode: "ray-ppe-and-map-v2",
     shippingStaffCheckinMode: "staff-verified-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
