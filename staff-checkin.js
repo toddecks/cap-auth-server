@@ -16,7 +16,7 @@ function createHandler(deps) {
    if(!['shipping','admin'].includes(staff.app_metadata?.csp_role))return res.status(403).json({error:'Shipping access is required.'});
    const {data:c,error:ce}=await db.from('driver_conversations').select('*').eq('id',id).single();
    if(ce||!c||c.status!=='open')return res.status(409).json({error:'This conversation is no longer open.'});
-   if(c.visit_type!=='pickup'||!String(c.release_number||'').trim()||/^(TEXT\d+|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
+   if(c.visit_type!=='pickup'||!String(c.release_number||'').trim()||/^(TEXT\s*\d*|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
     const {data:contact,error:e}=await db.from('driver_sms_contacts').select('*').eq('phone_e164',c.sms_phone_e164).single();

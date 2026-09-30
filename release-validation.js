@@ -5,11 +5,22 @@ const VERIFY = 'Thank you! Our Shipping Office is verifying your release number.
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
+const ASSIST_MS = 5 * 60 * 1000;
+const CHECKIN_FOLLOWUP_MS = 60 * 1000;
+const CHECKOUT_MS = 30 * 60 * 1000;
+const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
+const SOON = 'Our shipping team will be with you shortly.';
+const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
+const REMAIN = 'Please remain in your truck. A shipping team member will assist you shortly.';
+const officeClosed = timestamp => {
+  const hour = Number(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',hour:'2-digit',hourCycle:'h23'}).format(new Date(timestamp)));
+  return hour >= 18 || hour < 6;
+};
 const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
-  const health = {mode:'release-verification-wait-v2',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v3',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -38,15 +49,34 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     // Re-read state just before dispatch so staff activity cancels pending replies.
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || !validPickup(c)) return;
-    const checked = await result(db.from('shipping_staff_checkins').select('conversation_id').eq('conversation_id',id).maybeSingle());
-    if(checked) return;
+    const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
     const messages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
+    if(checked) {
+      // Only new staff check-ins receive this automation; no retroactive messages or checkouts.
+      if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
+      if(now() - Date.parse(checked.checked_in_at) >= CHECKOUT_MS) {
+        await result(db.rpc('shipping_auto_checkout', {target_conversation_id:id}));
+        return;
+      }
+      const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${id}`);
+      if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
+        && now() - Date.parse(instructions.sent_at) >= CHECKIN_FOLLOWUP_MS
+        && !messages.some(m => m.client_message_id === `release-wait:remain:${id}`)) {
+        await send(c,'remain',REMAIN);
+      }
+      return;
+    }
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = messages.find(m => m.client_message_id === `release-wait:verify:${id}`);
-    if(!initial) return send(c,'verify',VERIFY);
+    const closed = messages.find(m => m.client_message_id === `release-wait:closed:${id}`);
+    if(closed) return;
+    if(!initial) return officeClosed(c.created_at) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
-    if(now() - Date.parse(initial.sent_at) >= WAIT_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${id}`)) {
+    if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${id}`)) {
       await send(c,'assist',ASSIST);
+    } else if(now() - Date.parse(initial.sent_at) >= WAIT_MS && now() - Date.parse(initial.sent_at) < ASSIST_MS
+      && !messages.some(m => m.client_message_id === `release-wait:soon:${id}`)) {
+      await send(c,'soon',SOON);
     }
   }
   async function tick() {
@@ -70,4 +100,4 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
   }
   return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),5000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
-module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,validPickup};
+module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};
