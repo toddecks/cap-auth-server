@@ -79,6 +79,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingSmsMode: "twilio-two-way-v19-dropoff-signs",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
+    shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingTranslation: driverTranslationWorker.health,
@@ -2152,21 +2153,13 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
       if (closeSmsError) throw closeSmsError;
 
       const smsConversationId = conversationId || smsArrival.conversation_id;
-      if (smsConversationId) {
-        const { error: closeConversationError } = await driverSupabase
-          .from("driver_conversations")
-          .update({ status: "closed", shipping_last_read_at: closeTime.toISOString() })
-          .eq("id", smsConversationId)
-          .eq("channel", "sms")
-          .eq("status", "open");
-        if (closeConversationError) throw closeConversationError;
-      }
+
 
       return res.json({
         ok: true,
         arrivalId,
         closedAt: closeTime.toISOString(),
-        conversationClosed: Boolean(smsConversationId)
+        conversationClosed: false
       });
     }
 
@@ -2203,22 +2196,13 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
       }, { onConflict: "client_event_id", ignoreDuplicates: true });
     if (exitError) throw exitError;
 
-    if (conversationId) {
-      const { error: conversationError } = await driverSupabase
-        .from("driver_conversations")
-        .update({ status: "closed", shipping_last_read_at: closeTime.toISOString() })
-        .eq("id", conversationId)
-        .eq("user_id", arrival.user_id)
-        .eq("facility_id", arrival.facility_id)
-        .eq("status", "open");
-      if (conversationError) throw conversationError;
-    }
+
 
     return res.json({
       ok: true,
       arrivalId,
       closedAt: closeTime.toISOString(),
-      conversationClosed: Boolean(conversationId)
+      conversationClosed: false
     });
   } catch (error) {
     console.error("Shipping stale visit close failed:", error?.message || error);
