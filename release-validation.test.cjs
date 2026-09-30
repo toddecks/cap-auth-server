@@ -39,3 +39,15 @@ test('old visits and placeholder release numbers are excluded',async()=>{
 test('failed initial message does not start a follow-up',async()=>{
  const f=fixture();f.options.twilio.messages.create=async()=>{throw Error('Test delivery failure')};await f.worker.tick();f.advance(180000);await f.worker.tick();assert.equal(f.tables.driver_messages.length,1);assert.equal(f.tables.driver_messages[0].delivery_status,'failed');
 });
+
+for(const placeholder of ['Text 2000',' TEXT 2000 ', 'text\t2000','TEXT2000','Text'])test('SMS placeholder '+JSON.stringify(placeholder)+' waits for a real release',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].release_number=placeholder;
+ await f.worker.tick();f.advance(180001);await f.worker.tick();
+ assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.length,0);
+ f.tables.driver_conversations[0].release_number='AB2000';
+ await f.worker.tick();await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY]);
+});
+test('premature acknowledgement cannot schedule assistance for an SMS placeholder',async()=>{
+ const f=fixture();await f.worker.tick();f.tables.driver_conversations[0].release_number='Text 2000';
+ f.advance(180001);await f.worker.tick();assert.equal(f.sends.length,1);
+});

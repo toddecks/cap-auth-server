@@ -6,10 +6,10 @@ const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
 const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
-  Boolean(String(c.release_number || '').trim()) && !/^(TEXT\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
+  Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
-  const health = {mode:'release-verification-wait-v1',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'release-verification-wait-v2',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
