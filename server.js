@@ -81,6 +81,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingArrivalLogMode: "appointment-aware-v1",
     shippingReleaseValidation: releaseValidationWorker.health,
+    shippingTranslation: driverTranslationWorker.health,
     shippingStaffCheckinMode: "staff-verified-v1",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
@@ -7298,11 +7299,14 @@ const driverReviewWorker = require("./driver-reviews").createReviewWorker({
 
 const releaseValidationWorker=require('./release-validation').createWorker({db:driverSupabase,chart:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync: scheduleTwilioStatusSync,normalize:normalizeShippingRelease,candidates:psReleaseCandidates});
 
+const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
   releaseValidationWorker.start();
+  driverTranslationWorker.start();
   void shippingOwnership.provision();
   // Shipping takes over after the first welcome text; no automatic departure SMS.
   syncRecentQueuedTwilioMessages().catch((error) => {
