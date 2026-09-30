@@ -58,7 +58,7 @@ test('office hours use Eastern time at exact boundaries and in winter',()=>{
  for(const [at,closed] of [['2026-10-01T09:59:59Z',true],['2026-10-01T10:00:00Z',false],['2026-10-01T21:59:59Z',false],['2026-10-01T22:00:00Z',true],['2026-12-01T10:59:59Z',true],['2026-12-01T11:00:00Z',false],['2026-10-04T22:00:00Z',true]])assert.equal(officeClosed(at),closed,at);
 });
 test('after-hours pickup gets one closed reply and no daytime reminders',async()=>{
- const f=fixture();f.tables.driver_conversations[0].created_at='2026-10-01T09:30:00Z';await f.worker.tick();f.advance(301000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
+ const f=fixture();f.advance(5*60*60*1000);await f.worker.tick();f.advance(301000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
 });
 function checkedFixture(){const f=fixture();f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:00:00Z'});f.tables.driver_messages.push({client_message_id:'staff-pickup-checkin:visit-1',conversation_id:'visit-1',sent_at:'2026-10-01T17:00:00Z',delivery_status:'sent',sender_user_id:'staff',direction:'shipping_to_driver'});return f;}
 test('one-minute pickup followup and checkout only at 30 minutes from staff checkin',async()=>{
@@ -72,3 +72,5 @@ for(const action of ['closed','dropoff','failed','old'])test('no checkin followu
  const f=checkedFixture();if(action==='closed')f.tables.driver_conversations[0].status='closed';if(action==='dropoff')f.tables.driver_conversations[0].visit_type='dropoff';if(action==='failed')f.tables.driver_messages[0].delivery_status='failed';if(action==='old')f.tables.shipping_staff_checkins[0].checked_in_at='2026-09-29T17:00:00Z';f.advance(60000);await f.worker.tick();assert.equal(f.sends.length,0);
 });
 test('restart after five minutes sends assistance without two simultaneous reminders',async()=>{const f=fixture();await f.worker.tick();f.advance(310000);await createWorker(f.options).tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY,ASSIST]);});
+
+test('a new staff check-in on an older open conversation still receives its timer',async()=>{const f=checkedFixture();f.tables.driver_conversations[0].created_at='2026-09-29T17:00:00Z';f.advance(1800000);await f.worker.tick();assert.equal(f.checkouts.length,1);});

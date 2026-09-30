@@ -66,11 +66,12 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
       }
       return;
     }
+    if(Date.parse(c.created_at) < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = messages.find(m => m.client_message_id === `release-wait:verify:${id}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${id}`);
     if(closed) return;
-    if(!initial) return officeClosed(c.created_at) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
+    if(!initial) return officeClosed(now()) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
     if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${id}`)) {
       await send(c,'assist',ASSIST);
@@ -85,9 +86,8 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     health.state = 'running'; health.error = null;
     try {
       // Do not send retroactive replies to old visits when this feature is deployed.
-      const since = new Date(Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)).toISOString();
       for(let offset=0;;offset+=100) {
-        const rows = await result(db.from('driver_conversations').select('id').eq('status','open').eq('visit_type','pickup').gte('created_at',since).order('created_at').range(offset,offset+99));
+        const rows = await result(db.from('driver_conversations').select('id').eq('status','open').eq('visit_type','pickup').order('created_at').range(offset,offset+99));
         for(const row of rows) {
           try { await processConversation(row.id); }
           catch(error) {health.error=String(error.message || error); console.error('Release wait reply failed:',health.error);}
