@@ -76,7 +76,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v21-repeat-visits",
+    shippingSmsMode: "twilio-two-way-v22-phone-test",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -1578,6 +1578,15 @@ app.post(
           updated_at:now
         }).eq('conversation_id',conversationId).is('departed_at',null);
         if(arrivalError)console.error("SMS arrival correction failed; incoming message retained:",arrivalError.message);
+      }
+
+      // Explicit, expiring tests are scoped to one phone and do not change recorded arrival times.
+      if(require('./driver-visit-flow').visitType(textBody)==='dropoff') {
+        try {
+          const {data:simulatedAt,error:testError}=await driverSupabase.rpc('shipping_consume_dropoff_test',{target_phone:from,message_id:messageSid});
+          if(testError)throw testError;
+          if(simulatedAt)remembered.reply=require('./driver-visit-flow').dropoffReply(simulatedAt);
+        } catch(testError) { console.error('Drop-off test lookup failed:',testError.message); }
       }
 
       if (remembered.reply) {
