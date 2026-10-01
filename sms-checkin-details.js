@@ -5,7 +5,7 @@ const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|d
 function parseDetails(text, existing={}) {
  const found={},rest=[];
  // Labels are accepted in any order, even when separated only by spaces.
- const marked=clean(text).replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
+ const marked=clean(text).replace(/\.{2,}|\.\s+(?=(?:release|load|name|driver|carrier|company)\b)/gi, ', ').replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
  for(let part of marked.split(/[\n,;|]+/).map(clean).filter(Boolean)){
   part=part.replace(/^\d[.)]\s*/,'');
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
@@ -31,7 +31,7 @@ function parseDetails(text, existing={}) {
    continue;
   }
   if(chatPattern.test(part))continue;
-  if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){1,3}$/u.test(part))found.full_name=part.slice(0,120);
+  if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(part))found.full_name=part.slice(0,120);
   else if(!found.driver_company&&!existing.driver_company&&(found.full_name||existing.full_name)&&/^[\p{L}\d .&'’-]{2,160}$/u.test(part))found.driver_company=part;
  }
  return found;
@@ -49,7 +49,13 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
  let reply='';
  if(!type&&fresh)reply=flow.TYPE_PROMPT;
- else if(type&&(fresh||type!==previousType))reply=type==='pickup'?flow.PICKUP_PROMPT:flow.dropoffReply(started);
+ else if(type&&(fresh||type!==previousType)) {
+  if(type==='dropoff')reply=flow.dropoffReply(started);
+  else {
+   const missing=[!contact.full_name&&'name',!contact.last_release_number&&'release number',!contact.driver_company&&'carrier name'].filter(Boolean);
+   if(missing.length)reply=`Please reply with your ${missing.length===3?missing.slice(0,2).join(', ')+', and '+missing[2]:missing.join(' and ')}.`;
+  }
+ }
  return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed,visitType:type};
 }
 module.exports={parseDetails,nextCheckin};

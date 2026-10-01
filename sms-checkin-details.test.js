@@ -13,3 +13,20 @@ test('unclear message asks for clarification instead of accepting a release',()=
 test('visit-type prompt is sent once, without repeated correction instructions',()=>{const first=nextCheckin({body:'Hi',conversationCreated:true});assert.match(first.reply,/PICKUP or DROPOFF/);assert.equal(nextCheckin({existing:first.contact,body:'Thanks'}).reply,'');});
 
 test('first text asks for visit type even if it already contains all details',()=>{const r=nextCheckin({body:'Kyle Huston, 7666373, Huston Trucking',conversationCreated:true});assert.match(r.reply,/PICKUP or DROPOFF/);assert.equal(nextCheckin({existing:r.contact,body:'Release: 9999999'}).reply,'');});
+
+test('initial punctuated details are retained after pickup choice',()=>{
+ const first=nextCheckin({body:'Dave..center express. Release 1321851',conversationCreated:true});
+ assert.equal(first.contact.full_name,'Dave');assert.equal(first.contact.driver_company,'center express');assert.equal(first.contact.last_release_number,'1321851');
+ const second=nextCheckin({existing:first.contact,body:'Pick up'});
+ assert.equal(second.contact.onboarding_step,'ready');assert.equal(second.reply,'');
+});
+test('complete pickup first message never asks to repeat details',()=>{
+ const r=nextCheckin({body:'Pickup; Dave, Center Express, Release 1321851',conversationCreated:true});
+ assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.reply,'');
+});
+test('pickup selection asks only missing fields',()=>{
+ for(const [body,prompt] of [['Name: Dave; Release: 1321851','Please reply with your carrier name.'],['Carrier: Center Express; Release: 1321851','Please reply with your name.'],['Name: Dave; Carrier: Center Express','Please reply with your release number.']]){
+ const first=nextCheckin({body,conversationCreated:true});
+ assert.equal(nextCheckin({existing:first.contact,body:'Pick up'}).reply,prompt);
+ }
+});
