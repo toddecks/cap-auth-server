@@ -1,6 +1,7 @@
 'use strict';
 
 // This worker acknowledges receipt only. Release verification belongs to Shipping.
+const session=require('./visit-session');
 const VERIFY = 'Thank you! Our Shipping Office is verifying your release number. We’ll send you further instructions shortly.';
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
@@ -20,13 +21,13 @@ const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
-  const health = {mode:'pickup-followups-v3',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v4',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
     const r = await db.from('driver_messages').insert({
-      client_message_id:`release-wait:${kind}:${c.id}`, conversation_id:c.id,
+      client_message_id:`release-wait:${kind}:${session.key(c)}`, conversation_id:c.id,
       sender_user_id:null, direction:'shipping_to_driver', driver_phone:c.sms_phone_e164,
       body, original_body:body, original_language:'English', sent_at:new Date(now()).toISOString(),
       delivery_status:c.channel === 'sms' ? 'queued' : 'sent'
@@ -50,33 +51,34 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || !validPickup(c)) return;
     const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
-    const messages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
-    if(checked) {
+    const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
+    const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
+    if(session.currentCheckin(c,checked)) {
       // Only new staff check-ins receive this automation; no retroactive messages or checkouts.
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
       if(now() - Date.parse(checked.checked_in_at) >= CHECKOUT_MS) {
         await result(db.rpc('shipping_auto_checkout', {target_conversation_id:id}));
         return;
       }
-      const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${id}`);
+      const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
         && now() - Date.parse(instructions.sent_at) >= CHECKIN_FOLLOWUP_MS
-        && !messages.some(m => m.client_message_id === `release-wait:remain:${id}`)) {
+        && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
         await send(c,'remain',REMAIN);
       }
       return;
     }
-    if(Date.parse(c.created_at) < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
+    if(session.start(c) < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && !['failed','undelivered'].includes(m.delivery_status))) return;
-    const initial = messages.find(m => m.client_message_id === `release-wait:verify:${id}`);
-    const closed = messages.find(m => m.client_message_id === `release-wait:closed:${id}`);
+    const initial = messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
+    const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
     if(!initial) return officeClosed(now()) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
-    if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${id}`)) {
+    if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${session.key(c)}`)) {
       await send(c,'assist',ASSIST);
     } else if(now() - Date.parse(initial.sent_at) >= WAIT_MS && now() - Date.parse(initial.sent_at) < ASSIST_MS
-      && !messages.some(m => m.client_message_id === `release-wait:soon:${id}`)) {
+      && !messages.some(m => m.client_message_id === `release-wait:soon:${session.key(c)}`)) {
       await send(c,'soon',SOON);
     }
   }

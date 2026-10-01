@@ -76,7 +76,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v20-retain-initial-details",
+    shippingSmsMode: "twilio-two-way-v21-repeat-visits",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -1285,7 +1285,7 @@ const requireValidTwilioWebhook = (req, res, next) => {
   return next();
 };
 
-const findOrCreateSmsConversation = async (phone) => {
+const findOrCreateSmsConversation = async (phone, body) => {
   const facilityId = "csp-toledo-main";
   const { data: matchedProfile, error: profileError } = await driverSupabase
     .from("driver_profiles")
@@ -1296,7 +1296,7 @@ const findOrCreateSmsConversation = async (phone) => {
   const matchedUserId = matchedProfile?.user_id || null;
   const openQuery = () => driverSupabase
     .from("driver_conversations")
-    .select("id")
+    .select("*")
     .eq("channel", "sms")
     .eq("sms_phone_e164", phone)
     .eq("facility_id", facilityId)
@@ -1313,6 +1313,16 @@ const findOrCreateSmsConversation = async (phone) => {
         .eq("id", existing.data.id)
         .is("user_id", null);
       if (linkError) throw linkError;
+    }
+    const { data: arrivals, error: arrivalError } = await driverSupabase.from('driver_sms_arrivals')
+      .select('id,departed_at').eq('conversation_id',existing.data.id).order('entered_at',{ascending:false}).limit(1);
+    if(arrivalError)throw arrivalError;
+    if(require('./visit-session').startsNewVisit(existing.data,arrivals?.[0],body)) {
+      const {data:started,error:startError}=await driverSupabase.rpc('shipping_start_sms_visit',{
+        target_conversation_id:existing.data.id,expected_start:existing.data.session_started_at||null
+      });
+      if(startError)throw startError;
+      return {id:existing.data.id,created:Boolean(started),matchedProfile};
     }
     return { id: existing.data.id, created: false, matchedProfile };
   }
@@ -1506,7 +1516,7 @@ app.post(
     }
 
     try {
-      const conversation = await findOrCreateSmsConversation(from);
+      const conversation = await findOrCreateSmsConversation(from, textBody);
       const conversationId = conversation.id;
       const now = new Date().toISOString();
       const storedImages = await storeInboundMmsImages({

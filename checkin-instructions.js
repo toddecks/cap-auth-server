@@ -1,4 +1,5 @@
 'use strict';
+const session=require('./visit-session');
 const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
 async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation,arrivalId,staffId,visitType}){
@@ -16,8 +17,8 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
    scheduleStatusSync?.(sent.sid);
   }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',message.id);throw error;}
  }
- await sendOnce(`staff-pickup-checkin:${conversation.id}`,PICKUP_CHECKIN,await prepareMap(db,conversation));
- await sendOnce(`staff-pickup-ppe:${conversation.id}`,'PPE requirements',await preparePpe(db,conversation));
+ await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,PICKUP_CHECKIN,await prepareMap(db,conversation));
+ await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,'PPE requirements',await preparePpe(db,conversation));
  return null;
 }
 module.exports={sendCheckinInstructions};

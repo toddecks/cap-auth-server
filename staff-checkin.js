@@ -29,7 +29,10 @@ function createHandler(deps) {
      if(ae)throw ae;arrivalId=arrival.id;
     }
    }
-   const {error:writeError}=await db.from('shipping_staff_checkins').upsert({conversation_id:id,checked_in_by:staff.id},{onConflict:'conversation_id',ignoreDuplicates:true});
+   const {data:priorCheckin,error:priorError}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle();
+   if(priorError)throw priorError;
+   const alreadyChecked=require('./visit-session').currentCheckin(c,priorCheckin);
+   const {error:writeError}=alreadyChecked?{error:null}:await db.from('shipping_staff_checkins').upsert({conversation_id:id,checked_in_by:staff.id,checked_in_at:new Date().toISOString()},{onConflict:'conversation_id'});
    if(writeError)throw writeError;
    const {data:verified,error:ve}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).single();
    if(ve)throw ve;

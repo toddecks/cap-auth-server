@@ -12,7 +12,7 @@ test('unclear message asks for clarification instead of accepting a release',()=
 
 test('visit-type prompt is sent once, without repeated correction instructions',()=>{const first=nextCheckin({body:'Hi',conversationCreated:true});assert.match(first.reply,/PICKUP or DROPOFF/);assert.equal(nextCheckin({existing:first.contact,body:'Thanks'}).reply,'');});
 
-test('first text asks for visit type even if it already contains all details',()=>{const r=nextCheckin({body:'Kyle Huston, 7666373, Huston Trucking',conversationCreated:true});assert.match(r.reply,/PICKUP or DROPOFF/);assert.equal(nextCheckin({existing:r.contact,body:'Release: 9999999'}).reply,'');});
+test('complete first text infers pickup from the release details',()=>{const r=nextCheckin({body:'Kyle Huston, 7666373, Huston Trucking',conversationCreated:true});assert.equal(r.reply,'');assert.equal(r.visitType,'pickup');assert.equal(nextCheckin({existing:r.contact,body:'Release: 9999999'}).reply,'');});
 
 test('initial punctuated details are retained after pickup choice',()=>{
  const first=nextCheckin({body:'Dave..center express. Release 1321851',conversationCreated:true});

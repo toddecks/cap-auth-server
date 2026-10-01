@@ -74,3 +74,12 @@ for(const action of ['closed','dropoff','failed','old'])test('no checkin followu
 test('restart after five minutes sends assistance without two simultaneous reminders',async()=>{const f=fixture();await f.worker.tick();f.advance(310000);await createWorker(f.options).tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY,ASSIST]);});
 
 test('a new staff check-in on an older open conversation still receives its timer',async()=>{const f=checkedFixture();f.tables.driver_conversations[0].created_at='2026-09-29T17:00:00Z';f.advance(1800000);await f.worker.tick();assert.equal(f.checkouts.length,1);});
+test('new visit in an existing thread gets exactly one verification despite old check-in and replies',async()=>{
+ const f=checkedFixture();
+ const c=f.tables.driver_conversations[0];c.created_at='2026-09-29T10:00:00Z';
+ f.tables.driver_messages.push({conversation_id:c.id,client_message_id:'release-wait:verify:'+c.id,sent_at:'2026-09-30T12:00:00Z',direction:'shipping_to_driver',delivery_status:'sent'});
+ f.advance(60000);c.session_started_at='2026-10-01T17:01:00Z';
+ await f.worker.tick();await createWorker(f.options).tick();
+ assert.deepEqual(f.sends.map(m=>m.body),[VERIFY]);assert.equal(f.checkouts.length,0);
+ f.advance(180000);await f.worker.tick();assert.equal(f.sends[1].body,SOON);
+});
