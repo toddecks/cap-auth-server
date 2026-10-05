@@ -264,6 +264,8 @@ const requireAdminAccess = requireRoleAccess(
   "Admin"
 );
 
+require("./optisigns").registerOptisigns(app, {db:supabase,requireAdminAccess,encryptionSecret:AUTH_SERVICE_ROLE_KEY});
+
 const requireHrAdminAccess = requireRoleAccess(
   ["admin", "hr_admin"],
   "HR administrator access is required.",
