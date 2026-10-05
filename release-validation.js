@@ -73,7 +73,7 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const initial = messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
-    if(!initial) return officeClosed(now()) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
+    if(!initial) return officeClosed(session.start(c)) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
     if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${session.key(c)}`)) {
       await send(c,'assist',ASSIST);
