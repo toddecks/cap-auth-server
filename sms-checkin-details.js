@@ -6,15 +6,16 @@ function parseDetails(text, existing={}) {
  const found={},rest=[];
  // Labels are accepted in any order, even when separated only by spaces.
  const marked=clean(text).replace(/\.{2,}|\.\s+(?=(?:release|load|name|driver|carrier|company)\b)/gi, ', ').replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
- for(let part of marked.split(/[\n,;|]+/).map(clean).filter(Boolean)){
+ for(let part of marked.split(/[\n,;|/]+/).map(clean).filter(Boolean)){
   part=part.replace(/^\d[.)]\s*/,'');
+  if(/^(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}$/.test(part)||/^\+?1\d{10}$/.test(part))continue;
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.full_name=clean(m[1]).slice(0,120);continue;}
   m=part.match(/^(?:(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.driver_company=clean(m[1]).slice(0,160);continue;}
   m=part.match(/^(?:(?:(?:correct|new|actual)\s+)?(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?\s*(?:is|[:=#])?\s*)([a-z0-9][a-z0-9-]{2,29})[.!]?$/i);
   if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
-  m=part.match(/^(?:(?:sorry|correction|correct number|actually|it's|its|it is)\s*[:=]?\s*)?#?([a-z]*\d[a-z0-9-]{3,29})[.!]?$/i);
+  m=part.match(/^(?:(?:sorry|correction|correct number|actually|it's|its|it is)\s*[:=]?\s*)?#?([a-z]*\d[a-z0-9-]{0,29})[.!]?$/i);
   if(m){found.last_release_number=m[1];continue;}
   // Extract an unmistakable release number embedded in a complete text.
   m=part.match(/\b\d{5,10}\b/g);
@@ -30,7 +31,7 @@ function parseDetails(text, existing={}) {
    if(!existing.driver_company)found.driver_company=part.slice(0,160);
    continue;
   }
-  if(chatPattern.test(part))continue;
+  if(chatPattern.test(part)||/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(part))continue;
   if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(part))found.full_name=part.slice(0,120);
   else if(!found.driver_company&&!existing.driver_company&&(found.full_name||existing.full_name)&&/^[\p{L}\d .&'’-]{2,160}$/u.test(part))found.driver_company=part;
  }
@@ -44,6 +45,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
   const recovered=parseDetails(prior.driver_company,{});
   if(recovered.full_name&&recovered.driver_company)prior={...prior,...recovered};
  }
+ if(/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(prior.full_name||''))prior.full_name='';
  const fresh=conversationCreated||!existing;
  const previousType=fresh?null:prior.visit_type;
  const chosen=flow.visitType(body);

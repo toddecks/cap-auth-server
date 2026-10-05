@@ -2,7 +2,7 @@
 
 // This worker acknowledges receipt only. Release verification belongs to Shipping.
 const session=require('./visit-session');
-const VERIFY = 'Thank you! Our Shipping Office is verifying your release number. We’ll send you further instructions shortly.';
+const VERIFY = 'Thank you. Our Shipping Office is verifying your release number. We’ll send you further instructions shortly.';
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
-  const health = {mode:'pickup-followups-v5',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v6-all-visits',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -49,8 +49,14 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
   async function processConversation(id) {
     // Re-read state just before dispatch so staff activity cancels pending replies.
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
-    if(!c || !validPickup(c)) return;
+    if(!c || c.status!=='open' || c.session_ended_at) return;
     const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
+    const timerStart=session.currentCheckin(c,checked)?Date.parse(checked.checked_in_at):session.start(c);
+    if(now()-timerStart>=CHECKOUT_MS){
+      await result(db.rpc('shipping_auto_checkout',{target_conversation_id:id}));
+      return;
+    }
+    if(!validPickup(c))return;
     const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     if(session.currentCheckin(c,checked)) {
@@ -89,7 +95,7 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     try {
       // Do not send retroactive replies to old visits when this feature is deployed.
       for(let offset=0;;offset+=100) {
-        const rows = await result(db.from('driver_conversations').select('id').eq('status','open').eq('visit_type','pickup').order('created_at').range(offset,offset+99));
+        const rows = await result(db.from('driver_conversations').select('id').eq('status','open').order('created_at').range(offset,offset+99));
         for(const row of rows) {
           try { await processConversation(row.id); }
           catch(error) {health.error=String(error.message || error); console.error('Release wait reply failed:',health.error);}

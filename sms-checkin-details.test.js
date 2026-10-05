@@ -35,3 +35,16 @@ test('legacy Dave contact is recovered before new unseparated release text',()=>
  const r=nextCheckin({existing:{full_name:'',driver_company:'Dave..center express.',visit_type:'pickup'},body:'Dave center express  ..release 132204',conversationCreated:true});
  assert.equal(r.contact.full_name,'Dave');assert.equal(r.contact.driver_company,'center express.');assert.equal(r.contact.last_release_number,'132204');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
 });
+
+test('release words and numeric messages identify pickups without becoming names',()=>{
+ const flow=require('./driver-visit-flow');
+ for(const body of ['release','release number','967211','12','Pick']){
+  assert.equal(flow.visitType(body),'pickup');
+  const r=nextCheckin({body,conversationCreated:true});assert.equal(r.visitType,'pickup');assert.equal(r.contact.full_name,'');assert.ok(!r.reply.includes('PICKUP or DROPOFF'));
+ }
+});
+test('slash-separated current identity replaces legacy Pick name and ignores phone number',()=>{
+ const r=nextCheckin({body:'Steve /center express\n967211\nPickup',existing:{full_name:'Pick',driver_company:'Center Express',last_release_number:'968758',visit_type:'pickup'}});
+ assert.equal(r.contact.full_name,'Steve');assert.equal(r.contact.driver_company,'center express');assert.equal(r.releaseNumber,'967211');
+ assert.equal(parseDetails('Center Express\n968758\n419-261-7900').last_release_number,'968758');
+});

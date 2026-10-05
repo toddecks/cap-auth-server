@@ -84,4 +84,11 @@ test('new visit in an existing thread gets exactly one verification despite old 
  f.advance(180000);await f.worker.tick();assert.equal(f.sends[1].body,SOON);
 });
 
-test('delayed processing uses actual arrival time for the initial reply',async()=>{const f=fixture();f.tables.driver_conversations[0].session_started_at='2026-10-01T09:57:00Z';await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);});
+test('delayed processing uses actual arrival time for the initial reply',async()=>{const f=fixture();f.tables.driver_conversations[0].session_started_at='2026-10-01T09:57:00Z';f.advance(-7*60*60*1000+10*60*1000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);});
+
+for(const type of ['pickup','dropoff',null])test('unverified '+type+' visit expires once at 30 minutes without deleting thread',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].visit_type=type;
+ f.advance(1799999);await f.worker.tick();assert.equal(f.checkouts.length,0);
+ f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,1);
+});
+test('ended session cannot send reminders',async()=>{const f=fixture();f.tables.driver_conversations[0].session_ended_at='2026-10-01T17:00:00Z';await f.worker.tick();assert.equal(f.sends.length,0)});

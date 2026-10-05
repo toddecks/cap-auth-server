@@ -3,8 +3,9 @@ const TYPE_PROMPT='Are you here for a pick-up or drop-off? Please reply PICKUP o
 const PICKUP_PROMPT='Please reply with your name, release number, and carrier name.';
 const PICKUP_CHECKIN='Please pull around back and stay on the left side. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
 function visitType(text){
- const pickup=/\b(pick[ -]?up|picking up)\b/i.test(text),dropoff=/\b(drop[ -]?off|dropping off|delivery|delivering)\b/i.test(text);
- return pickup===dropoff?null:pickup?'pickup':'dropoff';
+ const pickup=/\b(pick(?:[ -]?up)?|picking up|release)\b/i.test(text),dropoff=/\b(drop[ -]?off|dropping off|delivery|delivering)\b/i.test(text);
+ if(dropoff)return pickup?null:'dropoff';
+ return pickup||/^\s*#?\d+\s*$/.test(text)?'pickup':null;
 }
 function dropoffReply(at=new Date()){
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(p=>[p.type,p.value]));
