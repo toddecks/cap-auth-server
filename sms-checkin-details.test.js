@@ -33,7 +33,7 @@ test('pickup selection asks only missing fields',()=>{
 
 test('legacy Dave contact is recovered before new unseparated release text',()=>{
  const r=nextCheckin({existing:{full_name:'',driver_company:'Dave..center express.',visit_type:'pickup'},body:'Dave center express  ..release 132204',conversationCreated:true});
- assert.equal(r.contact.full_name,'Dave');assert.equal(r.contact.driver_company,'center express.');assert.equal(r.contact.last_release_number,'132204');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
+ assert.equal(r.contact.full_name,'Dave');assert.equal(r.contact.driver_company,'center express');assert.equal(r.contact.last_release_number,'132204');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
 });
 
 test('release words and numeric messages identify pickups without becoming names',()=>{
@@ -47,4 +47,20 @@ test('slash-separated current identity replaces legacy Pick name and ignores pho
  const r=nextCheckin({body:'Steve /center express\n967211\nPickup',existing:{full_name:'Pick',driver_company:'Center Express',last_release_number:'968758',visit_type:'pickup'}});
  assert.equal(r.contact.full_name,'Steve');assert.equal(r.contact.driver_company,'center express');assert.equal(r.releaseNumber,'967211');
  assert.equal(parseDetails('Center Express\n968758\n419-261-7900').last_release_number,'968758');
+});
+
+for(const name of ['Lindsey','Lindsey Smith',"Mary-Jane O’Neil"]){
+ test('unpunctuated driver and known carrier: '+name,()=>{
+  const r=nextCheckin({body:name+' Center Express 676767',conversationCreated:true});
+  assert.equal(r.contact.full_name,name);assert.equal(r.contact.driver_company,'Center Express');assert.equal(r.contact.last_release_number,'676767');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
+ });
+}
+test('corrects previously merged carrier when complete introduction is repeated',()=>{
+ const r=nextCheckin({body:'Lindsey Center Express 676767',existing:{full_name:'',driver_company:'Lindsey Center Express',last_release_number:'676767',visit_type:'pickup'}});
+ assert.equal(r.contact.full_name,'Lindsey');assert.equal(r.contact.driver_company,'Center Express');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.reply,'');
+});
+test('carrier-only text and ordinary messages never invent driver names',()=>{
+ for(const body of ['Center Express 676767','Thanks Center Express 676767','Pick Center Express 676767','Acme Center Express 676767 pounds']){
+  assert.equal(parseDetails(body).full_name,undefined);
+ }
 });

@@ -25,6 +25,12 @@ function parseDetails(text, existing={}) {
   if(part)rest.push(part);
  }
  for(const part of rest){
+  // A known multiword carrier can follow a driver's name without punctuation.
+  // Keep standalone carrier names intact; do not guess a boundary for unknown carriers.
+  const carrierIntroduction=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(Center\s+Express[.]?)$/iu);
+  if(carrierIntroduction&&!chatPattern.test(carrierIntroduction[1])&&!companyPattern.test(carrierIntroduction[1])&&!/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(carrierIntroduction[1])){
+   found.full_name=clean(carrierIntroduction[1]);found.driver_company=clean(carrierIntroduction[2]);continue;
+  }
   const split=part.match(/^(.+?)\s+(?:with|from|driving for)\s+(.+)$/i);
   if(split&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=clean(split[1]).replace(/^I'm\s+|^I am\s+/i,'').slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
   if(companyPattern.test(part)&&!chatPattern.test(part)){
