@@ -76,7 +76,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v23-thank-you-period",
+    shippingSmsMode: "twilio-two-way-v24-returning-arrivals",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -1569,6 +1569,15 @@ app.post(
         })
         .eq("id", conversationId);
       if (conversationError) throw conversationError;
+
+      if(remembered.visitType==='pickup'&&remembered.contact?.onboarding_step==='ready') {
+        const {data:active,error:activeError}=await driverSupabase.from('driver_sms_arrivals').select('id').eq('conversation_id',conversationId).is('departed_at',null).maybeSingle();
+        if(activeError)throw activeError;
+        if(!active){
+          const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').insert({phone_e164:from,conversation_id:conversationId,facility_id:'csp-toledo-main',release_number:remembered.contact.last_release_number,driver_name:remembered.contact.full_name,driver_company:remembered.contact.driver_company,visit_type:'pickup',entered_at:now,checked_in_at:null});
+          if(arrivalError&&arrivalError.code!=='23505')throw arrivalError;
+        }
+      }
 
       if(remembered.detailsChanged){
         const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').update({

@@ -38,12 +38,18 @@ function parseDetails(text, existing={}) {
 }
 function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new Date()}){
  const flow=require('./driver-visit-flow');
- const prior=existing||{},fresh=conversationCreated||!existing;
+ let prior={...(existing||{})};
+ // Recover legacy contacts where punctuation caused the name to be stored with the carrier.
+ if(!clean(prior.full_name)&&/\.{2,}/.test(prior.driver_company||'')){
+  const recovered=parseDetails(prior.driver_company,{});
+  if(recovered.full_name&&recovered.driver_company)prior={...prior,...recovered};
+ }
+ const fresh=conversationCreated||!existing;
  const previousType=fresh?null:prior.visit_type;
  const chosen=flow.visitType(body);
  const introduction=parseDetails(String(body||'').replace(/\b(pick[ -]?up|picking up|drop[ -]?off|dropping off|delivery|delivering)\b/gi,''),{});
  const completeIntroduction=Boolean(introduction.full_name&&introduction.driver_company&&introduction.last_release_number);
- const type=chosen||(completeIntroduction?'pickup':previousType)||null;
+ const type=chosen||(introduction.last_release_number?'pickup':previousType)||null;
  const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
  const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
  const detailText=String(body||'').replace(/\b(pick[ -]?up|picking up|drop[ -]?off|dropping off|delivery|delivering)\b/gi,'');

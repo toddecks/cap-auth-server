@@ -27,6 +27,11 @@ test('complete pickup first message never asks to repeat details',()=>{
 test('pickup selection asks only missing fields',()=>{
  for(const [body,prompt] of [['Name: Dave; Release: 1321851','Please reply with your carrier name.'],['Carrier: Center Express; Release: 1321851','Please reply with your name.'],['Name: Dave; Carrier: Center Express','Please reply with your release number.']]){
  const first=nextCheckin({body,conversationCreated:true});
- assert.equal(nextCheckin({existing:first.contact,body:'Pick up'}).reply,prompt);
+ assert.equal(first.visitType==='pickup'?first.reply:nextCheckin({existing:first.contact,body:'Pick up'}).reply,prompt);
  }
+});
+
+test('legacy Dave contact is recovered before new unseparated release text',()=>{
+ const r=nextCheckin({existing:{full_name:'',driver_company:'Dave..center express.',visit_type:'pickup'},body:'Dave center express  ..release 132204',conversationCreated:true});
+ assert.equal(r.contact.full_name,'Dave');assert.equal(r.contact.driver_company,'center express.');assert.equal(r.contact.last_release_number,'132204');assert.equal(r.contact.onboarding_step,'ready');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
 });

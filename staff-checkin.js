@@ -36,6 +36,7 @@ function createHandler(deps) {
    if(writeError)throw writeError;
    const {data:verified,error:ve}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).single();
    if(ve)throw ve;
+   if(c.channel==='sms'){const {error:e}=await db.from('driver_sms_arrivals').update({checked_in_at:verified.checked_in_at}).eq('id',arrivalId);if(e)throw e;}
    let warning=null;
    try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:'pickup'});}
    catch(error){console.error('Staff check-in instructions:',error.message);warning='Check-in recorded, but instructions could not be confirmed. Review the conversation before sending them manually.';}
