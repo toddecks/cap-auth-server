@@ -12,6 +12,6 @@ function dropoffReply(at=new Date()){
  const minutes=Number(parts.hour)*60+Number(parts.minute);
  if(['Sat','Sun'].includes(parts.weekday)||minutes<360||minutes>=1080)return 'Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you.';
  if(minutes>=1050)return 'We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions.';
- return 'Please pull around back, follow the “Receiving” signs, and stay to the right.';
+ return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
 }
 module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,visitType,dropoffReply};

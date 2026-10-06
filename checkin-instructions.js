@@ -1,9 +1,11 @@
 'use strict';
 const session=require('./visit-session');
+const {needsImages}=require('./first-visit-images');
 const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
 async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation,arrivalId,staffId,visitType}){
  if(visitType!=='pickup')return null;
+ const includeImages=await needsImages(db,conversation);
  async function sendOnce(id,body,attachment) {
   const {data:message,error}=await db.from('driver_messages').insert({...attachment?.fields,client_message_id:id,conversation_id:conversation.id,sender_user_id:staffId,direction:'shipping_to_driver',driver_phone:conversation.sms_phone_e164,body,original_body:body,original_language:'English',sent_at:new Date().toISOString(),delivery_status:conversation.channel==='sms'?'queued':'sent'}).select('id').single();
   if(error?.code==='23505')return;
@@ -17,8 +19,8 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
    scheduleStatusSync?.(sent.sid);
   }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',message.id);throw error;}
  }
- await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,PICKUP_CHECKIN,await prepareMap(db,conversation));
- await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,'PPE requirements',await preparePpe(db,conversation));
+ await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,PICKUP_CHECKIN,includeImages?await prepareMap(db,conversation):null);
+ if(includeImages)await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,'PPE requirements',await preparePpe(db,conversation));
  return null;
 }
 module.exports={sendCheckinInstructions};

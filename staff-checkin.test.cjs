@@ -4,10 +4,10 @@ const {dropoffReply,PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {sendCheckinInstructions}=require('./checkin-instructions');
 function harness(role='shipping'){
  const messages=[],checks=[];let clock=0;
- const db={storage:{from:()=>({upload:async()=>({})})},auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){let op='read',value;const q={select(){return q},eq(){return q},single(){return q},maybeSingle(){return q},upsert(v){op='write';value=v;return q},insert(v){op='insert';value=v;return q},then(resolve){
+ const db={storage:{from:()=>({upload:async()=>({})})},auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){let op='read',value;const q={select(){return q},in(){return q},like(){return q},not(){return q},neq(){return q},limit(){return q},eq(){return q},single(){return q},maybeSingle(){return q},upsert(v){op='write';value=v;return q},insert(v){op='insert';value=v;return q},then(resolve){
   if(table==='driver_conversations')return Promise.resolve({data:{id:'12345678-1234-1234-1234-123456789abc',status:'open',channel:'app',visit_type:'pickup',release_number:'12345',arrival_id:1}}).then(resolve);
   if(table==='shipping_staff_checkins'){if(op==='write'&&!checks.length)checks.push({...value,checked_in_at:'2026-09-29T12:00:00Z'});return Promise.resolve({data:checks[0]}).then(resolve);}
-  if(table==='driver_messages'){if(messages.some(m=>m.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve);messages.push(value);return Promise.resolve({data:{id:1}}).then(resolve);}
+  if(table==='driver_messages'){if(op==='read')return Promise.resolve({data:[]}).then(resolve);if(messages.some(m=>m.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve);messages.push(value);return Promise.resolve({data:{id:1}}).then(resolve);}
   throw Error('Unexpected table '+table);
  }};return q;}};
  const handler=createHandler({db});
