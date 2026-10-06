@@ -13,3 +13,10 @@ test('unknown citations and fabricated manual quotations are rejected',()=>{let 
 test('a cause needs both observed alarms and manual support',()=>{const v=valid();v.causes[0].sourceIds=['M1'];assert.throws(()=>validate(v,context),/alarm and manual/);});
 test('insufficient evidence with no causes is a valid result',()=>assert.doesNotThrow(()=>validate({confidence:'low',causes:[],checks:[],watchFor:[],gaps:['Exact alarm meaning unavailable']},context)));
 test('cache separates restricted report contexts and changes after feedback',()=>{const c=makeContext(review,group,docs);assert.notEqual(fingerprint({...c,reportsIncluded:true}),fingerprint({...c,reportsIncluded:false}));assert.notEqual(fingerprint(c),fingerprint(makeContext(review,group,docs,[{note:'Wiring inspected',outcome:'no_issue_found'}])));});
+
+test('reads structured output when the SDK convenience field is absent',async()=>{
+ const {generate}=require('./sad-diagnosis');
+ const answer={headline:'Evidence needed',summary:'Current evidence is insufficient.',priority:'insufficient_evidence',confidence:'low',causes:[],checks:[],watchFor:[],gaps:['No observations']};
+ const client={responses:{create:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(answer)}]}]})}};
+ assert.deepEqual(await generate(client,{sources:[]}),answer);
+});

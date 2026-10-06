@@ -1,12 +1,12 @@
 'use strict';
 const crypto=require('node:crypto');
 const {retrieve}=require('./sad-knowledge');
-const VERSION='maintenance-review-3';
+const VERSION='maintenance-review-4';
 const MODEL=process.env.OPENAI_SAD_V2_MODEL||'gpt-5.4';
 const string={type:'string'},strings={type:'array',items:string};
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
 const cited=properties=>object({...properties,sourceIds:strings});
-const schema=object({headline:string,summary:string,priority:{type:'string',enum:['inspect_promptly','plan_inspection','monitor','insufficient_evidence']},confidence:{type:'string',enum:['low','moderate']},causes:{type:'array',items:cited({cause:string,why:string,against:string,confirmationNeeded:string,manualEvidence:{type:'array',items:object({sourceId:string,quote:string})}})},checks:{type:'array',items:cited({check:string,purpose:string,expectedFinding:string,owner:{type:'string',enum:['operator_observation','qualified_maintenance']}})},watchFor:{type:'array',items:cited({indicator:string,meaning:string})},gaps:strings});
+const schema=object({headline:string,summary:string,priority:{type:'string',enum:['inspect_promptly','plan_inspection','monitor','insufficient_evidence']},confidence:{type:'string',enum:['low','moderate']},causes:{type:'array',maxItems:3,items:cited({cause:string,why:string,against:string,confirmationNeeded:string,manualEvidence:{type:'array',items:object({sourceId:string,quote:{type:'string',minLength:12}})}})},checks:{type:'array',maxItems:4,items:cited({check:string,purpose:string,expectedFinding:string,owner:{type:'string',enum:['operator_observation','qualified_maintenance']}})},watchFor:{type:'array',maxItems:3,items:cited({indicator:string,meaning:string})},gaps:strings});
 function makeContext(review,group,docs,feedback=[]){
  const alarms=group.patterns.filter(p=>['AL','SF'].includes(p.alarm_type)).slice(0,18).map((p,i)=>({id:'A'+(i+1),kind:'alarm',type:p.alarm_type,tag:p.plc_tag,message:p.message,current:p.current,previous:p.previous,activeDates:p.activeDays,daily:p.days,lastSeen:p.last_seen,signals:p.signals}));
  const reports=group.reports.slice(0,8).map((r,i)=>({id:'R'+(i+1),kind:'shift_report',reportId:r.submission_id,date:r.report_date,shift:r.shift,text:r.text.slice(0,4000),maintenanceTimes:r.maintenance_times,correlation:r.correlation}));
@@ -34,10 +34,17 @@ function validate(result,context){
  return result;
 }
 async function generate(client,context){
- const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:14000,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:210000,maxRetries:0});
- const output=response.output_text||response.output?.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
- if(response.status!=='completed'||!output)throw Error('AI assessment did not complete: '+response.status+' / '+(response.incomplete_details?.reason||'no output'));
- return validate(JSON.parse(output),context);
+ const input=[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}];
+ for(let attempt=0;attempt<2;attempt++){
+  const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:14000,input,text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:210000,maxRetries:0});
+  const output=response.output_text||response.output?.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
+  if(response.status!=='completed'||!output)throw Error('AI assessment did not complete: '+response.status+' / '+(response.incomplete_details?.reason||'no output'));
+  const result=JSON.parse(output);
+  try{return validate(result,context);}catch(error){
+   if(attempt)throw error;
+   input.push({role:'assistant',content:output},{role:'user',content:'The draft failed source validation: '+error.message+'. Correct the assessment using only the original supplied evidence. Each manualEvidence quote must be at least 12 characters copied EXACTLY from the cited manual excerpt, with the same sourceId also in sourceIds. Do not correct OCR spelling inside quotations. If you cannot support a cause with an exact quote, remove it and any dependent claim from the summary/checks. Retain useful evidence-gathering checks. Return the complete corrected schema.'});
+  }
+ }
 }
 function fingerprint(context){const stable={...context,window:{days:context.window.days,latestAlarm:context.window.latestAlarm,partialBaseline:context.window.partialBaseline}};return crypto.createHash('sha256').update(JSON.stringify({version:VERSION,model:MODEL,context:stable})).digest('hex');}
 module.exports={makeContext,generate,validate,fingerprint,MODEL,VERSION};
