@@ -41,7 +41,7 @@ function analyze(raw,reports,days){
  });
  return {generatedAt:new Date().toISOString(),end:raw.end,start:new Date(start).toISOString(),priorStart:new Date(priorStart).toISOString(),days,first:raw.first,latest:raw.latest,groups,patterns:patterns.filter(p=>p.current>0).length,reportCount:normalized.length,unmatchedReports:normalized.filter(r=>!groups.some(g=>g.reports.some(x=>x.submission_id===r.submission_id))),coverage:{partial:!raw.first||Date.parse(raw.first)>priorStart,clock:'Database timestamps displayed in Eastern time; source clock and line identity need confirmation.',basis:'Counts of recorded messages, not failure counts or runtime-normalized rates. MC records are context only.'}};
 }
-function register(app,{db,requireAccess}){
+function register(app,{db,requireAccess,getOpenAIClient}){
  let cache=null,pending=null,manuals=null;
  async function checked(q){const {data,error}=await q;if(error)throw error;return data;}
  async function snapshot(){if(cache&&Date.now()-cache.at<300000)return cache;if(pending)return pending;pending=(async()=>{
@@ -51,6 +51,7 @@ function register(app,{db,requireAccess}){
  })().finally(()=>pending=null);return pending;}
  app.get('/api/sad-v2/review',requireAccess,async(req,res)=>{res.set('Cache-Control','no-store');try{const days=Number(req.query.days||7);if(![1,7,30].includes(days))return res.status(400).json({error:'Choose 1, 7, or 30 days.'});const s=await snapshot();const canReadReports=req.authRoles.some(r=>['admin','production'].includes(r));res.json({...analyze(s.raw,canReadReports?s.reports:[],days),reportsAuthorized:canReadReports,cachedAt:new Date(s.at).toISOString()});}catch(e){console.error('SAD v2 review',e.message);res.status(503).json({error:'The equipment review could not load. Retry shortly; no data has been changed.'});}});
  async function library(){if(!manuals)manuals=await checked(db.from('sad_v2_manuals').select('*'));return manuals;}
+ require('./sad-ai-routes').registerAI(app,{db,requireAccess,snapshot,library,analyze,getOpenAIClient});
  app.get('/api/sad-v2/manuals',requireAccess,async(req,res)=>{res.set('Cache-Control','no-store');try{
  const docs=await library();const q=String(req.query.q||'').trim().slice(0,100).toLowerCase();
  const terms=q.split(/\s+/).filter(t=>t.length>2);const hits=[];
