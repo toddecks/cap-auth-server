@@ -1,7 +1,7 @@
 'use strict';
 const crypto=require('node:crypto');
 const {retrieve}=require('./sad-knowledge');
-const VERSION='maintenance-review-2';
+const VERSION='maintenance-review-3';
 const MODEL=process.env.OPENAI_SAD_V2_MODEL||'gpt-5.4';
 const string={type:'string'},strings={type:'array',items:string};
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
@@ -20,7 +20,7 @@ Give a short practical assessment and at most 3 candidate causes, 4 prioritized 
 Describe suspected causes, never confirmed diagnoses. Confidence low or moderate describes evidence strength, not failure probability. Numeric failure probabilities, remaining useful life, predicted failure dates and statements that equipment is safe are prohibited: no validated failure prediction model exists. Separate a rise in recorded message volume from deterioration; more runtime/PLC chatter/startup can explain it. If there are no AL/SF records, do not diagnose from MC alone. If baseline coverage is partial, do not claim new or increasing faults solely from its comparison. If latestAlarm is older than the review end by more than one hour, say the assessment describes recorded history, not present machine state. No AL/SF does not mean healthy. Use gaps for missing instrumentation/history needed for stronger inference. Priorities are maintenance review order, not a safety clearance.
 Checks are limited to operator observations from normal safe controls and qualified maintenance inspection scopes. Never provide live energized work instructions, bypass/reset interlock advice, PLC/drive parameter changes, setpoint changes, pressure adjustment values, or physical disassembly steps. For physical inspection refer qualified maintenance to OEM procedures and site isolation/lockout requirements. Manual safety content must be preserved; no invented procedure. Do not turn diagnosis into a procedure for operating damaged equipment.
 Critical distinctions: an analog SIGNAL out of range is not proof that the physical position exceeded a safe range, and is not the same as a digital travel-limit interlock. Do not conflate them. A chain-tension maintenance page does not support chain wear as the cause of a signal-validity alarm without additional evidence. Do not pad the output to three causes. It is useful to return no supported causes and a specific information-gathering plan rather than speculate. Never say a particular action will clear the alarm unless the exact alarm is explicitly documented. A source for a different symptom may support a conditional follow-up check only; identify the different symptom and condition. Do not infer observed excessive height, failed movement, noise, drift, binding, damaged wiring, component failure, or unsafe condition from counts alone. Do not instruct operators to lower, jog, reset or move equipment to test a hypothesis. Phrase expected findings as discriminating alternatives, not as the finding you assume will occur. Confirm present status first if data is stale. Qualifications must appear in the summary/checks, not only in gaps.
-Before answering, verify that every causal link actually follows from its citations. Remove any unsupported claim, including from the headline and summary. Write for busy maintenance staff in plain English. Respond using the schema.`;
+Before answering, verify that every causal link actually follows from its citations. Remove any unsupported claim, including from the headline and summary. Write for busy maintenance staff in plain English. Keep the summary to 2-3 sentences, each explanation to 1-2 sentences, and the complete visible answer under 850 words. Respond using the schema.`;
 function validate(result,context){
  if(!result||!Array.isArray(result.causes)||!Array.isArray(result.checks)||!Array.isArray(result.watchFor)||!Array.isArray(result.gaps))throw Error('Invalid assessment shape');
  const ids=new Map(context.sources.map(s=>[s.id,s]));
@@ -34,8 +34,8 @@ function validate(result,context){
  return result;
 }
 async function generate(client,context){
- const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:6500,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:180000,maxRetries:0});
- if(response.status!=='completed'||!response.output_text)throw Error('AI assessment did not complete');
+ const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:14000,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:210000,maxRetries:0});
+ if(response.status!=='completed'||!response.output_text)throw Error('AI assessment did not complete: '+response.status+' / '+(response.incomplete_details?.reason||'no output'));
  return validate(JSON.parse(response.output_text),context);
 }
 function fingerprint(context){const stable={...context,window:{days:context.window.days,latestAlarm:context.window.latestAlarm,partialBaseline:context.window.partialBaseline}};return crypto.createHash('sha256').update(JSON.stringify({version:VERSION,model:MODEL,context:stable})).digest('hex');}
