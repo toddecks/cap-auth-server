@@ -1575,20 +1575,23 @@ app.post(
         .eq("id", conversationId);
       if (conversationError) throw conversationError;
 
-      if(!conversation.sessionEnded&&remembered.visitType==='pickup'&&remembered.contact?.onboarding_step==='ready') {
+      // Record every SMS arrival immediately, including drop-offs and incomplete details.
+      // Arrival does not constitute an official Shipping check-in.
+      if(!conversation.sessionEnded) {
         const {data:active,error:activeError}=await driverSupabase.from('driver_sms_arrivals').select('id').eq('conversation_id',conversationId).is('departed_at',null).maybeSingle();
         if(activeError)throw activeError;
         if(!active){
-          const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').insert({phone_e164:from,conversation_id:conversationId,facility_id:'csp-toledo-main',release_number:remembered.contact.last_release_number,driver_name:remembered.contact.full_name,driver_company:remembered.contact.driver_company,visit_type:'pickup',entered_at:now,checked_in_at:null});
+          const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').insert({phone_e164:from,conversation_id:conversationId,facility_id:'csp-toledo-main',release_number:remembered.contact?.last_release_number||remembered.releaseNumber||(remembered.visitType==='dropoff'?'Drop-off':'Pending'),driver_name:remembered.contact?.full_name||'Name not provided',driver_company:remembered.contact?.driver_company||'Company not provided',visit_type:remembered.visitType||null,entered_at:now,checked_in_at:null});
           if(arrivalError&&arrivalError.code!=='23505')throw arrivalError;
         }
       }
 
-      if(remembered.detailsChanged){
+      if(remembered.detailsChanged||remembered.visitType){
         const {error:arrivalError}=await driverSupabase.from('driver_sms_arrivals').update({
-          ...(remembered.contact.full_name ? {driver_name:remembered.contact.full_name} : {}),
-          ...(remembered.contact.driver_company ? {driver_company:remembered.contact.driver_company} : {}),
-          ...(remembered.contact.last_release_number ? {release_number:remembered.contact.last_release_number} : {}),
+          ...(remembered.contact?.full_name ? {driver_name:remembered.contact.full_name} : {}),
+          ...(remembered.contact?.driver_company ? {driver_company:remembered.contact.driver_company} : {}),
+          ...(remembered.contact?.last_release_number ? {release_number:remembered.contact.last_release_number} : {}),
+          ...(remembered.visitType ? {visit_type:remembered.visitType} : {}),
           updated_at:now
         }).eq('conversation_id',conversationId).is('departed_at',null);
         if(arrivalError)console.error("SMS arrival correction failed; incoming message retained:",arrivalError.message);
