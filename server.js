@@ -285,6 +285,8 @@ const requireShiftReportAccess = requireRoleAccess(
   "Shift report dashboard"
 );
 
+require("./sad-v2").register(app, {db:chartSupabase, requireAccess:requireRoleAccess(["admin","alarm_logs"],"Alarm review access is required.","SAD v2")});
+
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 const normalizeInvitationCode = (value) =>
