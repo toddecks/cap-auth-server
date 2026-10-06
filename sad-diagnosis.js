@@ -34,7 +34,7 @@ function validate(result,context){
  return result;
 }
 async function generate(client,context){
- const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:6500,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:85000,maxRetries:0});
+ const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:6500,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:180000,maxRetries:0});
  if(response.status!=='completed'||!response.output_text)throw Error('AI assessment did not complete');
  return validate(JSON.parse(response.output_text),context);
 }
