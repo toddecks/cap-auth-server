@@ -17,6 +17,6 @@ test('complete current introduction overrides stored identity and infers pickup'
  assert.equal(r.contact.full_name,'Todd');assert.equal(r.contact.driver_company,'CSP');assert.equal(r.contact.last_release_number,'45678910');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
 });
 
-test('new release on an old thread starts a visit even when identity needs clarification',()=>{
- assert(startsNewVisit({created_at:'2026-10-01T09:52:36Z'},null,'Dave center express  ..release 132204',Date.parse('2026-10-05T09:57:21Z')));
+test('elapsed time alone does not begin a new visit',()=>{
+ assert(!startsNewVisit({created_at:'2026-10-01T09:52:36Z'},null,'Dave center express  ..release 132204',Date.parse('2026-10-05T09:57:21Z')));
 });

@@ -8,7 +8,6 @@ const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
 const ASSIST_MS = 5 * 60 * 1000;
 const CHECKIN_FOLLOWUP_MS = 60 * 1000;
-const CHECKOUT_MS = 30 * 60 * 1000;
 const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
 const SOON = 'Our shipping team will be with you shortly.';
 const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
@@ -21,7 +20,7 @@ const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
-  const health = {mode:'pickup-followups-v6-all-visits',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v7-manual-checkout',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -51,21 +50,12 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || c.status!=='open' || c.session_ended_at) return;
     const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
-    const timerStart=session.currentCheckin(c,checked)?Date.parse(checked.checked_in_at):session.start(c);
-    if(now()-timerStart>=CHECKOUT_MS){
-      await result(db.rpc('shipping_auto_checkout',{target_conversation_id:id}));
-      return;
-    }
     if(!validPickup(c))return;
     const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     if(session.currentCheckin(c,checked)) {
-      // Only new staff check-ins receive this automation; no retroactive messages or checkouts.
+      // Only new staff check-ins receive this automation; no retroactive messages.
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
-      if(now() - Date.parse(checked.checked_in_at) >= CHECKOUT_MS) {
-        await result(db.rpc('shipping_auto_checkout', {target_conversation_id:id}));
-        return;
-      }
       const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
         && now() - Date.parse(instructions.sent_at) >= CHECKIN_FOLLOWUP_MS

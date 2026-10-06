@@ -61,19 +61,19 @@ test('after-hours pickup gets one closed reply and no daytime reminders',async()
  const f=fixture();f.advance(5*60*60*1000);f.tables.driver_conversations[0].created_at='2026-10-01T22:00:00Z';await f.worker.tick();f.advance(301000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
 });
 function checkedFixture(){const f=fixture();f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:00:00Z'});f.tables.driver_messages.push({client_message_id:'staff-pickup-checkin:visit-1',conversation_id:'visit-1',sent_at:'2026-10-01T17:00:00Z',delivery_status:'sent',sender_user_id:'staff',direction:'shipping_to_driver'});return f;}
-test('one-minute pickup followup and checkout only at 30 minutes from staff checkin',async()=>{
+test('one-minute pickup followup stays active without timed checkout',async()=>{
  const f=checkedFixture();f.advance(59999);await f.worker.tick();assert.equal(f.sends.length,0);
  f.advance(1);await createWorker(f.options).tick();assert.deepEqual(f.sends.map(m=>m.body),[REMAIN]);
  f.advance(1739999);await f.worker.tick();assert.equal(f.checkouts.length,0);
- f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,1);assert.equal(f.tables.driver_conversations[0].status,'closed');
- await f.worker.tick();assert.equal(f.checkouts.length,1);assert.equal(f.sends.length,1);
+ f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,0);assert.equal(f.tables.driver_conversations[0].status,'open');
+ await f.worker.tick();assert.equal(f.checkouts.length,0);assert.equal(f.sends.length,1);
 });
 for(const action of ['closed','dropoff','failed','old'])test('no checkin followup for '+action,async()=>{
  const f=checkedFixture();if(action==='closed')f.tables.driver_conversations[0].status='closed';if(action==='dropoff')f.tables.driver_conversations[0].visit_type='dropoff';if(action==='failed')f.tables.driver_messages[0].delivery_status='failed';if(action==='old')f.tables.shipping_staff_checkins[0].checked_in_at='2026-09-29T17:00:00Z';f.advance(60000);await f.worker.tick();assert.equal(f.sends.length,0);
 });
 test('restart after five minutes sends assistance without two simultaneous reminders',async()=>{const f=fixture();await f.worker.tick();f.advance(310000);await createWorker(f.options).tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY,ASSIST]);});
 
-test('a new staff check-in on an older open conversation still receives its timer',async()=>{const f=checkedFixture();f.tables.driver_conversations[0].created_at='2026-09-29T17:00:00Z';f.advance(1800000);await f.worker.tick();assert.equal(f.checkouts.length,1);});
+test('an older conversation remains checked in after thirty minutes',async()=>{const f=checkedFixture();f.tables.driver_conversations[0].created_at='2026-09-29T17:00:00Z';f.advance(1800000);await f.worker.tick();assert.equal(f.checkouts.length,0);});
 test('new visit in an existing thread gets exactly one verification despite old check-in and replies',async()=>{
  const f=checkedFixture();
  const c=f.tables.driver_conversations[0];c.created_at='2026-09-29T10:00:00Z';
@@ -86,9 +86,9 @@ test('new visit in an existing thread gets exactly one verification despite old 
 
 test('delayed processing uses actual arrival time for the initial reply',async()=>{const f=fixture();f.tables.driver_conversations[0].session_started_at='2026-10-01T09:57:00Z';f.advance(-7*60*60*1000+10*60*1000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);});
 
-for(const type of ['pickup','dropoff',null])test('unverified '+type+' visit expires once at 30 minutes without deleting thread',async()=>{
+for(const type of ['pickup','dropoff',null])test('unverified '+type+' visit remains open after thirty minutes',async()=>{
  const f=fixture();f.tables.driver_conversations[0].visit_type=type;
  f.advance(1799999);await f.worker.tick();assert.equal(f.checkouts.length,0);
- f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,1);
+ f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,0);
 });
 test('ended session cannot send reminders',async()=>{const f=fixture();f.tables.driver_conversations[0].session_ended_at='2026-10-01T17:00:00Z';await f.worker.tick();assert.equal(f.sends.length,0)});

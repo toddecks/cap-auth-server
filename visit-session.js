@@ -8,6 +8,6 @@ function startsNewVisit(c,arrival,body,now=Date.now()) {
  if(c.session_ended_at)return true;
  // A new release after departure begins another visit in the same thread.
  if(arrival)return Boolean(arrival.departed_at&&Date.parse(arrival.departed_at)>=start(c));
- return now-start(c)>=30*60*1000;
+ return false;
 }
 module.exports={key,start,currentCheckin,startsNewVisit};

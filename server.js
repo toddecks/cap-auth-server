@@ -1321,9 +1321,6 @@ const findOrCreateSmsConversation = async (phone, body) => {
     const { data: arrivals, error: arrivalError } = await driverSupabase.from('driver_sms_arrivals')
       .select('id,departed_at').eq('conversation_id',existing.data.id).order('entered_at',{ascending:false}).limit(1);
     if(arrivalError)throw arrivalError;
-    const expired = await driverSupabase.rpc('shipping_auto_checkout', {target_conversation_id:existing.data.id});
-    if(expired.error)throw expired.error;
-    if(expired.data)existing.data.session_ended_at=new Date().toISOString();
     if(require('./visit-session').startsNewVisit(existing.data,arrivals?.[0],body)) {
       const {data:started,error:startError}=await driverSupabase.rpc('shipping_start_sms_visit',{
         target_conversation_id:existing.data.id,expected_start:existing.data.session_started_at||null
