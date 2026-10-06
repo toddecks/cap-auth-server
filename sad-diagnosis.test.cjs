@@ -20,3 +20,13 @@ test('reads structured output when the SDK convenience field is absent',async()=
  const client={responses:{create:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(answer)}]}]})}};
  assert.deepEqual(await generate(client,{sources:[]}),answer);
 });
+
+test('retries source validation once and never returns an unverified draft',async()=>{
+ const {generate}=require('./sad-diagnosis');let calls=0;
+ const answer={headline:'Evidence needed',summary:'Current evidence is insufficient.',priority:'insufficient_evidence',confidence:'low',causes:[],checks:[],watchFor:[],gaps:[]};
+ const invalid={...answer,checks:[{check:'Unsupported',purpose:'',expectedFinding:'',owner:'operator_observation',sourceIds:['fake']}]};
+ const client={responses:{create:async()=>({status:'completed',output_text:JSON.stringify(++calls===1?invalid:answer)})}};
+ assert.deepEqual(await generate(client,{sources:[]}),answer);assert.equal(calls,2);
+ calls=0;client.responses.create=async()=>{calls++;return{status:'completed',output_text:JSON.stringify(invalid)}};
+ await assert.rejects(()=>generate(client,{sources:[]}),/unsupported citation/);assert.equal(calls,2);
+});
