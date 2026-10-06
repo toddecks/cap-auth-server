@@ -2103,7 +2103,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
     const dateOnly = (value) => value.toISOString().slice(0, 10);
     const { data, error } = await chartSupabase
       .from("psdata_loads_api")
-      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad")
+      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor")
       .gte("scheduleDate", dateOnly(start))
       .lte("scheduleDate", dateOnly(end))
       .limit(5000);
@@ -2133,7 +2133,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
         if (candidateDistance < existingDistance) matches[key] = candidate;
       });
     });
-    return res.json({ matches });
+    return res.json({ matches, doors: require("./release-doors").doorMatches(data || [], releases, date) });
   } catch (error) {
     console.error("Shipping appointment match failed:", error?.message || error);
     return res.status(500).json({ error: "Appointment data could not be loaded." });

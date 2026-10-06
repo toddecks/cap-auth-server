@@ -1,0 +1,12 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {doorMatches}=require('./release-doors');
+const row={poRel:'880740',unloadingDoor:'BD',location:'PROSPY',scheduleDate:'2026-10-06',scheduleTime:null};
+const lookup=rows=>doorMatches(rows,['880740'],'2026-10-06')['880740:PROSPY'];
+test('matches release without appointment time',()=>assert.deepEqual(lookup([row]),{door:'BD',status:'matched'}));
+test('matches explicit release in list',()=>assert.equal(lookup([{...row,poRel:'123456/880740'}]).door,'BD'));
+test('does not match substring or abbreviated suffix',()=>{assert.equal(lookup([{...row,poRel:'1880740'}]),undefined);assert.equal(lookup([{...row,poRel:'880739/740'}]),undefined)});
+test('conflicting doors require confirmation',()=>assert.equal(lookup([row,{...row,unloadingDoor:'MB'}]).status,'ambiguous'));
+test('closest date wins over older assignment',()=>assert.equal(lookup([row,{...row,unloadingDoor:'MB',scheduleDate:'2026-10-05'}]).door,'BD'));
+test('canceled records excluded',()=>assert.equal(lookup([{...row,cancelLoad:true}]),undefined));
+test('facility assignments kept separate',()=>assert.equal(lookup([row,{...row,location:'ENTPRS',unloadingDoor:'1'}]).door,'BD'));
+test('missing door never invented',()=>assert.equal(lookup([{...row,unloadingDoor:''}]).status,'unassigned'));
