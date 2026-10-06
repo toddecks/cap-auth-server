@@ -35,8 +35,9 @@ function validate(result,context){
 }
 async function generate(client,context){
  const response=await client.responses.create({model:MODEL,store:false,reasoning:{effort:"medium"},max_output_tokens:14000,input:[{role:'system',content:instructions},{role:'user',content:JSON.stringify(context)}],text:{format:{type:'json_schema',name:'sad_maintenance_assessment',strict:true,schema}}},{timeout:210000,maxRetries:0});
- if(response.status!=='completed'||!response.output_text)throw Error('AI assessment did not complete: '+response.status+' / '+(response.incomplete_details?.reason||'no output'));
- return validate(JSON.parse(response.output_text),context);
+ const output=response.output_text||response.output?.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
+ if(response.status!=='completed'||!output)throw Error('AI assessment did not complete: '+response.status+' / '+(response.incomplete_details?.reason||'no output'));
+ return validate(JSON.parse(output),context);
 }
 function fingerprint(context){const stable={...context,window:{days:context.window.days,latestAlarm:context.window.latestAlarm,partialBaseline:context.window.partialBaseline}};return crypto.createHash('sha256').update(JSON.stringify({version:VERSION,model:MODEL,context:stable})).digest('hex');}
 module.exports={makeContext,generate,validate,fingerprint,MODEL,VERSION};

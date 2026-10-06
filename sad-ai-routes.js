@@ -47,7 +47,7 @@ function registerAI(app,{db,requireAccess,snapshot,library,analyze,getOpenAIClie
   const saved=await db.from('sad_v2_assessments').insert(row).select('*').single();let value=saved.data;
   if(saved.error){if(saved.error.code!=='23505')throw saved.error;value=await checked(db.from('sad_v2_assessments').select('*').eq('input_hash',hash).single());}
   job.response={assessment:publicRun(value),reused:false,feedback,canRecordFeedback:job.reportsIncluded};job.status='complete';
- }catch(e){console.error('SAD maintenance background:',e.message);job.status='failed';job.error='The AI review could not be completed and verified. No diagnosis has been substituted. Please retry.';}finally{active--;}})();
+ }catch(e){console.error('SAD maintenance background:',e.message);job.status='failed';const reason=/^(AI assessment did not complete|Assessment contained an unsupported citation|Manual quotation could not be verified|Cause missing|Assessment too long|Invalid assessment shape)/.test(e.message)?e.message:e.code==='23502'?'Assessment storage is missing a required field':e.code==='22P02'?'Assessment storage rejected a field format':e.status?'AI service returned status '+e.status:'Assessment could not be saved or verified';job.error=reason+'. Please retry; no unverified diagnosis was saved.';}finally{active--;}})();
  }catch(e){console.error('SAD maintenance analysis:',e.message);res.status(503).json({error:'The AI review could not be completed and verified. No diagnosis has been substituted. Please retry.'});}finally{if(!handedOff)active--;}
  });
  app.post('/api/sad-v2/assessment/:id/feedback',requireAccess,async(req,res)=>{
