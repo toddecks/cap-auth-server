@@ -55,12 +55,12 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  const fresh=conversationCreated||!existing;
  const previousType=fresh?null:prior.visit_type;
  const chosen=flow.visitType(body);
- const introduction=parseDetails(String(body||'').replace(/\b(pick[ -]?up|picking up|drop[ -]?off|dropping off|delivery|delivering)\b/gi,''),{});
+ const introduction=parseDetails(flow.stripVisitWords(body),{});
  const completeIntroduction=Boolean(introduction.full_name&&introduction.driver_company&&introduction.last_release_number);
  const type=chosen||(introduction.last_release_number?'pickup':previousType)||null;
  const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
  const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
- const detailText=String(body||'').replace(/\b(pick[ -]?up|picking up|drop[ -]?off|dropping off|delivery|delivering)\b/gi,'');
+ const detailText=flow.stripVisitWords(body);
  const parsed=completeIntroduction?introduction:parseDetails(detailText,base),contact={...base,...parsed,visit_type:type,visit_started_at:started};
  contact.onboarding_step=type==='dropoff'||(type==='pickup'&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
