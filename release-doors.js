@@ -17,7 +17,9 @@ function doorMatches(rows,releases,date){
   const nearest=candidates.filter(r=>distance(r)===best);
   const doors=[...new Set(nearest.map(r=>String(r.unloadingDoor||'').trim()).filter(Boolean))];
   const incomplete=nearest.some(r=>!String(r.unloadingDoor||'').trim());
-  result[key]={door:doors.length===1&&!incomplete?doors[0]:null,status:doors.length>1||(doors.length&&incomplete)?'ambiguous':doors.length?'matched':'unassigned'};
+  const appointments=[...new Set(nearest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
+  const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
+  result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null};
  }
  return result;
 }
