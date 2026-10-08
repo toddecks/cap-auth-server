@@ -2187,14 +2187,19 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
         .eq("id", arrivalId);
       if (closeSmsError) throw closeSmsError;
 
-      const smsConversationId = conversationId || smsArrival.conversation_id;
+      const smsConversationId = smsArrival.conversation_id;
+      if (smsConversationId) {
+        const {error:sessionError}=await driverSupabase.from('driver_conversations')
+          .update({status:'closed',session_ended_at:closeTime.toISOString(),updated_at:closeTime.toISOString()}).eq('id',smsConversationId);
+        if(sessionError)throw sessionError;
+      }
 
 
       return res.json({
         ok: true,
         arrivalId,
         closedAt: closeTime.toISOString(),
-        conversationClosed: false
+        conversationClosed: true
       });
     }
 
@@ -2209,14 +2214,6 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
     }
 
     const closeTime = new Date();
-    const enteredAt = new Date(arrival.occurred_at).getTime();
-    const debouncedCloseTime = new Date(Math.min(
-      closeTime.getTime(),
-      Math.max(
-        Number.isFinite(enteredAt) ? enteredAt + 1000 : 0,
-        closeTime.getTime() - 125000
-      )
-    ));
     const { error: exitError } = await driverSupabase
       .from("driver_arrivals")
       .upsert({
@@ -2225,11 +2222,17 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
         facility_id: arrival.facility_id,
         facility_name: arrival.facility_name,
         release_number: null,
-        occurred_at: debouncedCloseTime.toISOString(),
+        occurred_at: closeTime.toISOString(),
         user_id: arrival.user_id,
         profile_snapshot: arrival.profile_snapshot || {}
       }, { onConflict: "client_event_id", ignoreDuplicates: true });
     if (exitError) throw exitError;
+    const {error:sessionError}=await driverSupabase.from('driver_conversations')
+      .update({status:'closed',session_ended_at:closeTime.toISOString(),updated_at:closeTime.toISOString()})
+      .eq('user_id',arrival.user_id).eq('facility_id',arrival.facility_id)
+      .eq('channel','app').eq('status','open').lte('created_at',closeTime.toISOString());
+    if(sessionError)throw sessionError;
+
 
 
 
@@ -2237,7 +2240,7 @@ app.post("/api/shipping/close-stale-visit", async (req, res) => {
       ok: true,
       arrivalId,
       closedAt: closeTime.toISOString(),
-      conversationClosed: false
+      conversationClosed: true
     });
   } catch (error) {
     console.error("Shipping stale visit close failed:", error?.message || error);
