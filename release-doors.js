@@ -29,7 +29,7 @@ function doorMatches(rows,releases,date){
    const incomplete=nearest.some(r=>!String(r.unloadingDoor||'').trim());
    const appointments=[...new Set(nearest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
    const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
-   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:nearest[0]?.poRel||null};
+   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:nearest[0]?.poRel||null,customer:!ambiguous?[...new Set(nearest.map(r=>String(r.shipToCustomerName||'').trim()).filter(Boolean))].join(' / '):null};
   }
  }
  return result;
