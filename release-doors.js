@@ -1,4 +1,8 @@
 'use strict';
+// Customer account names from the PS customer export (pro/vendor list.csv).
+// Ship-to names describe destinations and must not be used as account names.
+const customerNames=require('./customer-names.json');
+const customerName=row=>customerNames[String(row.customerNo||'').trim().toUpperCase()]||String(row.customerNo||'').trim();
 const normalize=v=>String(v||'').normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
 function references(value){
  const parts=String(value||'').normalize('NFKC').split(/[\/,;|\n]+/).map(p=>normalize(p.replace(/^\s*(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#-]?\s*/i,''))).filter(Boolean);
@@ -29,7 +33,7 @@ function doorMatches(rows,releases,date){
    const incomplete=nearest.some(r=>!String(r.unloadingDoor||'').trim());
    const appointments=[...new Set(nearest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
    const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
-   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:nearest[0]?.poRel||null,customer:!ambiguous?[...new Set(nearest.map(r=>String(r.shipToCustomerName||'').trim()).filter(Boolean))].join(' / '):null};
+   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:nearest[0]?.poRel||null,customer:!ambiguous?[...new Set(nearest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
   }
  }
  return result;

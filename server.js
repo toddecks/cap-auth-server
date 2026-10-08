@@ -2103,7 +2103,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
     const dateOnly = (value) => value.toISOString().slice(0, 10);
     const { data, error } = await chartSupabase
       .from("psdata_loads_api")
-      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor,shipToCustomerName")
+      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor,shipToCustomerName,customerNo")
       .gte("scheduleDate", dateOnly(start))
       .lte("scheduleDate", dateOnly(end))
       .limit(5000);
