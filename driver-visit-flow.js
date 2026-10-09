@@ -1,6 +1,5 @@
 'use strict';
 const TYPE_PROMPT='Are you here for a pick-up, drop-off, or both? Please reply PICKUP, DROPOFF, or BOTH.';
-const BOTH_SEQUENCE='For both drop-off and pick-up, drop off first. After unloading, Shipping will check you in for pickup and send your pickup instructions.';
 const PICKUP_PROMPT='Please reply with your name, release number, and carrier name.';
 const PICKUP_CHECKIN='Please pull around back and stay on the left side. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
 // Explicit common typos avoid treating unrelated short words as arrival intent.
@@ -40,7 +39,6 @@ function dropoffReply(at=new Date()){
  return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
 }
 function bothReply(at=new Date()){
- const reply=dropoffReply(at);
- return reply.startsWith('Please pull around')?`${reply} ${BOTH_SEQUENCE}`:reply;
+ return dropoffReply(at);
 }
-module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,BOTH_SEQUENCE,visitType,stripVisitWords,dropoffReply,bothReply};
+module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,visitType,stripVisitWords,dropoffReply,bothReply};

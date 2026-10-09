@@ -29,7 +29,7 @@ test('mixed arrival types remain ambiguous and release intent is retained',()=>{
 test('Both selection, combined intent, and subsequent details preserve a single Both visit',()=>{
  for(const body of ['BOTH','both, Lindsey, MLM, 967433','dropoff and pickup','drop off & pick up','pikup and dropp off']){
   const r=nextCheckin({body,conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});
-  assert.equal(r.visitType,'both',body);assert.match(r.reply,/drop off first/);
+  assert.equal(r.visitType,'both',body);assert.match(r.reply,/unchain your load/);
   assert(!['and','both'].includes(r.contact.full_name.toLowerCase()));
   const details=nextCheckin({existing:r.contact,body:'Lindsey, MLM, 967433'});
   assert.equal(details.visitType,'both');assert.equal(details.contact.onboarding_step,'ready');assert.equal(details.reply,'');

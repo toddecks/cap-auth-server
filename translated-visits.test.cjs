@@ -9,7 +9,7 @@ for(const [language,words] of Object.entries(signWords))for(const [type,word] of
    assert.equal(visitType(body),type,body);
    const r=nextCheckin({body,conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});
    assert.equal(r.visitType,type);assert.equal(r.contact.full_name,'');assert.equal(r.contact.driver_company,'');
-   assert.match(r.reply,type==='pickup'?/name, release number, and carrier name/:type==='both'?/drop off first/:/unchain your load/);
+   assert.match(r.reply,type==='pickup'?/name, release number, and carrier name/:type==='both'?/unchain your load/:/unchain your load/);
    assert.equal(startsNewVisit({session_ended_at:'2026-10-08T14:00:00Z'},null,body),true);
   }
   const full=nextCheckin({body:word+', José, MLM, 967433',conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});
@@ -37,4 +37,17 @@ test('translated dropoff and Both obey receiving closed hours',()=>{
 });
 test('commands do not match inside unrelated words or Cyrillic names',()=>{
  for(const text of ['Cambridge','Retraite','Ambassade','Доставкам','Получением','Отриманням','Обама','André','Dépôts','recogidas'])assert.equal(visitType(text),null,text);
+});
+
+test('Both initial response is exactly Drop-off, with no pickup details requested',()=>{
+ for(const now of ['2026-10-09T14:00:00Z','2026-10-09T21:45:00Z','2026-10-09T22:02:00Z','2026-10-10T14:00:00Z']){
+  const expected=require('./driver-visit-flow').dropoffReply(now);
+  for(const body of ['Both','ambas','и то и другое','і те, й інше','les deux']){
+   for(const existing of [undefined,{full_name:'Lindsey',driver_company:'MLM'}]){
+    const result=nextCheckin({body,existing,conversationCreated:true,now:new Date(now)});
+    assert.equal(result.reply,expected);assert.equal(result.visitType,'both');
+    assert(!result.reply.includes('release number'));assert(!result.reply.includes('After unloading'));
+   }
+  }
+ }
 });
