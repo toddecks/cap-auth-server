@@ -1916,7 +1916,7 @@ app.post("/api/shipping/send-photo", async (req, res) => {
   }
 });
 
-const staffCheckinHandler = require('./staff-checkin').createHandler({db:driverSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
+const staffCheckinHandler = require('./staff-checkin').createHandler({db:driverSupabase,chartDb:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
 app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
@@ -1991,6 +1991,7 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
           full_name: driverName,
           driver_company: driverCompany,
           last_release_number: releaseNumber,
+          onboarding_step: 'ready',
           ...typeUpdate,
           updated_at: new Date().toISOString()
         }).eq("phone_e164", arrival.phone_e164),

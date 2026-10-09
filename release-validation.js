@@ -58,7 +58,7 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
       const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
-        && now() - Date.parse(instructions.sent_at) >= CHECKIN_FOLLOWUP_MS
+        && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
         && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
         await send(c,'remain',REMAIN);
       }
