@@ -35,6 +35,7 @@ test('Both selection, combined intent, and subsequent details preserve a single 
   assert.equal(details.visitType,'both');assert.equal(details.contact.onboarding_step,'ready');assert.equal(details.reply,'');
   assert.equal(nextCheckin({existing:details.contact,body:'967434'}).visitType,'both');
   assert.equal(nextCheckin({existing:details.contact,body:'Both'}).reply,'');
+  assert.equal(nextCheckin({existing:details.contact,body:'dropoff'}).reply,'');
  }
  const closed=nextCheckin({body:'Both',conversationCreated:true,now:new Date('2026-10-09T22:02:00Z')});
  assert.match(closed.reply,/Receiving is closed/);assert(!closed.reply.includes('unchain'));

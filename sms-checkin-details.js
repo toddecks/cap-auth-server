@@ -67,7 +67,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
  let reply='';
  if(!type&&fresh)reply=flow.TYPE_PROMPT;
- else if(type&&(fresh||type!==previousType||chosen==='dropoff')) {
+ else if(type&&(fresh||type!==previousType||(type==='dropoff'&&chosen==='dropoff'))) {
   if(type==='dropoff')reply=flow.dropoffReply(now);
   else {
    const missing=[!contact.full_name&&'name',!contact.last_release_number&&'release number',!contact.driver_company&&'carrier name'].filter(Boolean);
