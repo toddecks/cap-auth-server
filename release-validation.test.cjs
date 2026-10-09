@@ -92,3 +92,14 @@ for(const type of ['pickup','dropoff',null])test('unverified '+type+' visit rema
  f.advance(1);await f.worker.tick();assert.equal(f.checkouts.length,0);
 });
 test('ended session cannot send reminders',async()=>{const f=fixture();f.tables.driver_conversations[0].session_ended_at='2026-10-01T17:00:00Z';await f.worker.tick();assert.equal(f.sends.length,0)});
+
+test('Both sends no pickup reminders until check-in; then one follow-up at sixty seconds',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].visit_type='both';
+ await f.worker.tick();f.advance(600000);await f.worker.tick();assert.equal(f.sends.length,0);
+ f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:10:00Z'});
+ f.tables.driver_messages.push({conversation_id:'visit-1',client_message_id:'staff-pickup-checkin:visit-1',sent_at:'2026-10-01T17:10:00Z',delivery_status:'sent',sender_user_id:'staff',direction:'shipping_to_driver'});
+ f.advance(59999);await f.worker.tick();assert.equal(f.sends.length,0);
+ f.advance(1);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[REMAIN]);
+ await createWorker(f.options).tick();assert.equal(f.sends.length,1);
+ f.tables.driver_conversations[0].status='closed';f.advance(3600000);await f.worker.tick();assert.equal(f.sends.length,1);assert.equal(f.checkouts.length,0);
+});

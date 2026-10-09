@@ -57,12 +57,13 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  const chosen=flow.visitType(body);
  const introduction=parseDetails(flow.stripVisitWords(body),{});
  const completeIntroduction=Boolean(introduction.full_name&&introduction.driver_company&&introduction.last_release_number);
- const type=chosen||(introduction.last_release_number?'pickup':previousType)||null;
+ // Numbers supplied for the pickup leg must not erase a Both visit.
+ const type=previousType==='both'?'both':chosen||(introduction.last_release_number?'pickup':previousType)||null;
  const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
  const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
  const detailText=flow.stripVisitWords(body);
  const parsed=completeIntroduction?introduction:parseDetails(detailText,base),contact={...base,...parsed,visit_type:type,visit_started_at:started};
- contact.onboarding_step=type==='dropoff'||(type==='pickup'&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';
+ contact.onboarding_step=type==='dropoff'||(['pickup','both'].includes(type)&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
  let reply='';
  if(!type&&fresh)reply=flow.TYPE_PROMPT;
@@ -71,6 +72,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
   else {
    const missing=[!contact.full_name&&'name',!contact.last_release_number&&'release number',!contact.driver_company&&'carrier name'].filter(Boolean);
    if(missing.length)reply=`Please reply with your ${missing.length===3?missing.slice(0,2).join(', ')+', and '+missing[2]:missing.join(' and ')}.`;
+   if(type==='both')reply=[flow.bothReply(now),reply].filter(Boolean).join(' ');
   }
  }
  return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed,visitType:type};

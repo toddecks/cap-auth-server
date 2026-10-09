@@ -16,7 +16,8 @@ function createHandler(deps) {
    if(!['shipping','admin'].includes(staff.app_metadata?.csp_role))return res.status(403).json({error:'Shipping access is required.'});
    const {data:c,error:ce}=await db.from('driver_conversations').select('*').eq('id',id).single();
    if(ce||!c||c.status!=='open')return res.status(409).json({error:'This conversation is no longer open.'});
-   if(c.visit_type!=='pickup'||!String(c.release_number||'').trim()||/^(TEXT\s*\d*|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
+   if(!['pickup','both'].includes(c.visit_type)||!String(c.release_number||'').trim()||/^(TEXT\s*\d*|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
+   if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
@@ -26,7 +27,7 @@ function createHandler(deps) {
     if(ee)throw ee;
     arrivalId=existing?.id;
     if(!arrivalId){
-     const {data:arrival,error:ae}=await db.from('driver_sms_arrivals').insert({phone_e164:c.sms_phone_e164,conversation_id:id,facility_id:c.facility_id,release_number:c.release_number,driver_name:contact.full_name,driver_company:contact.driver_company,visit_type:'pickup',added_by:staff.id}).select('id').single();
+     const {data:arrival,error:ae}=await db.from('driver_sms_arrivals').insert({phone_e164:c.sms_phone_e164,conversation_id:id,facility_id:c.facility_id,release_number:c.release_number,driver_name:contact.full_name,driver_company:contact.driver_company,visit_type:c.visit_type,added_by:staff.id}).select('id').single();
      if(ae)throw ae;arrivalId=arrival.id;
     }
    }
@@ -39,7 +40,7 @@ function createHandler(deps) {
    if(ve)throw ve;
    if(c.channel==='sms'){const {error:e}=await db.from('driver_sms_arrivals').update({checked_in_at:verified.checked_in_at}).eq('id',arrivalId);if(e)throw e;}
    let warning=null;
-   try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:'pickup'});}
+   try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type});}
    catch(error){console.error('Staff check-in instructions:',error.message);warning='Check-in recorded, but instructions could not be confirmed. Review the conversation before sending them manually.';}
    return res.json({ok:true,arrivalId,checkedInAt:verified.checked_in_at,warning});
   } catch(error){console.error('Staff check-in:',error.message);return res.status(500).json({error:'Check-in could not be completed. Refresh and try again.'});}

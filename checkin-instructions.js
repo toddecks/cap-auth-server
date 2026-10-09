@@ -4,7 +4,7 @@ const {needsImages}=require('./first-visit-images');
 const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
 async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType}){
- if(visitType!=='pickup')return null;
+ if(!['pickup','both'].includes(visitType))return null;
  const instructions=await require('./pickup-directions').pickupInstructions(chartDb,conversation);
  const includeImages=await needsImages(db,conversation);
  async function sendOnce(id,body,attachment) {

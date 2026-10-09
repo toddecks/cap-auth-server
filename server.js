@@ -1932,7 +1932,7 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
   const checkInArrivalId = Number(req.body?.checkInArrivalId);
   const conversationId = String(req.body?.conversationId || "").trim();
   const visitType = String(req.body?.visitType || '').trim();
-  if (visitType && !['pickup','dropoff'].includes(visitType)) return res.status(400).json({error:'Choose pick-up or drop-off.'});
+  if (visitType && !['pickup','dropoff','both'].includes(visitType)) return res.status(400).json({error:'Choose pick-up, drop-off, or both.'});
   const typeUpdate = visitType ? {visit_type:visitType} : {};
   const driverName = String(req.body?.driverName || "").trim().slice(0, 120);
   const driverCompany = String(req.body?.driverCompany || "").trim().slice(0, 160);

@@ -16,7 +16,7 @@ const officeClosed = timestamp => {
   const hour = Number(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',hour:'2-digit',hourCycle:'h23'}).format(new Date(timestamp)));
   return hour >= 18 || hour < 6;
 };
-const validPickup = c => c.status === 'open' && c.visit_type === 'pickup' &&
+const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
@@ -64,6 +64,8 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
       }
       return;
     }
+    // Both drivers unload first; pickup automation starts only after staff check-in.
+    if(c.visit_type==='both')return;
     if(session.start(c) < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
