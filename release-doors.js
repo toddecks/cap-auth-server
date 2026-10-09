@@ -24,16 +24,18 @@ function doorMatches(rows,releases,date){
    }
    if(!candidates.length)continue;
    const key=release+':'+location;
-   // A partial number must identify one load, even if another match is farther away.
-   const identities=new Set(candidates.map(r=>JSON.stringify([r.poRel,r.scheduleDate,r.scheduleTime,r.unloadingDoor])));
-   if(matchType==='partial'&&identities.size>1){result[key]={door:null,status:'ambiguous',appointment_at:null,match_type:'partial'};continue;}
-   const distance=r=>Math.abs(Date.parse(r.scheduleDate)-Date.parse(date));
-   const best=Math.min(...candidates.map(distance)),nearest=candidates.filter(r=>distance(r)===best);
-   const doors=[...new Set(nearest.map(r=>String(r.unloadingDoor||'').trim()).filter(Boolean))];
-   const incomplete=nearest.some(r=>!String(r.unloadingDoor||'').trim());
-   const appointments=[...new Set(nearest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
+   // Resolve a fragment to one full reference before comparing its dated occurrences.
+   const matchedReferences=new Set(candidates.flatMap(r=>r.refs.filter(ref=>ref.includes(release))));
+   if(matchType==='partial'&&matchedReferences.size>1){result[key]={door:null,status:'ambiguous',appointment_at:null,match_type:'partial'};continue;}
+   const dated=candidates.filter(r=>Number.isFinite(Date.parse(r.scheduleDate)));
+   if(!dated.length)continue;
+   const latestDate=Math.max(...dated.map(r=>Date.parse(r.scheduleDate)));
+   const latest=dated.filter(r=>Date.parse(r.scheduleDate)===latestDate);
+   const doors=[...new Set(latest.map(r=>String(r.unloadingDoor||'').trim()).filter(Boolean))];
+   const incomplete=latest.some(r=>!String(r.unloadingDoor||'').trim());
+   const appointments=[...new Set(latest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
    const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
-   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:nearest[0]?.poRel||null,customer:!ambiguous?[...new Set(nearest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
+   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:latest[0]?.poRel||null,customer:!ambiguous?[...new Set(latest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
   }
  }
  return result;

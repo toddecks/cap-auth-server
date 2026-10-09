@@ -2126,11 +2126,9 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
           location: row.location || null,
           bol_number: row.bolNumber || row.masterBolNumber || null
         };
-        const existingDistance = matches[key]
-          ? Math.abs(new Date(matches[key].appointment_at).getTime() - selected.getTime())
-          : Infinity;
-        const candidateDistance = Math.abs(new Date(`${appointmentAt}Z`).getTime() - selected.getTime());
-        if (candidateDistance < existingDistance) matches[key] = candidate;
+        const existingDate = matches[key] ? matches[key].appointment_at.slice(0, 10) : '';
+        // Reused release numbers use the newest scheduled date in the appointment window.
+        if (row.scheduleDate > existingDate) matches[key] = candidate;
       });
     });
     return res.json({ matches, doors: require("./release-doors").doorMatches(data || [], releases, date) });
