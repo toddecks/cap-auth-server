@@ -41,3 +41,10 @@ test('Both selection, combined intent, and subsequent details preserve a single 
  assert.match(closed.reply,/Receiving is closed/);assert(!closed.reply.includes('unchain'));
  const fresh=nextCheckin({existing:{visit_type:'both'},body:'pickup',conversationCreated:true});assert.equal(fresh.visitType,'pickup');
 });
+
+test('combined visit phrase does not become the driver name',()=>{
+ for(const intent of ['drop off and pick up','pick up & drop off','drop off then pick up']){
+  const r=nextCheckin({body:intent+', Lindsey, MLM, 967433',conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});
+  assert.equal(r.visitType,'both');assert.equal(r.contact.full_name,'Lindsey');assert.equal(r.contact.driver_company,'MLM');assert.equal(r.contact.last_release_number,'967433');
+ }
+});

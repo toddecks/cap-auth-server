@@ -15,7 +15,7 @@ function visitType(text){
  return pickup||/^\s*#?\d+\s*$/.test(value)?'pickup':null;
 }
 function stripVisitWords(text){
- return String(text||'').replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS}|both)\b`,'gi'),'').replace(/^\s*(?:and|&)\s*$/i,'');
+ return String(text||'').replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\s*(?:and|&|\+|then)\s*(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\b`,'gi'),'').replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS}|both)\b`,'gi'),'').replace(/^\s*(?:and|&)\s*$/i,'');
 }
 function dropoffReply(at=new Date()){
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(p=>[p.type,p.value]));
