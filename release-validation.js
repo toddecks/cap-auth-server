@@ -19,7 +19,7 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
+function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
   const health = {mode:'pickup-followups-v7-manual-checkout',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -50,7 +50,7 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || c.status!=='open' || c.session_ended_at) return;
     const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
-    const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id));
+    const allMessages = await result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id));
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
       await sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages});
@@ -72,8 +72,10 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||session.start(c));
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
+    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now});
+    if(verification.state==='invalid'||verification.state==='ambiguous')return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;
-    const initial = messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
+    const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
     if(!initial) return officeClosed(pickupAt) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);

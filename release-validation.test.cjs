@@ -142,3 +142,16 @@ test('Both details without PICK UP do not start pickup reminders',async()=>{
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Lindsey 254571 Tamco',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.equal(f.sends.length,0);
 });
+test('live worker rejects each invalid entry once, pauses waiting reminders, accepts correction, and resumes timers',async()=>{
+ const f=fixture();f.advance(Date.parse('2026-10-12T18:40:00Z')-f.options.now());const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();c.facility_id='csp-toledo-main';c.release_number='1111';
+ f.options.chart={from(){const q={select(){return q},gte(){return q},lte(){return q},order(){return q},range(){return q},then(fn){return Promise.resolve({data:[{poRel:'968751',scheduleDate:'2026-10-12',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]}).then(fn)}};return q}};
+ const worker=createWorker(f.options);
+ const add=body=>f.tables.driver_messages.push({id:'inbound-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
+ add('1111');await worker.tick();await worker.tick();assert.equal(f.sends.length,1);assert.match(f.sends[0].body,/not valid/);
+ f.advance(300000);await worker.tick();assert.equal(f.sends.length,1,'invalid release suppresses normal wait reminders');
+ add('2222');await worker.tick();assert.match(f.sends[1].body,/still not valid/);
+ add('3333');await worker.tick();assert.equal(f.sends[2].body,'Please call 419-269-9706 for assistance.');
+ c.release_number='968751';add('968751');await worker.tick();assert.match(f.sends[3].body,/Our Shipping Office is verifying/);
+ f.advance(180000);await worker.tick();assert.equal(f.sends[4].body,SOON);
+ assert.equal(f.worker.health.error,null);assert.equal(f.checkouts.length,0);
+});
