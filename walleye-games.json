@@ -1,0 +1,87 @@
+[
+  {
+    "id": "2026-11-20",
+    "label": "Friday, Nov 20, 2026 \u2014 Rapid City Rush \u2014 7:15 PM ET",
+    "startsAt": "2026-11-20T19:15:00-05:00"
+  },
+  {
+    "id": "2026-11-29",
+    "label": "Sunday, Nov 29, 2026 \u2014 Fort Wayne Komets \u2014 5:15 PM ET",
+    "startsAt": "2026-11-29T17:15:00-05:00"
+  },
+  {
+    "id": "2026-12-02",
+    "label": "Wednesday, Dec 2, 2026 \u2014 Fort Wayne Komets \u2014 10:35 AM ET",
+    "startsAt": "2026-12-02T10:35:00-05:00"
+  },
+  {
+    "id": "2026-12-19",
+    "label": "Saturday, Dec 19, 2026 \u2014 Bloomington Bison \u2014 7:15 PM ET",
+    "startsAt": "2026-12-19T19:15:00-05:00"
+  },
+  {
+    "id": "2026-12-27",
+    "label": "Sunday, Dec 27, 2026 \u2014 Indy Fuel \u2014 5:15 PM ET",
+    "startsAt": "2026-12-27T17:15:00-05:00"
+  },
+  {
+    "id": "2027-01-09",
+    "label": "Saturday, Jan 9, 2027 \u2014 Wheeling Nailers \u2014 7:15 PM ET",
+    "startsAt": "2027-01-09T19:15:00-05:00"
+  },
+  {
+    "id": "2027-01-22",
+    "label": "Friday, Jan 22, 2027 \u2014 Cincinnati Cyclones \u2014 7:15 PM ET",
+    "startsAt": "2027-01-22T19:15:00-05:00"
+  },
+  {
+    "id": "2027-01-24",
+    "label": "Sunday, Jan 24, 2027 \u2014 Kalamazoo Wings \u2014 5:15 PM ET",
+    "startsAt": "2027-01-24T17:15:00-05:00"
+  },
+  {
+    "id": "2027-02-06",
+    "label": "Saturday, Feb 6, 2027 \u2014 Bloomington Bison \u2014 7:15 PM ET",
+    "startsAt": "2027-02-06T19:15:00-05:00"
+  },
+  {
+    "id": "2027-02-12",
+    "label": "Friday, Feb 12, 2027 \u2014 Cincinnati Cyclones \u2014 7:15 PM ET",
+    "startsAt": "2027-02-12T19:15:00-05:00"
+  },
+  {
+    "id": "2027-02-27",
+    "label": "Saturday, Feb 27, 2027 \u2014 Fort Wayne Komets \u2014 7:15 PM ET",
+    "startsAt": "2027-02-27T19:15:00-05:00"
+  },
+  {
+    "id": "2027-03-05",
+    "label": "Friday, Mar 5, 2027 \u2014 Jacksonville Icemen \u2014 7:15 PM ET",
+    "startsAt": "2027-03-05T19:15:00-05:00"
+  },
+  {
+    "id": "2027-03-07",
+    "label": "Sunday, Mar 7, 2027 \u2014 Jacksonville Icemen \u2014 5:15 PM ET",
+    "startsAt": "2027-03-07T17:15:00-05:00"
+  },
+  {
+    "id": "2027-03-13",
+    "label": "Saturday, Mar 13, 2027 \u2014 Cincinnati Cyclones \u2014 7:15 PM ET",
+    "startsAt": "2027-03-13T19:15:00-05:00"
+  },
+  {
+    "id": "2027-03-26",
+    "label": "Friday, Mar 26, 2027 \u2014 Atlanta Gladiators \u2014 7:15 PM ET",
+    "startsAt": "2027-03-26T19:15:00-04:00"
+  },
+  {
+    "id": "2027-04-03",
+    "label": "Saturday, Apr 3, 2027 \u2014 Wheeling Nailers \u2014 7:15 PM ET",
+    "startsAt": "2027-04-03T19:15:00-04:00"
+  },
+  {
+    "id": "2027-04-11",
+    "label": "Sunday, Apr 11, 2027 \u2014 Wheeling Nailers \u2014 5:15 PM ET",
+    "startsAt": "2027-04-11T17:15:00-04:00"
+  }
+]
