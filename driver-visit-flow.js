@@ -9,8 +9,8 @@ const DROPOFF_WORDS = String.raw`(?:drop[\s-]*off|dropping[\s-]*off|drop[\s-]*of
 // boundaries keep Cyrillic commands out of names and longer unrelated words.
 const TRANSLATED_VISITS = [
  ['both', ['ambas','ambos','les deux','и то и другое','і те й інше','і те і інше','обидва','оба']],
- ['dropoff', ['entrega','entregar','доставка','доставити','доставить','dépôt','depot','livraison']],
- ['pickup', ['recogida','recoger','получение','отримання','забрати','забрать','retrait','enlèvement','enlevement']]
+ ['dropoff', ['dejar carga','сдать груз','здати вантаж','déposer une cargaison','deposer une cargaison','entrega','entregar','доставка','доставити','доставить','dépôt','depot','livraison']],
+ ['pickup', ['recoger carga','забрать груз','забрати вантаж','récupérer une cargaison','recuperer une cargaison','recogida','recoger','получение','отримання','забрати','забрать','retrait','enlèvement','enlevement']]
 ];
 function translatedCommands(text){
  let value=String(text||'').normalize('NFC');

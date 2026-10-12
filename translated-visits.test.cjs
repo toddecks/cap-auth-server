@@ -2,7 +2,8 @@ const {test}=require('node:test'), assert=require('node:assert/strict');
 const {visitType}=require('./driver-visit-flow');
 const {nextCheckin}=require('./sms-checkin-details');
 const {startsNewVisit}=require('./visit-session');
-const signWords={Spanish:{dropoff:'entrega',pickup:'recogida',both:'ambas'},Russian:{dropoff:'доставка',pickup:'получение',both:'и то и другое'},Ukrainian:{dropoff:'доставка',pickup:'отримання',both:'і те, й інше'},French:{dropoff:'dépôt',pickup:'retrait',both:'les deux'}};
+const legacySignWords={Spanish:{dropoff:'entrega',pickup:'recogida',both:'ambas'},Russian:{dropoff:'доставка',pickup:'получение',both:'и то и другое'},Ukrainian:{dropoff:'доставка',pickup:'отримання',both:'і те, й інше'},French:{dropoff:'dépôt',pickup:'retrait',both:'les deux'}};
+const signWords={...legacySignWords,SpanishUpdated:{dropoff:'DEJAR CARGA',pickup:'RECOGER CARGA',both:'AMBAS'},RussianUpdated:{dropoff:'СДАТЬ ГРУЗ',pickup:'ЗАБРАТЬ ГРУЗ',both:'И ТО И ДРУГОЕ'},UkrainianUpdated:{dropoff:'ЗДАТИ ВАНТАЖ',pickup:'ЗАБРАТИ ВАНТАЖ',both:'І ТЕ, І ІНШЕ'},FrenchUpdated:{dropoff:'DÉPOSER UNE CARGAISON',pickup:'RÉCUPÉRER UNE CARGAISON',both:'LES DEUX'}};
 for(const [language,words] of Object.entries(signWords))for(const [type,word] of Object.entries(words)){
  test(language+' sign: '+word+' → '+type,()=>{
   for(const body of [word,word.toUpperCase(),'  «'+word+'»!  ',word.normalize('NFD')]){
