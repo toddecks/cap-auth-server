@@ -40,9 +40,9 @@ test('commands do not match inside unrelated words or Cyrillic names',()=>{
  for(const text of ['Cambridge','Retraite','Ambassade','Доставкам','Получением','Отриманням','Обама','André','Dépôts','recogidas'])assert.equal(visitType(text),null,text);
 });
 
-test('Both initial response is exactly Drop-off, with no pickup details requested',()=>{
+test('Both initial response includes the two steps during receiving hours',()=>{
  for(const now of ['2026-10-09T14:00:00Z','2026-10-09T21:45:00Z','2026-10-09T22:02:00Z','2026-10-10T14:00:00Z']){
-  const expected=require('./driver-visit-flow').dropoffReply(now);
+  const expected=require('./driver-visit-flow').bothReply(now);
   for(const body of ['Both','ambas','и то и другое','і те, й інше','les deux']){
    for(const existing of [undefined,{full_name:'Lindsey',driver_company:'MLM'}]){
     const result=nextCheckin({body,existing,conversationCreated:true,now:new Date(now)});

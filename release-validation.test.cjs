@@ -103,3 +103,28 @@ test('Both sends no pickup reminders until check-in; then one follow-up at sixty
  await createWorker(f.options).tick();assert.equal(f.sends.length,1);
  f.tables.driver_conversations[0].status='closed';f.advance(3600000);await f.worker.tick();assert.equal(f.sends.length,1);assert.equal(f.checkouts.length,0);
 });
+
+test('Both explicit PICK UP starts standard timers; unloading messages and old staff replies do not',async()=>{
+ const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type='both';
+ const inbound=(body)=>f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
+ inbound('Both');await f.worker.tick();assert.equal(f.sends.length,0);
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'staff',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent'});
+ f.advance(600000);inbound('PICK UP');await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY]);
+ f.advance(179999);await f.worker.tick();assert.equal(f.sends.length,1);
+ f.advance(1);await createWorker(f.options).tick();assert.equal(f.sends[1].body,SOON);
+ f.advance(120000);await f.worker.tick();assert.equal(f.sends[2].body,ASSIST);
+ inbound('PICK UP');await f.worker.tick();assert.equal(f.sends.length,3,'repeat command must not restart or duplicate reminders');
+ assert.equal(c.visit_type,'both');assert.equal(f.checkouts.length,0);
+});
+test('staff reply during Both pickup phase cancels reminders',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].visit_type='both';
+ f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'RECOGER CARGA',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();f.advance(60000);
+ f.tables.driver_messages.push({conversation_id:'visit-1',direction:'shipping_to_driver',sender_user_id:'staff',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent'});
+ f.advance(300000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY]);
+});
+test('Both pickup hours use return time, not earlier unloading arrival time',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].visit_type='both';f.advance(5*3600000);
+ f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
+});

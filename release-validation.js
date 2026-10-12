@@ -11,7 +11,7 @@ const CHECKIN_FOLLOWUP_MS = 60 * 1000;
 const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
 const SOON = 'Our shipping team will be with you shortly.';
 const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
-const REMAIN = 'Please remain in your truck. A shipping team member will assist you shortly.';
+const REMAIN = 'Please remain in your truck. A shipping team member will be with you shortly.';
 const officeClosed = timestamp => {
   const hour = Number(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',hour:'2-digit',hourCycle:'h23'}).format(new Date(timestamp)));
   return hour >= 18 || hour < 6;
@@ -19,7 +19,7 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now()}) {
+function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
   const health = {mode:'pickup-followups-v7-manual-checkout',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -50,9 +50,12 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || c.status!=='open' || c.session_ended_at) return;
     const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
-    if(!validPickup(c))return;
-    const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status').eq('conversation_id',id));
+    const allMessages = await result(db.from('driver_messages').select('client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id));
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
+    if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
+      await sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages});
+    }
+    if(!validPickup(c))return;
     if(session.currentCheckin(c,checked)) {
       // Only new staff check-ins receive this automation; no retroactive messages.
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
@@ -64,14 +67,15 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
       }
       return;
     }
-    // Both drivers unload first; pickup automation starts only after staff check-in.
-    if(c.visit_type==='both')return;
-    if(session.start(c) < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
-    if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && !['failed','undelivered'].includes(m.delivery_status))) return;
+    // The explicit pickup command starts the second leg without ending the visit.
+    const pickupAt=c.visit_type==='both'?require('./both-pickup-phase').pickupRequestedAt(messages):session.start(c);
+    if(!pickupAt)return;
+    if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
+    if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
-    if(!initial) return officeClosed(session.start(c)) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
+    if(!initial) return officeClosed(pickupAt) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
     if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${session.key(c)}`)) {
       await send(c,'assist',ASSIST);

@@ -1,7 +1,7 @@
 'use strict';
 const TYPE_PROMPT='Are you here for a pick-up, drop-off, or both? Please reply PICKUP, DROPOFF, or BOTH.';
 const PICKUP_PROMPT='Please reply with your name, release number, and carrier name.';
-const PICKUP_CHECKIN='Please pull around back and stay on the left side. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
+const PICKUP_CHECKIN='Please pull around back and stay to the LEFT. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
 // Explicit common typos avoid treating unrelated short words as arrival intent.
 const PICKUP_WORDS = String.raw`(?:pick[\s-]*up|picking[\s-]*up|pik[\s-]*up|pic[\s-]*up|pck[\s-]*up|pcik[\s-]*up|pikc[\s-]*up|pick[\s-]*pu|pick[\s-]*upp|pick[\s-]*ip|pick[\s-]*uo|pickng[\s-]*up|piking[\s-]*up|pick)`;
 const DROPOFF_WORDS = String.raw`(?:drop[\s-]*off|dropping[\s-]*off|drop[\s-]*of|dropp[\s-]*off|dropp[\s-]*of|drpo[\s-]*off|dorp[\s-]*off|drp[\s-]*off|dro[\s-]*off|drop[\s-]*offf|drop[\s-]*oft|droping[\s-]*off|dropping[\s-]*of|delivery|delivering)`;
@@ -39,6 +39,7 @@ function dropoffReply(at=new Date()){
  return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
 }
 function bothReply(at=new Date()){
- return dropoffReply(at);
+ const reply=dropoffReply(at);
+ return reply.startsWith('Please pull around back') ? 'STEP 1 – DROP OFF: Pull around back and stay to the RIGHT. Once stopped in line, unchain your load and open your trailer for unloading. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.\n\nSTEP 2 – PICK UP: Once unloaded, pull around the building and return to your original arrival point and text PICK UP to begin the pick-up process.' : reply;
 }
 module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,visitType,stripVisitWords,dropoffReply,bothReply};
