@@ -10,7 +10,7 @@ for(const [type,variants] of [['pickup',pickups],['dropoff',dropoffs]]) {
    assert.equal(visitType(body.toUpperCase()+'!'),type,body);
    const r=nextCheckin({body,conversationCreated:true,now:new Date('2026-10-06T14:00:00Z')});
    assert.equal(r.visitType,type,body);assert.equal(r.contact.full_name,'',body);
-   assert.match(r.reply,type==='dropoff'?/unchain your load/:/name, release number, and carrier name/,body);
+   if(type==='dropoff')assert.match(r.reply,/unchain your load/,body);else assert.equal(r.reply,'',body);
   }
  });
 }

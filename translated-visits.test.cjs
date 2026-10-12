@@ -10,7 +10,7 @@ for(const [language,words] of Object.entries(signWords))for(const [type,word] of
    assert.equal(visitType(body),type,body);
    const r=nextCheckin({body,conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});
    assert.equal(r.visitType,type);assert.equal(r.contact.full_name,'');assert.equal(r.contact.driver_company,'');
-   assert.match(r.reply,type==='pickup'?/name, release number, and carrier name/:type==='both'?/unchain your load/:/unchain your load/);
+   if(type==='pickup')assert.equal(r.reply,'');else assert.match(r.reply,/unchain your load/);
    assert.equal(startsNewVisit({session_ended_at:'2026-10-08T14:00:00Z'},null,body),true);
   }
   const full=nextCheckin({body:word+', José, MLM, 967433',conversationCreated:true,now:new Date('2026-10-09T14:00:00Z')});

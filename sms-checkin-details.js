@@ -70,10 +70,8 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  else if(type&&(fresh||type!==previousType||(type==='dropoff'&&chosen==='dropoff')||(previousType==='both'&&chosen==='pickup'))) {
   if(type==='both'&&chosen!=='pickup')reply=flow.bothReply(now);
   else if(type==='dropoff')reply=flow.dropoffReply(now);
-  else {
-   const missing=[!contact.full_name&&'name',!contact.last_release_number&&'release number',!contact.driver_company&&'carrier name'].filter(Boolean);
-   if(missing.length)reply=`Please reply with your ${missing.length===3?missing.slice(0,2).join(', ')+', and '+missing[2]:missing.join(' and ')}.`;
-  }
+  // Pickup's first response is sent once by the reminder worker, including
+  // when the release is missing; this prevents two competing auto replies.
  }
  return {contact,reply,releaseNumber:parsed.last_release_number||'',detailsChanged:changed,visitType:type};
 }

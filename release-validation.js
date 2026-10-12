@@ -2,7 +2,7 @@
 
 // This worker acknowledges receipt only. Release verification belongs to Shipping.
 const session=require('./visit-session');
-const VERIFY = 'Thank you. Our Shipping Office is verifying your release number. We’ll send you further instructions shortly.';
+const VERIFY = 'Please send your release number for verification and further instructions.';
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
@@ -55,7 +55,8 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
       await sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages});
     }
-    if(!validPickup(c))return;
+    const requestedAt=require('./both-pickup-phase').pickupRequestedAt(messages);
+    if(!['pickup','both'].includes(c.visit_type)||(!validPickup(c)&&!requestedAt))return;
     if(session.currentCheckin(c,checked)) {
       // Only new staff check-ins receive this automation; no retroactive messages.
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
@@ -68,7 +69,7 @@ function createWorker({db, twilio, messagingServiceSid, publicBaseUrl, scheduleS
       return;
     }
     // The explicit pickup command starts the second leg without ending the visit.
-    const pickupAt=c.visit_type==='both'?require('./both-pickup-phase').pickupRequestedAt(messages):session.start(c);
+    const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||session.start(c));
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;

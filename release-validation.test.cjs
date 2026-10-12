@@ -128,3 +128,17 @@ test('Both pickup hours use return time, not earlier unloading arrival time',asy
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
 });
+for(const type of ['pickup','both'])test(type+' command immediately requests missing release and starts 3/5 minute timers',async()=>{
+ const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type=type;c.release_number='';
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.equal(f.sends[0].body,'Please send your release number for verification and further instructions.');
+ f.advance(179999);await f.worker.tick();assert.equal(f.sends.length,1);
+ f.advance(1);await createWorker(f.options).tick();assert.equal(f.sends[1].body,SOON);
+ c.release_number='254571';await f.worker.tick();assert.equal(f.sends.length,2,'Supplying release must not restart timers or repeat prompt');
+ f.advance(120000);await f.worker.tick();assert.equal(f.sends[2].body,ASSIST);
+});
+test('Both details without PICK UP do not start pickup reminders',async()=>{
+ const f=fixture();f.tables.driver_conversations[0].visit_type='both';
+ f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Lindsey 254571 Tamco',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.equal(f.sends.length,0);
+});
