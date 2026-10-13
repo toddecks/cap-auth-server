@@ -20,7 +20,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v7-manual-checkout',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v8-app-sms-parity',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -78,7 +78,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now});
     if(c.channel==='app'&&verification.state==='matched') {
-      const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).at(-1);
+      const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
       const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);
       const release=attempt&&require('./release-attempts').releaseFromMessage(attempt.body);
       if(release&&c.release_number!==release) {
