@@ -20,13 +20,7 @@ function releaseFromMessage(body){
 async function lookupRelease(chart,release,c,at){
  if(!chart)throw Error('Release database is unavailable.');
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- const start=new Date(date+'T12:00:00Z'),end=new Date(start);start.setUTCDate(start.getUTCDate()-1);end.setUTCDate(end.getUTCDate()+1);
- const rows=[];
- for(let offset=0;;offset+=1000){
-  const {data,error}=await chart.from('psdata_loads_api').select('scheduleDate,scheduleTime,poRel,location,cancelLoad,unloadingDoor,customerNo,bolNumber').gte('scheduleDate',start.toISOString().slice(0,10)).lte('scheduleDate',end.toISOString().slice(0,10)).order('scheduleDate').order('bolNumber').range(offset,offset+999);
-  if(error)throw error;
-  rows.push(...(data||[]));if(!data||data.length<1000)break;
- }
+ const rows=await require('./release-catalog').releaseCatalog(chart);
  const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[c.facility_id];
  if(!location)throw Error('Release facility is unknown.');
  const key=release.normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');

@@ -2098,17 +2098,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
       return res.status(403).json({ error: "CSP Shipping access is required to view appointments." });
     }
 
-    const selected = new Date(`${date}T12:00:00Z`);
-    const start = new Date(selected); start.setUTCDate(start.getUTCDate() - 1);
-    const end = new Date(selected); end.setUTCDate(end.getUTCDate() + 1);
-    const dateOnly = (value) => value.toISOString().slice(0, 10);
-    const { data, error } = await chartSupabase
-      .from("psdata_loads_api")
-      .select("scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor,shipToCustomerName,customerNo")
-      .gte("scheduleDate", dateOnly(start))
-      .lte("scheduleDate", dateOnly(end))
-      .limit(5000);
-    if (error) throw error;
+    const data = await require('./release-catalog').releaseCatalog(chartSupabase);
 
     const requested = new Set(releases);
     const matches = {};

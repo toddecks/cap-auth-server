@@ -69,10 +69,23 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       return;
     }
     // The explicit pickup command starts the second leg without ending the visit.
-    const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||session.start(c));
+    // Native arrival messages carry the phone's arrival timestamp, which precedes
+    // the conversation insert. They belong to this arrival even before created_at.
+    const nativeInitial=c.channel==='app'&&!c.session_started_at
+      ? messages.find(m=>m.direction==='driver_to_shipping'&&m.client_message_id?.endsWith('-release')):null;
+    const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||Math.min(session.start(c),nativeInitial?Date.parse(nativeInitial.sent_at):Infinity));
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now});
+    if(c.channel==='app'&&verification.state==='matched') {
+      const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).at(-1);
+      const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);
+      const release=attempt&&require('./release-attempts').releaseFromMessage(attempt.body);
+      if(release&&c.release_number!==release) {
+        await result(db.from('driver_conversations').update({release_number:release}).eq('id',c.id).eq('status','open'));
+        if(c.arrival_id)await result(db.from('driver_arrivals').update({release_number:release}).eq('id',c.arrival_id));
+      }
+    }
     if(verification.state==='invalid'||verification.state==='ambiguous')return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);

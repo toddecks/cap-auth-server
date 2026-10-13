@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const {createWorker,VERIFY,ASSIST,SOON,CLOSED,REMAIN,officeClosed}=require('./release-validation');
 function fixture(channel='sms') {
  let clock=Date.parse('2026-10-01T17:00:00Z');
- const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_staff_checkins:[],driver_messages:[]};
+ const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
   const q={select(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
@@ -154,4 +154,29 @@ test('live worker rejects each invalid entry once, pauses waiting reminders, acc
  c.release_number='968751';add('968751');await worker.tick();assert.match(f.sends[3].body,/Our Shipping Office is verifying/);
  f.advance(180000);await worker.tick();assert.equal(f.sends[4].body,SOON);
  assert.equal(f.worker.health.error,null);assert.equal(f.checkouts.length,0);
+});
+
+for(const type of ['pickup','both'])test(`native ${type} validates initial/corrected release in same visit`,async()=>{
+ const f=fixture('app');f.advance(Date.parse('2026-10-13T15:05:28Z')-f.options.now());
+ const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',visit_type:type,release_number:type==='both'?'Drop-off':'72039',arrival_id:480});
+ f.tables.driver_arrivals.push({id:480,release_number:c.release_number});
+ f.options.sendBothImages=async()=>{};
+ f.options.chart={from(){const q={select(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+ const worker=createWorker(f.options);
+ const add=(body,id,at=f.options.now())=>f.tables.driver_messages.push({id,client_message_id:id,conversation_id:c.id,body,sent_at:new Date(at).toISOString(),direction:'driver_to_shipping'});
+ const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
+ add(type==='both'?'Drop-off and pick-up check-in':'Release number: 72039','arrival-test-release',f.options.now()-1200);
+ await worker.tick();
+ if(type==='both'){
+  assert.deepEqual(replies(),[],'no release validation during drop-off');
+  f.advance(60000);add('PICK UP','pickup');await worker.tick();assert.deepEqual(replies(),[VERIFY]);
+  add('72039','wrong');await worker.tick();
+ }
+ assert.equal(replies().at(-1),require('./release-attempts').INVALID[0]);
+ f.advance(1000);add('72037','correct');await worker.tick();await worker.tick();
+ assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
+ assert.equal(c.release_number,'72037');assert.equal(f.tables.driver_arrivals[0].release_number,'72037');
+ assert.equal(c.visit_type,type);assert.equal(c.arrival_id,480);assert.equal(f.sends.length,0);
+ f.advance(180000);await worker.tick();assert.equal(replies().at(-1),SOON);
+ assert.equal(worker.health.error,null);
 });

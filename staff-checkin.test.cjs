@@ -13,7 +13,7 @@ function harness(role='shipping',channel='app',visitType='pickup'){
   if(table==='driver_messages'){if(op==='update')return Promise.resolve({data:null}).then(resolve);if(op==='read')return Promise.resolve({data:[]}).then(resolve);if(messages.some(m=>m.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve);messages.push(value);return Promise.resolve({data:{id:1}}).then(resolve);}
   throw Error('Unexpected table '+table);
  }};return q;}};
- const handler=createHandler({db,twilio:{messages:{create:async()=>({sid:'test',status:'sent'})}},messagingServiceSid:'test',publicBaseUrl:'https://example.invalid',chartDb:{from(){const q={select(){return q},gte(){return q},lte(){return q},limit:async()=>({data:[]})};return q;}}});
+ const handler=createHandler({db,twilio:{messages:{create:async()=>({sid:'test',status:'sent'})}},messagingServiceSid:'test',publicBaseUrl:'https://example.invalid',chartDb:{from(){const q={select(){return q},order(){return q},range:async()=>({data:[]})};return q;}}});
  async function call(verified=true,dropOffComplete=false){let status=200,payload;await handler({headers:{authorization:'Bearer token'},body:{conversationId:'12345678-1234-1234-1234-123456789abc',releaseVerified:verified,dropOffComplete}},{set(){},status(n){status=n;return this},json(p){payload=p;return this}});return{status,payload};}
  return {call,messages,checks,arrivals};
 }
