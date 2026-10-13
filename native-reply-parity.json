@@ -1,0 +1,92 @@
+[
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 09:59:59+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 09:59:59+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 10:00:00+00",
+    "body": "Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 10:00:00+00",
+    "body": "STEP 1 – DROP OFF: Pull around back and stay to the RIGHT. Once stopped in line, unchain your load and open your trailer for unloading. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.\n\nSTEP 2 – PICK UP: Once unloaded, pull around the building and return to your original arrival point and text PICK UP to begin the pick-up process."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 21:29:59+00",
+    "body": "Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 21:29:59+00",
+    "body": "STEP 1 – DROP OFF: Pull around back and stay to the RIGHT. Once stopped in line, unchain your load and open your trailer for unloading. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.\n\nSTEP 2 – PICK UP: Once unloaded, pull around the building and return to your original arrival point and text PICK UP to begin the pick-up process."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 21:30:00+00",
+    "body": "We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 21:30:00+00",
+    "body": "We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 21:59:59+00",
+    "body": "We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 21:59:59+00",
+    "body": "We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-13 22:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-13 22:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-10-17 16:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-10-17 16:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-12-15 11:00:00+00",
+    "body": "Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-12-15 11:00:00+00",
+    "body": "STEP 1 – DROP OFF: Pull around back and stay to the RIGHT. Once stopped in line, unchain your load and open your trailer for unloading. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.\n\nSTEP 2 – PICK UP: Once unloaded, pull around the building and return to your original arrival point and text PICK UP to begin the pick-up process."
+  },
+  {
+    "visit_type": "dropoff",
+    "at_time": "2026-12-15 23:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  },
+  {
+    "visit_type": "both",
+    "at_time": "2026-12-15 23:00:00+00",
+    "body": "Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you."
+  }
+]

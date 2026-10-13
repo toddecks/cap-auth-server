@@ -190,3 +190,33 @@ for(const channel of ['app','sms'])for(const type of ['pickup','both'])test(`${c
  assert.equal(f.tables.driver_messages.filter(m=>m.body===expected).length,1);
  if(channel==='app')assert.equal(f.sends.length,0);else assert.equal(f.sends[0].body,expected);
 });
+
+// Compare observable replies, not transport: SMS uses Twilio; app stores chat messages.
+for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hours','invalid-correction','staff-reply','checkout'])test(`app/SMS reply parity: ${type} ${scenario}`,async()=>{
+ const transcripts=[];
+ for(const channel of ['sms','app']){
+  const f=fixture(channel);f.advance(Date.parse('2026-10-13T15:00:00Z')-f.options.now());
+  if(scenario==='closed-hours')f.advance(7*3600000);
+  const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),visit_type:type,release_number:'Drop-off',facility_id:'csp-toledo-main'});
+  f.options.sendBothImages=async()=>{};
+  f.options.chart={from(){const q={select(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+  const worker=createWorker(f.options);
+  const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
+  const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver'&&!m.sender_user_id).map(m=>m.body);
+  if(type==='both'){add('Both');await worker.tick();assert.deepEqual(replies(),[]);f.advance(60000);}
+  add('PICK UP');await worker.tick();
+  if(scenario==='invalid-correction'){
+   for(const release of ['11111','22222','33333','72037']){f.advance(1000);add(release);await worker.tick();await worker.tick();}
+   assert.deepEqual(replies().slice(1),[...require('./release-attempts').INVALID,require('./release-attempts').ACCEPTED]);
+  }
+  if(scenario==='staff-reply')f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'staff',delivery_status:'sent',sent_at:new Date(f.options.now()).toISOString()});
+  if(scenario==='checkout'){c.status='closed';c.session_ended_at=new Date(f.options.now()).toISOString();}
+  f.advance(180000);await worker.tick();f.advance(120000);await createWorker(f.options).tick();await worker.tick();
+  if(['staff-reply','checkout','closed-hours'].includes(scenario))assert.equal(replies().length,1);
+  else assert.deepEqual(replies().slice(-2),[SOON,ASSIST]);
+  assert.equal(worker.health.error,null);
+  if(channel==='app')assert.equal(f.sends.length,0);
+  transcripts.push(replies());
+ }
+ assert.deepEqual(transcripts[0],transcripts[1]);
+});
