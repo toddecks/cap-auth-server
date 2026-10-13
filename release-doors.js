@@ -6,8 +6,7 @@ const customerName=row=>customerNames[String(row.customerNo||'').trim().toUpperC
 const normalize=v=>String(v||'').normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
 function references(value){
  const parts=String(value||'').normalize('NFKC').split(/[\/,;|\n]+/).map(p=>normalize(p.replace(/^\s*(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#-]?\s*/i,''))).filter(Boolean);
- const coilAliases=String(value||'').normalize('NFKC').split(/[\/,;|\n]+/).map(p=>p.trim().match(/^(?:release\s*[:#]?\s*)?(\d+)\s*[-–—]\s*coil$/i)?.[1]).filter(Boolean);
- let base='';return [...new Set([...coilAliases,...parts.map(p=>{if(/^\d+$/.test(p)){if(base&&p.length<base.length&&p.length<=4)return base.slice(0,-p.length)+p;base=p;}return p;})])];
+ let base='';return [...new Set(parts.map(p=>p.replace(/[A-Z]/g,'')).filter(Boolean).map(p=>{if(base&&p.length<base.length&&p.length<=4)return base.slice(0,-p.length)+p;base=p;return p;}))];
 }
 function doorMatches(rows,releases,date){
  const result={},facilities=new Map();
@@ -17,16 +16,16 @@ function doorMatches(rows,releases,date){
   if(!facilities.has(location))facilities.set(location,[]);
   facilities.get(location).push({...row,refs:references(row.poRel)});
  }
- for(const input of releases){const release=normalize(input);if(!release)continue;
+ for(const input of releases){const release=normalize(input),digits=release.replace(/[A-Z]/g,'');if(!digits)continue;
   for(const [location,loads] of facilities){
-   let candidates=loads.filter(r=>r.refs.includes(release)),matchType='exact';
-   if(!candidates.length&&release.length>=4&&/\d/.test(release)){
-    candidates=loads.filter(r=>r.refs.some(ref=>ref.includes(release)));matchType='partial';
+   let candidates=loads.filter(r=>r.refs.includes(digits)),matchType='exact';
+   if(!candidates.length&&digits.length>=4&&/\d/.test(release)){
+    candidates=loads.filter(r=>r.refs.some(ref=>ref.includes(digits)));matchType='partial';
    }
    if(!candidates.length)continue;
    const key=release+':'+location;
    // Resolve a fragment to one full reference before comparing its dated occurrences.
-   const matchedReferences=new Set(candidates.flatMap(r=>r.refs.filter(ref=>ref.includes(release))));
+   const matchedReferences=new Set(candidates.flatMap(r=>r.refs.filter(ref=>ref.includes(digits))));
    if(matchType==='partial'){
     // Fragments may request clarification, but never validate or assign a door.
     if(matchedReferences.size>1)result[key]={door:null,status:'ambiguous',appointment_at:null,match_type:'partial'};

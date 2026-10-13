@@ -41,3 +41,10 @@ test('COIL suffix allows complete numeric base only',()=>{
  for(const release of ['232622','32662','23266'])assert.notEqual(doorMatches(rows,[release],'2026-10-13')[release+':PROSPY']?.status,'matched');
  assert.equal(doorMatches([{...row,poRel:'232662-1'}],['232662'],'2026-10-13')['232662:PROSPY'],undefined);
 });
+test('letters and punctuation ignored, all digits still required',()=>{
+ for(const poRel of ['ABC-232662','232662-coil','23-26-62 LOAD']){
+  const rows=[{...row,poRel}];
+  for(const input of ['232662','232662-coil','ABC232662'])assert.equal(doorMatches(rows,[input],'2026-10-13')[input.toUpperCase().replace(/[^A-Z0-9]/g,'')+':PROSPY'].status,'matched');
+  assert.equal(doorMatches(rows,['232622'],'2026-10-13')['232622:PROSPY'],undefined);
+ }
+});

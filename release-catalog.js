@@ -33,7 +33,7 @@ module.exports={releaseCatalog};
 // while the final matcher still rejects incomplete and unrelated references.
 async function releaseCandidates(db,release){
  if(!db)throw Error('Release database is unavailable.');
- const key=String(release||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
+ const key=String(release||'').normalize('NFKC').toUpperCase().replace(/[^0-9]/g,'');
  if(!key)return [];
  const pattern='%'+key.split('').join('%')+'%';
  const rows=[];
