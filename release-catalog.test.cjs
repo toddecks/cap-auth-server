@@ -42,3 +42,10 @@ test('targeted lookup filters on server and preserves shorthand candidates for e
  assert.equal(require('./release-doors').doorMatches(matches,['968510'],'2026-10-13')['968510:PROSPY'].door,'COIL');
  assert.equal(await lookupRelease(db,'45678',{facility_id:'csp-toledo-main'},'2026-10-13'),'invalid');
 });
+test('shipping screen queries only unique requested numbers and merges overlapping candidates',async()=>{
+ const patterns=[];const row={poRel:'232662-coil'};
+ const db={from(){const q={select(){return q},ilike(_,p){patterns.push(p);return q},order(){return q},range:async()=>({data:[row]})};return q}};
+ const rows=await require('./release-catalog').releaseCandidatesForMany(db,['232662','232662-coil','967833']);
+ assert.equal(patterns.length,2);assert.deepEqual(rows,[row]);
+ assert.deepEqual(await require('./release-catalog').releaseCandidatesForMany(db,[]),[]);
+});

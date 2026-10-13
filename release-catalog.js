@@ -45,3 +45,13 @@ async function releaseCandidates(db,release){
  }
 }
 module.exports.releaseCandidates=releaseCandidates;
+
+async function releaseCandidatesForMany(db,releases){
+ const keys=[...new Set(releases.map(r=>String(r||'').normalize('NFKC').replace(/[^0-9]/g,'')).filter(Boolean))];
+ const results=new Array(keys.length);let next=0;
+ await Promise.all(Array.from({length:Math.min(8,keys.length)},async()=>{
+  while(next<keys.length){const i=next++;results[i]=await releaseCandidates(db,keys[i]);}
+ }));
+ return [...new Map(results.flat().map(row=>[JSON.stringify(row),row])).values()];
+}
+module.exports.releaseCandidatesForMany=releaseCandidatesForMany;

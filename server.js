@@ -80,7 +80,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "appointment-aware-v1",
+    shippingArrivalLogMode: "targeted-release-lookup-v2",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
@@ -2098,7 +2098,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
       return res.status(403).json({ error: "CSP Shipping access is required to view appointments." });
     }
 
-    const data = await require('./release-catalog').releaseCatalog(chartSupabase);
+    const data = await require('./release-catalog').releaseCandidatesForMany(chartSupabase,releases);
 
     const requested = new Set(releases);
     const matches = {};
