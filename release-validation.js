@@ -12,6 +12,7 @@ const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
 const SOON = 'Our shipping team will be with you shortly.';
 const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
 const REMAIN = 'Please remain in your truck. A shipping team member will be with you shortly.';
+const COIL_REMAIN = 'Please remain in your truck. A shipping team member will assist you shortly.';
 const officeClosed = timestamp => {
   const hour = Number(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',hour:'2-digit',hourCycle:'h23'}).format(new Date(timestamp)));
   return hour >= 18 || hour < 6;
@@ -20,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v9-ambiguity-recovery',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v10-coil-reminder',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -64,7 +65,8 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
         && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
         && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
-        await send(c,'remain',REMAIN);
+        const coil= instructions.body === require('./pickup-directions').COIL_CHECKIN;
+        await send(c,'remain',coil ? COIL_REMAIN : REMAIN);
       }
       return;
     }
@@ -120,4 +122,4 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
   }
   return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),5000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
-module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};
+module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,COIL_REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};

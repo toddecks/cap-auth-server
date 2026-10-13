@@ -180,3 +180,13 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
  f.advance(180000);await worker.tick();assert.equal(replies().at(-1),SOON);
  assert.equal(worker.health.error,null);
 });
+
+for(const channel of ['app','sms'])for(const type of ['pickup','both'])test(`${channel} ${type} COIL reminder waits sixty seconds and sends exact wording once`,async()=>{
+ const f=checkedFixture();const c=f.tables.driver_conversations[0];c.channel=channel;c.visit_type=type;
+ f.tables.driver_messages[0].body=require('./pickup-directions').COIL_CHECKIN;
+ const expected='Please remain in your truck. A shipping team member will assist you shortly.';
+ f.advance(59999);await f.worker.tick();assert.equal(f.tables.driver_messages.length,1);
+ f.advance(1);await f.worker.tick();await createWorker(f.options).tick();
+ assert.equal(f.tables.driver_messages.filter(m=>m.body===expected).length,1);
+ if(channel==='app')assert.equal(f.sends.length,0);else assert.equal(f.sends[0].body,expected);
+});
