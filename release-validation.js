@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v10-coil-reminder',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v11-faster-replies',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
@@ -120,6 +120,6 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     } catch(error) {health.state='error';health.error=String(error.message || error);console.error('Release wait worker failed:',health.error);}
     finally {health.lastChecked=new Date(now()).toISOString();running=false;}
   }
-  return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),5000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
+  return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),1000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
 module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,COIL_REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};

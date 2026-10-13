@@ -12,3 +12,24 @@ test('future valid release and yearly duplicates use newest record without a one
  const match=require('./release-doors').doorMatches(await releaseCatalog(db),['72037'],'2026-10-13')['72037:PROSPY'];
  assert.equal(match.door,'BD');
 });
+test('catalog pages load concurrently and preserve complete ordered results',async()=>{
+ let active=0,peak=0,calls=0;
+ const db={from(){const q={select(){return q},order(){return q},async range(start,end){
+  calls++;active++;peak=Math.max(peak,active);
+  await new Promise(resolve=>setImmediate(resolve));active--;
+  return {data:Array.from({length:Math.max(0,Math.min(end+1,30822)-start)},(_,i)=>({bolNumber:start+i}))};
+ }};return q}};
+ const [a,b]=await Promise.all([releaseCatalog(db),releaseCatalog(db)]);
+ assert.equal(a,b,'concurrent callers share the refresh');assert.equal(a.length,30822);
+ assert.deepEqual(a.map(r=>r.bolNumber),Array.from({length:30822},(_,i)=>i));
+ assert.equal(peak,8);assert.equal(calls,33);
+});
+test('slow in-flight refresh is reused even past TTL and failures are retried',async()=>{
+ let resolve,calls=0,fail=true;
+ const db={from(){const q={select(){return q},order(){return q},range(){calls++;return new Promise(r=>{resolve=r})}};return q}};
+ const a=releaseCatalog(db,0),b=releaseCatalog(db,61000);
+ assert.equal(calls,1);resolve({error:Error('lookup unavailable')});
+ const errors=await Promise.allSettled([a,b]);assert(errors.every(r=>r.status==='rejected'));
+ const retry=releaseCatalog(db,62000);assert.equal(calls,2);resolve({data:[{bolNumber:1}]});
+ assert.deepEqual(await retry,[{bolNumber:1}]);
+});
