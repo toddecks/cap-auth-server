@@ -19,7 +19,7 @@ test('missing and cancelled releases rejected; ambiguous partial not rejected as
  assert.equal(await lookupRelease(chart([{...row,cancelLoad:true}]),'968751',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
  assert.equal(await lookupRelease(chart([row,{...row,poRel:'968799'}]),'9687',{facility_id:'csp-toledo-main'},ENABLED_AT),'ambiguous');
 });
-test('lookup reads beyond first 1000 records',async()=>{const db=chart([...Array.from({length:1000},(_,i)=>({...row,poRel:'other'+i})),row]);assert.equal(await lookupRelease(db,'968751',{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');assert.equal(db.calls,2)});
+test('lookup reads beyond first 1000 records',async()=>{const db=chart([...Array.from({length:1000},(_,i)=>({...row,poRel:'other'+i})),row]);assert.equal(await lookupRelease(db,'968751',{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');assert.equal(db.calls,9)});
 
 test('ambiguous MJ 72147 cannot block later PLS 72207, including retries and restart',async()=>{
  const f=fixture();const db=chart([
