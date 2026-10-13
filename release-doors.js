@@ -6,7 +6,8 @@ const customerName=row=>customerNames[String(row.customerNo||'').trim().toUpperC
 const normalize=v=>String(v||'').normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
 function references(value){
  const parts=String(value||'').normalize('NFKC').split(/[\/,;|\n]+/).map(p=>normalize(p.replace(/^\s*(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#-]?\s*/i,''))).filter(Boolean);
- let base='';return [...new Set(parts.map(p=>{if(/^\d+$/.test(p)){if(base&&p.length<base.length&&p.length<=4)return base.slice(0,-p.length)+p;base=p;}return p;}))];
+ const coilAliases=String(value||'').normalize('NFKC').split(/[\/,;|\n]+/).map(p=>p.trim().match(/^(?:release\s*[:#]?\s*)?(\d+)\s*[-–—]\s*coil$/i)?.[1]).filter(Boolean);
+ let base='';return [...new Set([...coilAliases,...parts.map(p=>{if(/^\d+$/.test(p)){if(base&&p.length<base.length&&p.length<=4)return base.slice(0,-p.length)+p;base=p;}return p;})])];
 }
 function doorMatches(rows,releases,date){
  const result={},facilities=new Map();

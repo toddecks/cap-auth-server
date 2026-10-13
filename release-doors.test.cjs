@@ -35,3 +35,9 @@ test('newer unrelated full reference cannot resolve an ambiguous fragment',()=>{
 test('newest missing door does not reuse older door',()=>assert.equal(lookup([row,{...row,scheduleDate:'2026-10-07',unloadingDoor:''}]).status,'unassigned'));
 test('invalid dated records do not override valid records',()=>assert.equal(lookup([row,{...row,scheduleDate:null,unloadingDoor:'OLD'}]).door,'BD'));
 test('cancelled newest record does not override active record',()=>assert.equal(lookup([row,{...row,scheduleDate:'2026-10-07',cancelLoad:true,unloadingDoor:'OLD'}]).door,'BD'));
+test('COIL suffix allows complete numeric base only',()=>{
+ const rows=[{...row,poRel:'232662-coil',unloadingDoor:'Coil'}];
+ for(const release of ['232662','232662-coil'])assert.equal(doorMatches(rows,[release],'2026-10-13')[release.toUpperCase().replace(/[^A-Z0-9]/g,'')+':PROSPY'].door,'Coil');
+ for(const release of ['232622','32662','23266'])assert.notEqual(doorMatches(rows,[release],'2026-10-13')[release+':PROSPY']?.status,'matched');
+ assert.equal(doorMatches([{...row,poRel:'232662-1'}],['232662'],'2026-10-13')['232662:PROSPY'],undefined);
+});
