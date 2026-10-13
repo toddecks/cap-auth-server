@@ -26,7 +26,11 @@ function doorMatches(rows,releases,date){
    const key=release+':'+location;
    // Resolve a fragment to one full reference before comparing its dated occurrences.
    const matchedReferences=new Set(candidates.flatMap(r=>r.refs.filter(ref=>ref.includes(release))));
-   if(matchType==='partial'&&matchedReferences.size>1){result[key]={door:null,status:'ambiguous',appointment_at:null,match_type:'partial'};continue;}
+   if(matchType==='partial'){
+    // Fragments may request clarification, but never validate or assign a door.
+    if(matchedReferences.size>1)result[key]={door:null,status:'ambiguous',appointment_at:null,match_type:'partial'};
+    continue;
+   }
    const dated=candidates.filter(r=>Number.isFinite(Date.parse(r.scheduleDate)));
    if(!dated.length)continue;
    const latestDate=Math.max(...dated.map(r=>Date.parse(r.scheduleDate)));

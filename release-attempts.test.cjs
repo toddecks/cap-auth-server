@@ -38,3 +38,8 @@ test('both ambiguous and corrected messages already queued are processed in one 
  assert.equal((await f.run(async(_,r)=>r==='72147'?'ambiguous':'matched')).state,'matched');
  assert.deepEqual(f.sent.map(m=>m.body),[AMBIGUOUS,ACCEPTED]);
 });
+test('made-up 45678 cannot validate against old 945678; complete reference still matches',async()=>{
+ const db=chart([{...row,poRel:'945678',scheduleDate:'2024-04-08'}]);
+ assert.equal(await lookupRelease(db,'45678',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
+ assert.equal(await lookupRelease(db,'945678',{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');
+});
