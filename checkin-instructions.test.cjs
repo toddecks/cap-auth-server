@@ -12,7 +12,7 @@ function setup(duplicate=false) {
   };
   return query;
  }};
- return {input:{db,chartDb:{from(){const q={select(){return q},order(){return q},range:async()=>({data:[]})};return q}},twilio:{messages:{create:async()=>{sent++;return{sid:'mock',status:'sent'};}}},messagingServiceSid:'mock',publicBaseUrl:'https://example.com',scheduleStatusSync(){},conversation:{id:'test',channel:'sms',sms_phone_e164:'mock',facility_id:'csp-toledo-main',release_number:'12345'},arrivalId:1,staffId:'staff',visitType:'pickup'},sent:()=>sent,writes};
+ return {input:{db,chartDb:{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[]})};return q}},twilio:{messages:{create:async()=>{sent++;return{sid:'mock',status:'sent'};}}},messagingServiceSid:'mock',publicBaseUrl:'https://example.com',scheduleStatusSync(){},conversation:{id:'test',channel:'sms',sms_phone_e164:'mock',facility_id:'csp-toledo-main',release_number:'12345'},arrivalId:1,staffId:'staff',visitType:'pickup'},sent:()=>sent,writes};
 }
 test('pickup confirmation contains exact PPE instructions',async()=>{const x=setup();await sendCheckinInstructions(x.input);assert.equal(x.sent(),1);assert.match(x.writes[0].body,/stay to the LEFT.*hard hat, safety glasses, and fully enclosed shoes/)});
 test('dropoff never receives conflicting left-side instructions',async()=>{const x=setup();await sendCheckinInstructions({...x.input,visitType:'dropoff'});assert.equal(x.sent(),0);assert.equal(x.writes.length,0)});

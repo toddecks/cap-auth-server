@@ -21,7 +21,7 @@ function releaseFromMessage(body){
 async function lookupRelease(chart,release,c,at){
  if(!chart)throw Error('Release database is unavailable.');
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
- const rows=await require('./release-catalog').releaseCatalog(chart);
+ const rows=await require('./release-catalog').releaseCandidates(chart,release);
  const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[c.facility_id];
  if(!location)throw Error('Release facility is unknown.');
  const key=release.normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');

@@ -21,8 +21,9 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v12-exact-releases',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v13-independent-replies',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
+  const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
@@ -50,11 +51,19 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     // Re-read state just before dispatch so staff activity cancels pending replies.
     const c = await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c || c.status!=='open' || c.session_ended_at) return;
-    const checked = await result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle());
-    const allMessages = await result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id));
+    const [checked,allMessages] = await Promise.all([
+      result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle()),
+      result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id))
+    ]);
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
-      await sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages});
+      const mediaKey=session.key(c);
+      if(!mediaJobs.has(mediaKey)){
+        const job=Promise.resolve().then(()=>sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages}))
+          .catch(error=>{health.mediaError=String(error.message||error);console.error('First-visit images failed:',health.mediaError);})
+          .finally(()=>mediaJobs.delete(mediaKey));
+        mediaJobs.set(mediaKey,job);
+      }
     }
     const requestedAt=require('./both-pickup-phase').pickupRequestedAt(messages);
     if(!['pickup','both'].includes(c.visit_type)||(!validPickup(c)&&!requestedAt))return;
@@ -110,10 +119,14 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       // Do not send retroactive replies to old visits when this feature is deployed.
       for(let offset=0;;offset+=100) {
         const rows = await result(db.from('driver_conversations').select('id').eq('status','open').order('created_at').range(offset,offset+99));
-        for(const row of rows) {
-          try { await processConversation(row.id); }
-          catch(error) {health.error=String(error.message || error); console.error('Release wait reply failed:',health.error);}
-        }
+        // Bounded parallelism keeps one slow driver lookup from delaying others.
+        let next=0;
+        await Promise.all(Array.from({length:Math.min(8,rows.length)},async()=>{
+          while(next<rows.length){const row=rows[next++];
+            try {await processConversation(row.id);}
+            catch(error){health.error=String(error.message||error);console.error('Release wait reply failed:',health.error);}
+          }
+        }));
         if(rows.length < 100) break;
       }
       health.state = health.error ? 'error' : 'idle';

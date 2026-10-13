@@ -6,7 +6,7 @@ function fixture(channel='sms') {
  const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
-  const q={select(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
+  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
    if(op==='insert'){if(tables[table].some(r=>r.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve,reject);const row={...value,id:tables[table].length+1};tables[table].push(row);rows=[row];}
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
    rows=rows.slice(start,end+1);return Promise.resolve({data:q.singleRow?(rows[0]||null):rows,error:null}).then(resolve,reject);
@@ -144,7 +144,7 @@ test('Both details without PICK UP do not start pickup reminders',async()=>{
 });
 test('live worker rejects each invalid entry once, pauses waiting reminders, accepts correction, and resumes timers',async()=>{
  const f=fixture();f.advance(Date.parse('2026-10-12T18:40:00Z')-f.options.now());const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();c.facility_id='csp-toledo-main';c.release_number='1111';
- f.options.chart={from(){const q={select(){return q},gte(){return q},lte(){return q},order(){return q},range(){return q},then(fn){return Promise.resolve({data:[{poRel:'968751',scheduleDate:'2026-10-12',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]}).then(fn)}};return q}};
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},gte(){return q},lte(){return q},order(){return q},range(){return q},then(fn){return Promise.resolve({data:[{poRel:'968751',scheduleDate:'2026-10-12',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]}).then(fn)}};return q}};
  const worker=createWorker(f.options);
  const add=body=>f.tables.driver_messages.push({id:'inbound-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
  add('1111');await worker.tick();await worker.tick();assert.equal(f.sends.length,1);assert.match(f.sends[0].body,/not valid/);
@@ -161,7 +161,7 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
  const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',visit_type:type,release_number:type==='both'?'Drop-off':'72039',arrival_id:480});
  f.tables.driver_arrivals.push({id:480,release_number:c.release_number});
  f.options.sendBothImages=async()=>{};
- f.options.chart={from(){const q={select(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
  const worker=createWorker(f.options);
  const add=(body,id,at=f.options.now())=>f.tables.driver_messages.push({id,client_message_id:id,conversation_id:c.id,body,sent_at:new Date(at).toISOString(),direction:'driver_to_shipping'});
  const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
@@ -199,7 +199,7 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   if(scenario==='closed-hours')f.advance(7*3600000);
   const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),visit_type:type,release_number:'Drop-off',facility_id:'csp-toledo-main'});
   f.options.sendBothImages=async()=>{};
-  f.options.chart={from(){const q={select(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+  f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
   const worker=createWorker(f.options);
   const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
   const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver'&&!m.sender_user_id).map(m=>m.body);
@@ -219,4 +219,15 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   transcripts.push(replies());
  }
  assert.deepEqual(transcripts[0],transcripts[1]);
+});
+test('pending first-visit images cannot block pickup prompt or next release reply',async()=>{
+ const f=fixture('app');f.advance(Date.parse('2026-10-13T17:00:00Z')-f.options.now());
+ const c=f.tables.driver_conversations[0];Object.assign(c,{visit_type:'both',created_at:new Date(f.options.now()).toISOString()});
+ let finishMedia,mediaCalls=0;
+ f.options.sendBothImages=()=>{mediaCalls++;return new Promise(resolve=>finishMedia=resolve)};
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
+ const worker=createWorker(f.options);await worker.tick();
+ assert.equal(f.tables.driver_messages.at(-1).body,VERIFY);
+ f.advance(180000);await worker.tick();assert.equal(f.tables.driver_messages.at(-1).body,SOON);
+ assert.equal(mediaCalls,1,'only one media job may run for the session');finishMedia();
 });

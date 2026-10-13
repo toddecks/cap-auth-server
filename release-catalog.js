@@ -27,3 +27,21 @@ async function releaseCatalog(db,now=Date.now()) {
  cache.set(db,entry);return entry.promise;
 }
 module.exports={releaseCatalog};
+
+// Filter on the server before applying the exact reference/list rules locally.
+// Ordered characters allow punctuation and expanded shorthand (968751/510)
+// while the final matcher still rejects incomplete and unrelated references.
+async function releaseCandidates(db,release){
+ if(!db)throw Error('Release database is unavailable.');
+ const key=String(release||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
+ if(!key)return [];
+ const pattern='%'+key.split('').join('%')+'%';
+ const rows=[];
+ for(let offset=0;;offset+=PAGE_SIZE){
+  const {data,error}=await db.from('psdata_loads_api')
+   .select('scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor,customerNo')
+   .ilike('poRel',pattern).order('scheduleDate').order('bolNumber').range(offset,offset+PAGE_SIZE-1);
+  if(error)throw error;rows.push(...(data||[]));if(!data||data.length<PAGE_SIZE)return rows;
+ }
+}
+module.exports.releaseCandidates=releaseCandidates;

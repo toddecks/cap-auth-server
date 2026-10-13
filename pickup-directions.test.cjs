@@ -3,7 +3,7 @@ const {pickupInstructions,COIL_CHECKIN}=require('./pickup-directions');
 const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const c={release_number:'968751',facility_id:'csp-toledo-main'};
 const row={poRel:'968751/510',scheduleDate:'2026-10-09',scheduleTime:'11:00:00',location:'PROSPY',unloadingDoor:'Coil'};
-const db=rows=>({from(){const q={select(){return q},order(){return q},range:async(a,b)=>({data:rows.slice(a,b+1)})};return q;}});
+const db=rows=>({from(){const q={select(){return q},ilike(){return q},order(){return q},range:async(a,b)=>({data:rows.slice(a,b+1)})};return q;}});
 test('COIL sends RIGHT, ignoring case',async()=>assert.equal(await pickupInstructions(db([row]),c,new Date('2026-10-09T14:00Z')),COIL_CHECKIN));
 test('other doors retain existing directions',async()=>assert.equal(await pickupInstructions(db([{...row,unloadingDoor:'MB'}]),c,new Date('2026-10-09T14:00Z')),PICKUP_CHECKIN));
 test('facility and newest date determine door',async()=>assert.equal(await pickupInstructions(db([{...row,scheduleDate:'2026-10-08',unloadingDoor:'MB'},row,{...row,location:'ENTPRS',unloadingDoor:'MB'}]),c,new Date('2026-10-09T14:00Z')),COIL_CHECKIN));

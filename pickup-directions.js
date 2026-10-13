@@ -5,7 +5,7 @@ const COIL_CHECKIN='Please pull around back and stay to the RIGHT. Please have a
 async function pickupInstructions(chartDb,conversation,now=new Date()){
  if(!chartDb)throw Error('Loading-door lookup is unavailable.');
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
- const data=await require('./release-catalog').releaseCatalog(chartDb);
+ const data=await require('./release-catalog').releaseCandidates(chartDb,conversation.release_number);
  const release=String(conversation.release_number||'').normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
  const facility={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[conversation.facility_id];
  const match=doorMatches(data||[],[release],date)[release+':'+facility];
