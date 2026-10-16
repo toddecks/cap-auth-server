@@ -6559,6 +6559,8 @@ app.post("/api/fantasy-football-invite-test", async (req, res) => {
 
 require("./forms-hub").register(app, {auth:supabase,chart:chartSupabase,roleRows:fetchUserRoleRows,roleNames:roleNamesFromRows,recipients:{fantasy:FANTASY_FOOTBALL_ADMIN_RECIPIENTS,shift:SHIFT_REPORT_RECIPIENTS,forklift:FORKLIFT_INSPECTION_RECIPIENTS,crane:CRANE_INSPECTION_RECIPIENTS,pro:PRO_FORMS_RECIPIENTS,expansion:EXPANSION_LEAD_RECIPIENTS,maintenance:SHIFT_MAINTENANCE_RECIPIENTS}});
 
+require("./veterans-day").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
+
 require("./walleye").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
 require("./fall-festival").register(app, {db:supabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
