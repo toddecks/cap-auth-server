@@ -7,6 +7,7 @@ function register(app,{auth,roleRows,roleNames,chart,recipients,env=process.env,
  const catalog=[];
  const add=(id,name,url,table,columns,who,options={})=>catalog.push({id,name,url,table,columns,recipients:who,db:chart,date:'submitted_at',pk:'id',...options});
  add('fall-festival','CSP Family Fall Festival','/fall-festival/','fall_festival_signups','submitted_at,employee_name,attendance,family_count,chili',['lindsey@coilsteelprocessing.com','kim@coilsteelprocessing.com'],{db:auth,pk:'submission_token'});
+ add('guest','Guest Sign-Ins','/guest/','guest_signins','submitted_at,full_name,company,job_title,visiting,reason,safety_acknowledged,safety_policy_version,email_sent_at',['todd@coilsteelprocessing.com'],{pk:'submission_token'});
  add('veterans-day','Veterans Day Tributes','/veterans-day/','veterans_day_submissions','submitted_at,first_name,last_name,veteran_name,relationship,branch,years_of_service,message,permission_to_share,photos,email_sent_at',['kim@coilsteelprocessing.com'],{pk:'submission_token'});
  add('walleye','Toledo Walleye Ticket Requests','/walleye/','walleye_ticket_requests','submitted_at,first_name,last_name,phone,email,game_label,tickets,delivery,email_sent_at',['kim@coilsteelprocessing.com'],{pk:'submission_token'});
  add('fantasy-football','Fantasy Football Signup','/fantasyfootballsignup/','fantasy_football_signups','submitted_at,season,name,email,phone',recipients.fantasy);
