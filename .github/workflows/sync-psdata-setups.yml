@@ -1,0 +1,27 @@
+name: Sync PSData Setup Details
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync-psdata-setups
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - run: node --input-type=module -e 'import {syncSetupDetails} from "./scripts/sync-psdata-setups.mjs"; await syncSetupDetails();'
+        env:
+          PSDSTEEL_API_USERNAME: ${{ secrets.PSDSTEEL_API_USERNAME }}
+          PSDSTEEL_API_PASSWORD: ${{ secrets.PSDSTEEL_API_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PSDSTEEL_REQUEST_TIMEOUT_MS: "30000"
+          PSDSTEEL_REQUEST_ATTEMPTS: "2"
