@@ -142,8 +142,11 @@ export function normalizeSetup(setup,rows){
  return {setup_number:setup,customer_numbers:[...new Set(rows.map(r=>String(r.customerNumber||'').trim()).filter(Boolean))],tag_numbers:[...new Set(rows.map(r=>String(r.tagNumber??'').trim()).filter(Boolean))],details:rows,record_count:rows.length,fetched_at:new Date().toISOString()};
 }
 async function fetchSetup(setup){const all=[];for(let page=0;page<100;page++){
+ let body;for(let authAttempt=0;authAttempt<3;authAttempt++){try{
  const token=await authenticateSteelApi();
- const{body}=await requestJson(`${config.steelBaseUrl}/api/execute`,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:`${config.steelAuthScheme} ${token}`},body:JSON.stringify({dbid:config.steelDbId,method:'GetRecordSet',params:{input:JSON.stringify({offset:page*100,limit:100,recordSetCode:'api_setupDetails',setupNumber:setup})}})},'Steel API setup details');
+ const response=await requestJson(`${config.steelBaseUrl}/api/execute`,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json',Authorization:`${config.steelAuthScheme} ${token}`},body:JSON.stringify({dbid:config.steelDbId,method:'GetRecordSet',params:{input:JSON.stringify({offset:page*100,limit:100,recordSetCode:'api_setupDetails',setupNumber:setup})}})},'Steel API setup details');
+ body=response.body;break;
+ }catch(error){if(!error.message.includes('HTTP 401')||authAttempt===2)throw error;await sleep(300);}}
  const rows=findRecordArray(body);if(!rows)throw Error('Setup details response is not an array');all.push(...rows);if(rows.length<100)return all;
  }throw Error('Setup exceeded pagination limit');}
 export async function syncSetupDetails(){
