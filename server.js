@@ -7331,3 +7331,5 @@ app.listen(PORT, () => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
   });
 });
+
+require("./work-orders").register(app,{db:chartSupabase,requireAccess:requireRoleAccess(["admin","production","inventory"],"Production or inventory access is required.","Work orders")});
