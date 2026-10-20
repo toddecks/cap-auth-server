@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      setup_number:
+        description: "Optional setup number, including closed orders; blank refreshes all active setups"
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -19,6 +24,7 @@ jobs:
           node-version: "20"
       - run: node --input-type=module -e 'import {syncSetupDetails} from "./scripts/sync-psdata-setups.mjs"; await syncSetupDetails();'
         env:
+          PSDSTEEL_SETUP_NUMBER: ${{ inputs.setup_number }}
           PSDSTEEL_API_USERNAME: ${{ secrets.PSDSTEEL_API_USERNAME }}
           PSDSTEEL_API_PASSWORD: ${{ secrets.PSDSTEEL_API_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
