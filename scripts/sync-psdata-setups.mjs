@@ -150,12 +150,14 @@ async function fetchSetup(setup){const all=[];for(let page=0;page<100;page++){
  const rows=findRecordArray(body);if(!rows)throw Error('Setup details response is not an array');all.push(...rows);if(rows.length<100)return all;
  }throw Error('Setup exceeded pagination limit');}
 export async function syncSetupDetails(){
+ const requested=String(process.env.PSDSTEEL_SETUP_NUMBER||" ").trim();
+ if(requested&&!/^\d{1,12}$/.test(requested))throw Error("Setup number must contain only digits");
  for(const[name,value]of Object.entries({PSDSTEEL_API_USERNAME:config.steelUsername,PSDSTEEL_API_PASSWORD:config.steelPassword,SUPABASE_URL:config.supabaseUrl,SUPABASE_SERVICE_ROLE_KEY:config.supabaseServiceKey}))required(name,value);
  if(config.dryRun){console.log('Setup sync skipped during inventory dry run.');return;}
  const run={id:randomUUID(),started_at:new Date().toISOString(),status:'running',setups_found:0,setups_saved:0,setups_failed:0,empty_setups:0};await database('psdata_setup_details_sync_runs','POST',run);
  try{
- const setups=[];for(let offset=0;;offset+=500){const rows=await database(`psdata_active_setups?select=setup_number&order=setup_number&limit=500&offset=${offset}`);if(!Array.isArray(rows))throw Error('Invalid active setup response');setups.push(...rows.map(r=>r.setup_number));if(rows.length<500)break;}
- run.setups_found=setups.length;console.log(`Refreshing ${setups.length} open setups.`);let next=0;
+ const setups=requested?[Number(requested)]:[];if(!requested)for(let offset=0;;offset+=500){const rows=await database(`psdata_active_setups?select=setup_number&order=setup_number&limit=500&offset=${offset}`);if(!Array.isArray(rows))throw Error('Invalid active setup response');setups.push(...rows.map(r=>r.setup_number));if(rows.length<500)break;}
+ run.setups_found=setups.length;console.log(`Refreshing ${setups.length} ${requested?"requested":"open"} setups.`);let next=0;
  // Serial API calls avoid invalidating a short-lived token with concurrent authentication.
  for(const setup of setups){try{const rows=await fetchSetup(setup);if(!rows.length){run.empty_setups++;continue;}await database('psdata_setup_details?on_conflict=setup_number','POST',normalizeSetup(setup,rows));run.setups_saved++;}catch(e){run.setups_failed++;console.error(`Setup ${setup} refresh failed; previous data retained: ${e.message}`);}finally{next++;if(next%25===0){console.log(`Setup progress ${next}/${setups.length}; saved ${run.setups_saved}, failed ${run.setups_failed}, empty ${run.empty_setups}`);await database(`psdata_setup_details_sync_runs?id=eq.${run.id}`,'PATCH',run);}}}
  run.status=run.setups_failed?'partial':'complete';
