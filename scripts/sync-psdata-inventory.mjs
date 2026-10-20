@@ -364,7 +364,7 @@ const main = async () => {
   console.log(`Inventory sync complete: ${activeCount.toLocaleString()} active, ${closedCount.toLocaleString()} closed.`);
 };
 
-main().then(async()=>{const {syncSetupDetails}=await import("./sync-psdata-setups.mjs");await syncSetupDetails();}).catch((error) => {
+main().catch((error) => {
   console.error(`Inventory sync failed: ${error?.message || error}`);
   process.exitCode = 1;
 });
