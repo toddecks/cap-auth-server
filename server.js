@@ -38,6 +38,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "90mb" }));
 app.use(express.urlencoded({ extended: false, limit: "90mb" }));
+app.use("/api/progress-updates", require("./progress-updates")());
 
 // Tableau Connected App Credentials are optional. The Tableau workflow is retired,
 // so missing values must not prevent the auth/user-access server from starting.
@@ -53,6 +54,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
+    progressUpdatesMode: "confirmed-segment-v1",
     fallFestivalMode: "signup-v2",
     formsHubMode: "recipient-access-v2",
     roleUpdateMode: "hr-admin-v1",
