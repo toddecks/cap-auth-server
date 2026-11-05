@@ -1,6 +1,6 @@
 'use strict';
 const TYPE_PROMPT='Are you here for a pick-up, drop-off, or both? Please reply PICKUP, DROPOFF, or BOTH.';
-const PICKUP_PROMPT='Please reply with your name, release number, and carrier name.';
+const PICKUP_PROMPT='Please send your name, release number, and carrier name for verification and further instructions.';
 const PICKUP_CHECKIN='Please pull around back and stay to the LEFT. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
 // Explicit common typos avoid treating unrelated short words as arrival intent.
 const PICKUP_WORDS = String.raw`(?:pick[\s-]*up|picking[\s-]*up|pik[\s-]*up|pic[\s-]*up|pck[\s-]*up|pcik[\s-]*up|pikc[\s-]*up|pick[\s-]*pu|pick[\s-]*upp|pick[\s-]*ip|pick[\s-]*uo|pickng[\s-]*up|piking[\s-]*up|pick)`;

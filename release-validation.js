@@ -2,7 +2,7 @@
 
 // This worker acknowledges receipt only. Release verification belongs to Shipping.
 const session=require('./visit-session');
-const VERIFY = 'Please send your release number for verification and further instructions.';
+const VERIFY = require('./driver-visit-flow').PICKUP_PROMPT;
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
 const WAIT_MS = 3 * 60 * 1000;
@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v15-numeric-releases',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v16-details-prompt',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }

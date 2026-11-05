@@ -131,7 +131,7 @@ test('Both pickup hours use return time, not earlier unloading arrival time',asy
 for(const type of ['pickup','both'])test(type+' command immediately requests missing release and starts 3/5 minute timers',async()=>{
  const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type=type;c.release_number='';
  f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
- await f.worker.tick();assert.equal(f.sends[0].body,'Please send your release number for verification and further instructions.');
+ await f.worker.tick();assert.equal(f.sends[0].body,'Please send your name, release number, and carrier name for verification and further instructions.');
  f.advance(179999);await f.worker.tick();assert.equal(f.sends.length,1);
  f.advance(1);await createWorker(f.options).tick();assert.equal(f.sends[1].body,SOON);
  c.release_number='254571';await f.worker.tick();assert.equal(f.sends.length,2,'Supplying release must not restart timers or repeat prompt');
@@ -230,4 +230,13 @@ test('pending first-visit images cannot block pickup prompt or next release repl
  assert.equal(f.tables.driver_messages.at(-1).body,VERIFY);
  f.advance(180000);await worker.tick();assert.equal(f.tables.driver_messages.at(-1).body,SOON);
  assert.equal(mediaCalls,1,'only one media job may run for the session');finishMedia();
+});
+
+for(const channel of ['sms','app']) for(const visit_type of ['pickup','both']) test(`${channel} ${visit_type} first pickup reply requests name, release, and carrier`,async()=>{
+ const f=fixture(channel);const c=f.tables.driver_conversations[0];Object.assign(c,{visit_type,release_number:''});
+ f.tables.driver_messages.push({id:'pickup-command',conversation_id:c.id,direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();await f.worker.tick();
+ const replies=f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver');
+ assert.deepEqual(replies.map(m=>m.body),['Please send your name, release number, and carrier name for verification and further instructions.']);
+ assert.equal(f.sends.length,channel==='sms'?1:0);
 });
