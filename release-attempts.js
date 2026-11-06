@@ -28,16 +28,18 @@ async function lookupRelease(chart,release,c,at){
  const match=doorMatches(rows,[release],date)[key+':'+location];
  return !match?'invalid':match.status==='ambiguous'?'ambiguous':'matched';
 }
-async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease}){
+async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease,onUnmatched,verifiedThrough}){
  const key=session.key(c);
  const marker=(kind,id)=>`release-wait:${kind}-${id}:${key}`;
  const outcomes=messages.filter(m=>['invalid','matched','ambiguous'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at));
  let count=0,state=null,initial=null;
  for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}
- const attempts=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
+ const pendingMessages=verifiedThrough?messages.filter(m=>m.direction!=='driver_to_shipping'||Date.parse(m.sent_at)>Date.parse(verifiedThrough.requested_at)||(Date.parse(m.sent_at)===Date.parse(verifiedThrough.requested_at)&&String(m.id).localeCompare(verifiedThrough.attempt_id)>0)):messages;
+ const attempts=pendingMessages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
  for(const m of attempts){
   if(messages.some(x=>['invalid','matched','ambiguous'].some(kind=>x.client_message_id===marker(kind,m.id))))continue;
   const result=await lookup(chart,releaseFromMessage(m.body),c,m.sent_at);
+  if(result!=='matched'&&onUnmatched){await onUnmatched(c,m,releaseFromMessage(m.body));return {state:'pending',initial:null};}
   const kind=result==='ambiguous'?'ambiguous':result==='matched'?'matched':'invalid';
   const body=result==='ambiguous'?AMBIGUOUS:result==='matched'?ACCEPTED:INVALID[Math.min(count,2)];
   await send(c,`${kind}-${m.id}`,body);

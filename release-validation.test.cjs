@@ -3,11 +3,12 @@ const assert=require('node:assert/strict');
 const {createWorker,VERIFY,ASSIST,SOON,CLOSED,REMAIN,officeClosed}=require('./release-validation');
 function fixture(channel='sms') {
  let clock=Date.parse('2026-10-01T17:00:00Z');
- const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
+ const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
-  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
+  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
    if(op==='insert'){if(tables[table].some(r=>r.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve,reject);const row={...value,id:tables[table].length+1};tables[table].push(row);rows=[row];}
+   if(op==='upsert'){let existing=tables[table].find(r=>r.conversation_id===value.conversation_id);if(existing)Object.assign(existing,value);else tables[table].push(value);rows=[existing||value];}
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
    rows=rows.slice(start,end+1);return Promise.resolve({data:q.singleRow?(rows[0]||null):rows,error:null}).then(resolve,reject);
   }catch(e){return Promise.reject(e).then(resolve,reject)}}};return q;}};
@@ -142,18 +143,20 @@ test('Both details without PICK UP do not start pickup reminders',async()=>{
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Lindsey 254571 Tamco',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.equal(f.sends.length,0);
 });
-test('live worker rejects each invalid entry once, pauses waiting reminders, accepts correction, and resumes timers',async()=>{
- const f=fixture();f.advance(Date.parse('2026-10-12T18:40:00Z')-f.options.now());const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();c.facility_id='csp-toledo-main';c.release_number='1111';
- f.options.chart={from(){const q={select(){return q},ilike(){return q},gte(){return q},lte(){return q},order(){return q},range(){return q},then(fn){return Promise.resolve({data:[{poRel:'968751',scheduleDate:'2026-10-12',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]}).then(fn)}};return q}};
+test('unmatched releases stay paused across restart and corrected numbers until clerk verification',async()=>{
+ const f=fixture();f.advance(Date.parse('2026-11-06T15:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',release_number:'1111'});
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'968751',scheduleDate:'2026-11-06',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]})};return q}};
  const worker=createWorker(f.options);
  const add=body=>f.tables.driver_messages.push({id:'inbound-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
- add('1111');await worker.tick();await worker.tick();assert.equal(f.sends.length,1);assert.match(f.sends[0].body,/not valid/);
- f.advance(300000);await worker.tick();assert.equal(f.sends.length,1,'invalid release suppresses normal wait reminders');
- add('2222');await worker.tick();assert.match(f.sends[1].body,/still not valid/);
- add('3333');await worker.tick();assert.equal(f.sends[2].body,'Please call 419-269-9706 for assistance.');
- c.release_number='968751';add('968751');await worker.tick();assert.match(f.sends[3].body,/Our Shipping Office is verifying/);
- f.advance(180000);await worker.tick();assert.equal(f.sends[4].body,SOON);
- assert.equal(f.worker.health.error,null);assert.equal(f.checkouts.length,0);
+ add('1111');await worker.tick();await worker.tick();assert.equal(f.sends.length,0);
+ assert.equal(f.tables.shipping_release_verifications[0].release_number,'1111');
+ f.advance(300000);await createWorker(f.options).tick();assert.equal(f.sends.length,0,'pending clerk verification suppresses driver errors and wait reminders');
+ add('968751');await worker.tick();assert.equal(f.sends.length,0,'corrected text still needs clerk verification');
+ const hold=f.tables.shipping_release_verifications[0];assert.equal(hold.release_number,'968751');
+ Object.assign(hold,{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});c.release_number='968751';
+ await createWorker(f.options).tick();await worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED]);
+ f.advance(179999);await worker.tick();assert.equal(f.sends.length,1);f.advance(1);await worker.tick();assert.equal(f.sends[1].body,SOON);
+ assert.equal(worker.health.error,null);assert.equal(f.checkouts.length,0);
 });
 
 for(const type of ['pickup','both'])test(`native ${type} validates initial/corrected release in same visit`,async()=>{
@@ -172,8 +175,11 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
   f.advance(60000);add('PICK UP','pickup');await worker.tick();assert.deepEqual(replies(),[VERIFY]);
   add('72039','wrong');await worker.tick();
  }
- assert.equal(replies().at(-1),require('./release-attempts').INVALID[0]);
- f.advance(1000);add('72037','correct');await worker.tick();await worker.tick();
+ assert.equal(f.tables.shipping_release_verifications[0].release_number,'72039');
+ f.advance(1000);add('72037','correct');await worker.tick();
+ assert.ok(!replies().includes(require('./release-attempts').ACCEPTED));
+ Object.assign(f.tables.shipping_release_verifications[0],{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});
+ await worker.tick();await worker.tick();
  assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
  assert.equal(c.release_number,'72037');assert.equal(f.tables.driver_arrivals[0].release_number,'72037');
  assert.equal(c.visit_type,type);assert.equal(c.arrival_id,480);assert.equal(f.sends.length,0);
@@ -207,7 +213,9 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   add('PICK UP');await worker.tick();
   if(scenario==='invalid-correction'){
    for(const release of ['11111','22222','33333','72037']){f.advance(1000);add(release);await worker.tick();await worker.tick();}
-   assert.deepEqual(replies().slice(1),[...require('./release-attempts').INVALID,require('./release-attempts').ACCEPTED]);
+   assert.deepEqual(replies(),[VERIFY]);
+   Object.assign(f.tables.shipping_release_verifications[0],{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});
+   await worker.tick();assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
   }
   if(scenario==='staff-reply')f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'staff',delivery_status:'sent',sent_at:new Date(f.options.now()).toISOString()});
   if(scenario==='checkout'){c.status='closed';c.session_ended_at=new Date(f.options.now()).toISOString();}

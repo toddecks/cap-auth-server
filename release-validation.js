@@ -21,9 +21,10 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v17-slash-references',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v18-clerk-verification-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
+  const holds=require('./release-verification-hold').createStore(db);
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body) {
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
@@ -87,17 +88,31 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||Math.min(session.start(c),nativeInitial?Date.parse(nativeInitial.sent_at):Infinity));
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
-    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now});
+    const hold=await holds.get(c);
+    if(hold&&!hold.verified_at){
+      const attempts=messages.filter(m=>m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=pickupAt&&require('./release-attempts').releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
+      const latest=attempts.at(-1);
+      if(latest&&String(latest.id)!==hold.attempt_id)await holds.pause(c,latest,require('./release-attempts').releaseFromMessage(latest.body));
+      return;
+    }
+    if(hold?.verified_at){
+      const marker=`release-wait:matched-${hold.attempt_id}:${session.key(c)}`;
+      if(!messages.some(m=>m.client_message_id===marker)){
+        await send(c,`matched-${hold.attempt_id}`,require('./release-attempts').ACCEPTED);
+        messages.push({client_message_id:marker,sent_at:new Date(now()).toISOString(),direction:'shipping_to_driver',body:require('./release-attempts').ACCEPTED,delivery_status:'sent'});
+      }
+    }
+    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now,verifiedThrough:hold?.verified_at?hold:null,onUnmatched:(c,m,release)=>holds.pause(c,m,release)});
     if(c.channel==='app'&&verification.state==='matched') {
       const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
       const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);
-      const release=attempt&&require('./release-attempts').releaseFromMessage(attempt.body);
+      const release=attempt&&(hold?.verified_at&&String(attempt.id)===hold.attempt_id?hold.release_number:require('./release-attempts').releaseFromMessage(attempt.body));
       if(release&&c.release_number!==release) {
         await result(db.from('driver_conversations').update({release_number:release}).eq('id',c.id).eq('status','open'));
         if(c.arrival_id)await result(db.from('driver_arrivals').update({release_number:release}).eq('id',c.arrival_id));
       }
     }
-    if(verification.state==='invalid'||verification.state==='ambiguous')return;
+    if(verification.state==='pending'||verification.state==='invalid'||verification.state==='ambiguous')return;
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
