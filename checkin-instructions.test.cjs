@@ -7,7 +7,7 @@ function setup(duplicate=false) {
    select(){return query;},
    single:async()=>duplicate?{error:{code:'23505'}}:{data:{id:1}},
    update(row){writes.push(row);return query;},
-   eq:async()=>({}),
+   eq(){return query;},
    in(){return query},like(){return query},not(){return query},neq(){return query},limit:async()=>({data:[{id:"previous-image"}]})
   };
   return query;
