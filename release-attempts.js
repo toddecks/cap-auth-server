@@ -38,7 +38,9 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
  const attempts=pendingMessages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
  for(const m of attempts){
   if(messages.some(x=>['invalid','matched','ambiguous'].some(kind=>x.client_message_id===marker(kind,m.id))))continue;
-  const result=await lookup(chart,releaseFromMessage(m.body),c,m.sent_at);
+  const release=releaseFromMessage(m.body);
+  const canonical=value=>String(value||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const result=verifiedThrough?.verified_at&&canonical(release)===canonical(verifiedThrough.release_number)?'matched':await lookup(chart,release,c,m.sent_at);
   if(result!=='matched'&&onUnmatched){await onUnmatched(c,m,releaseFromMessage(m.body));return {state:'pending',initial:null};}
   const kind=result==='ambiguous'?'ambiguous':result==='matched'?'matched':'invalid';
   const body=result==='ambiguous'?AMBIGUOUS:result==='matched'?ACCEPTED:INVALID[Math.min(count,2)];

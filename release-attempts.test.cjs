@@ -59,3 +59,12 @@ test('full slash references match, but a different suffix or unknown second rele
  assert.equal(await lookupRelease(db,'CB7201P1-2/7',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
  assert.equal(await lookupRelease(db,'P329329',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
 });
+
+test('a repeated clerk-verified release stays accepted; a different release is held again',async()=>{
+ const c={id:'manual',visit_type:'pickup'},messages=[{id:'2',direction:'driver_to_shipping',body:'CB7201P1-2/7',sent_at:'2026-11-06T16:02:00Z'}],sent=[],held=[];
+ const hold={attempt_id:'1',requested_at:'2026-11-06T16:00:00Z',release_number:'CB7201P1-2/7',verified_at:'2026-11-06T16:01:00Z'};
+ const run=()=>processAttempts({c,messages,pickupAt:Date.parse('2026-11-06T16:00:00Z'),verifiedThrough:hold,lookup:async()=> 'invalid',send:async(c,kind,body)=>sent.push(body),onUnmatched:async(c,m,r)=>held.push(r)});
+ assert.equal((await run()).state,'matched');assert.deepEqual(held,[]);
+ messages.push({id:'3',direction:'driver_to_shipping',body:'P329329',sent_at:'2026-11-06T16:03:00Z'});
+ assert.equal((await run()).state,'pending');assert.deepEqual(held,['P329329']);
+});
