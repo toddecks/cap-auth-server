@@ -14,7 +14,7 @@ const AMBIGUOUS='More than one appointment matches that number. Please send the 
 function releaseFromMessage(body){
  const value=flow.stripVisitWords(body).trim();
  // Keep a punctuated release together before the general details parser splits fields.
- const bare=value.replace(/^(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#]?\s*/i,'').replace(/^#/,'');
+ const bare=value.replace(/^(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#]?\s*/i,'').replace(/^#\s*[:=]?\s*/,'');
  if(/^[A-Za-z0-9][A-Za-z0-9./_-]{2,39}$/.test(bare)&&/\d/.test(bare)&&!/^\+?1?\d{10}$/.test(bare))return bare;
  return parseDetails(value,{}).last_release_number||'';
 }

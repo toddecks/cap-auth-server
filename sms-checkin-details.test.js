@@ -64,3 +64,16 @@ test('carrier-only text and ordinary messages never invent driver names',()=>{
   assert.equal(parseDetails(body).full_name,undefined);
  }
 });
+
+for(const body of ['Pickup #: CB7201P1-2/7','Release number: CB7201P1-2/7','CB7201P1-2/7','Release: 968751/510']) {
+ test('preserves complete slash release in contact: '+body,()=>{
+  const expected=body.includes('CB7201')?'CB7201P1-2/7':'968751/510';
+  assert.equal(parseDetails(body).last_release_number,expected);
+  assert.equal(nextCheckin({body,conversationCreated:true}).releaseNumber,expected);
+ });
+}
+test('keeps slash release while separating driver and carrier fields',()=>{
+ const parsed=parseDetails('Ron / PLS Logistics / CB7201P1-2/7');
+ assert.deepEqual(parsed,{full_name:'Ron',driver_company:'PLS Logistics',last_release_number:'CB7201P1-2/7'});
+ assert.deepEqual(parseDetails('Ron/PLS Logistics/CB7201P1-2/7'),parsed);
+});

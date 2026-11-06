@@ -43,3 +43,19 @@ test('made-up 45678 cannot validate against old 945678; complete reference still
  assert.equal(await lookupRelease(db,'45678',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
  assert.equal(await lookupRelease(db,'945678',{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');
 });
+
+test('labeled compound release reaches lookup intact and matches its actual catalog record',async()=>{
+ const {releaseFromMessage}=require('./release-attempts');
+ const text='Pickup #: CB7201P1-2/7';
+ assert.equal(releaseFromMessage(text),'CB7201P1-2/7');
+ const f=fixture();f.add(text);
+ const db=chart([{...row,poRel:'CB7201P1-2/7'}]);
+ assert.equal((await f.run((_,release,c,at)=>lookupRelease(db,release,c,at))).state,'matched');
+ assert.deepEqual(f.sent.map(m=>m.body),[ACCEPTED]);
+});
+test('full slash references match, but a different suffix or unknown second release stays invalid',async()=>{
+ const db=chart([{...row,poRel:'CB7201P1-1-6'}, {...row,poRel:'968751/510'}]);
+ assert.equal(await lookupRelease(db,'968751/510',{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');
+ assert.equal(await lookupRelease(db,'CB7201P1-2/7',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
+ assert.equal(await lookupRelease(db,'P329329',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid');
+});

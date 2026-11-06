@@ -6,17 +6,21 @@ function parseDetails(text, existing={}) {
  const found={},rest=[];
  // Labels are accepted in any order, even when separated only by spaces.
  const marked=clean(text).replace(/\.{2,}|\.\s+(?=(?:release|load|name|driver|carrier|company)\b)/gi, ', ').replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
- for(let part of marked.split(/[\n,;|/]+/).map(clean).filter(Boolean)){
+ // Slashes inside a release (CB7201P1-2/7, 968751/510) are part of
+ // the reference. Keep ordinary slash-separated names/carriers as separate fields.
+ const protectedText=marked.replace(/\b(?=[a-z0-9._-]*\d)[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9._-]+)+/gi,token=>token.replace(/\//g,'\uE000'));
+ for(let part of protectedText.split(/[\n,;|/]+/).map(clean).filter(Boolean)){
+  part=part.replace(/\uE000/g,'/');
   part=part.replace(/^\d[.)]\s*/,'');
   if(/^(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}$/.test(part)||/^\+?1\d{10}$/.test(part))continue;
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.full_name=clean(m[1]).slice(0,120);continue;}
   m=part.match(/^(?:(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.driver_company=clean(m[1]).slice(0,160);continue;}
-  m=part.match(/^(?:(?:(?:correct|new|actual)\s+)?(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?\s*(?:is|[:=#])?\s*)([a-z0-9][a-z0-9-]{2,29})[.!]?$/i);
+  m=part.match(/^(?:(?:(?:correct|new|actual)\s+)?(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?\s*(?:is|[:=#])?\s*)([a-z0-9][a-z0-9./_-]{2,39})[.!]?$/i);
   if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
-  m=part.match(/^(?:(?:sorry|correction|correct number|actually|it's|its|it is)\s*[:=]?\s*)?#?([a-z]*\d[a-z0-9-]{0,29})[.!]?$/i);
-  if(m){found.last_release_number=m[1];continue;}
+  m=part.match(/^(?:(?:sorry|correction|correct number|actually|it's|its|it is)\s*[:=]?\s*)?(?:#\s*[:=]?\s*)?([a-z0-9][a-z0-9./_-]{0,39})[.!]?$/i);
+  if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
   // Extract an unmistakable release number embedded in a complete text.
   m=part.match(/\b\d{5,10}\b/g);
   if(m?.length===1 && !chatPattern.test(part) && !/\b(phone|tel|mobile|call me|truck|trailer|pounds|lbs|weight|zip|address)\b/i.test(part)){

@@ -18,7 +18,8 @@ function doorMatches(rows,releases,date){
  }
  for(const input of releases){const release=normalize(input),digits=release.replace(/[A-Z]/g,'');if(!digits)continue;
   for(const [location,loads] of facilities){
-   let candidates=loads.filter(r=>r.refs.includes(digits)),matchType='exact';
+   // Match a complete slash-separated reference as a whole, too.
+   let candidates=loads.filter(r=>r.refs.includes(digits)||normalize(r.poRel)===release),matchType='exact';
    if(!candidates.length&&digits.length>=4&&/\d/.test(release)){
     candidates=loads.filter(r=>r.refs.some(ref=>ref.includes(digits)));matchType='partial';
    }
