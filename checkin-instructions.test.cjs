@@ -14,6 +14,22 @@ function setup(duplicate=false) {
  }};
  return {input:{db,chartDb:{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[]})};return q}},twilio:{messages:{create:async()=>{sent++;return{sid:'mock',status:'sent'};}}},messagingServiceSid:'mock',publicBaseUrl:'https://example.com',scheduleStatusSync(){},conversation:{id:'test',channel:'sms',sms_phone_e164:'mock',facility_id:'csp-toledo-main',release_number:'12345'},arrivalId:1,staffId:'staff',visitType:'pickup'},sent:()=>sent,writes};
 }
-test('pickup confirmation contains exact PPE instructions',async()=>{const x=setup();await sendCheckinInstructions(x.input);assert.equal(x.sent(),1);assert.match(x.writes[0].body,/stay to the LEFT.*hard hat, safety glasses, and fully enclosed shoes/)});
+test('returning driver gets separate confirmation and PPE messages without pictures',async()=>{
+ const x=setup();await sendCheckinInstructions(x.input);assert.equal(x.sent(),2);
+ const messages=x.writes.filter(m=>m.body);
+ assert.deepEqual(messages.map(m=>m.body),[
+ 'You have been successfully checked in. Please pull around back and stay to the LEFT.',
+ 'Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.'
+ ]);assert(messages.every(m=>!m.attachment_path));
+});
+for(const channel of ['sms','app'])test('first-time '+channel+' gets map on confirmation and PPE image on separate reminder',async()=>{
+ const x=setup();x.input.conversation.channel=channel;
+ const from=x.input.db.from;x.input.db.from=(...args)=>{const q=from(...args);q.limit=async()=>({data:[]});return q;};
+ const uploads=[];x.input.db.storage={from(){return{upload:async(path)=>{uploads.push(path);return{}},createSignedUrl:async(path)=>({data:{signedUrl:'https://example.invalid/'+path}})}}};
+ await sendCheckinInstructions(x.input);const messages=x.writes.filter(m=>m.body);
+ assert.equal(messages.length,2);assert.match(messages[0].attachment_path,/shipping-map.jpg$/);assert.match(messages[1].attachment_path,/ray-ppe.png$/);
+ assert.match(messages[0].body,/successfully checked in/);assert.match(messages[1].body,/hard hat, safety glasses/);
+ assert.equal(x.sent(),channel==='sms'?2:0);assert.equal(uploads.length,2);
+});
 test('dropoff never receives conflicting left-side instructions',async()=>{const x=setup();await sendCheckinInstructions({...x.input,visitType:'dropoff'});assert.equal(x.sent(),0);assert.equal(x.writes.length,0)});
 test('repeat click does not resend instructions',async()=>{const x=setup(true);await sendCheckinInstructions(x.input);assert.equal(x.sent(),0)});

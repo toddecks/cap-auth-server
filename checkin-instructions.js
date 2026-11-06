@@ -1,7 +1,7 @@
 'use strict';
 const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
-const {PICKUP_CHECKIN}=require('./driver-visit-flow');
+const {PICKUP_PPE}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
 async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType}){
  if(!['pickup','both'].includes(visitType))return null;
@@ -21,7 +21,7 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
   }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',message.id);throw error;}
  }
  await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,instructions,includeImages?await prepareMap(db,conversation):null);
- if(includeImages)await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,'PPE requirements',await preparePpe(db,conversation));
+ await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,PICKUP_PPE,includeImages?await preparePpe(db,conversation):null);
  return null;
 }
 module.exports={sendCheckinInstructions};

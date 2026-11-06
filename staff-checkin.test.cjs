@@ -36,8 +36,9 @@ for(const channel of ['app','sms'])for(const type of ['pickup','both'])test(`${c
  const h=harness('shipping',channel,type,[{poRel:'12345',scheduleDate:'2026-10-13',scheduleTime:'12:00:00',location:'PROSPY',unloadingDoor:'COIL'}]);
  assert.equal((await h.call(true,true)).payload.warning,null);
  await h.call(true,true);
- const expected='Please pull around back and stay to the RIGHT. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
+ const expected='You have been successfully checked in. Please pull around back and stay to the RIGHT.';
  assert.equal(h.messages.filter(m=>m.body===expected).length,1);
+ assert.equal(h.messages.filter(m=>m.body===require('./driver-visit-flow').PICKUP_PPE).length,1);
 });
 
 test('pending clerk verification blocks check-in and instructions',async()=>{const h=harness('shipping','sms','pickup',[],{session_key:'12345678-1234-1234-1234-123456789abc',verified_at:null});assert.equal((await h.call()).status,409);assert.equal(h.checks.length,0);assert.equal(h.messages.length,0);assert.equal(h.arrivals.length,0);});

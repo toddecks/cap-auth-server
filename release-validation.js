@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v19-clerk-verification-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v20-separate-checkin-ppe',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   const holds=require('./release-verification-hold').createStore(db);
@@ -75,7 +75,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
         && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
         && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
-        const coil= instructions.body === require('./pickup-directions').COIL_CHECKIN;
+        const coil= /stay to the RIGHT\b/.test(instructions.body);
         await send(c,'remain',coil ? COIL_REMAIN : REMAIN);
       }
       return;
