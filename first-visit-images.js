@@ -4,7 +4,9 @@ async function needsImages(db,conversation,excludeIds=[]){
  const ids=new Set([conversation.id]);
  for(const [field,value] of [['user_id',conversation.user_id],['sms_phone_e164',conversation.sms_phone_e164]]){
   if(!value)continue;
-  const {data,error}=await db.from('driver_conversations').select('id').eq(field,value);
+  let priorVisits=db.from('driver_conversations').select('id').eq(field,value);
+  if(conversation.facility_id)priorVisits=priorVisits.eq('facility_id',conversation.facility_id);
+  const {data,error}=await priorVisits;
   if(error)throw error;
   for(const row of data||[])ids.add(row.id);
  }

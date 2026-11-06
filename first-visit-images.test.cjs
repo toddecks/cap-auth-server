@@ -12,3 +12,9 @@ test('current visit retries retain image eligibility',async()=>assert.equal(awai
 test('other drivers do not suppress images',async()=>assert.equal(await needsImages(db([{...old,user_id:'other',sms_phone_e164:'+15555550200'},current],[photo]),current),true));
 test('failed delivery does not suppress a later attempt',async()=>assert.equal(await needsImages(db([old,current],[{...photo,delivery_status:'failed'}]),current),true));
 test('regular-hours dropoff text is exact',()=>assert.equal(dropoffReply('2026-10-06T14:00:00Z'),'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.'));
+
+test('a visit to another facility does not suppress first-visit images here',async()=>{
+ const c={...current,facility_id:'csp-toledo-main'},prior={...old,facility_id:'csp-toledo-enterprise'};
+ assert.equal(await needsImages(db([prior,c],[photo]),c),true);
+ assert.equal(await needsImages(db([{...prior,facility_id:c.facility_id},c],[photo]),c),false);
+});
