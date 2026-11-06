@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
-  const health = {mode:'pickup-followups-v18-clerk-verification-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v19-clerk-verification-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   const holds=require('./release-verification-hold').createStore(db);
@@ -103,6 +103,12 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       }
     }
     const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now,verifiedThrough:hold?.verified_at?hold:null,onUnmatched:(c,m,release)=>holds.pause(c,m,release)});
+    // Recover active visits already rejected before clerk holds were introduced.
+    if(!hold&&['invalid','ambiguous'].includes(verification.state)){
+      const attempt=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=pickupAt&&require('./release-attempts').releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id))).at(-1);
+      if(attempt)await holds.pause(c,attempt,require('./release-attempts').releaseFromMessage(attempt.body));
+      return;
+    }
     if(c.channel==='app'&&verification.state==='matched') {
       const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
       const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);

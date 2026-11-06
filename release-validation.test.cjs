@@ -248,3 +248,10 @@ for(const channel of ['sms','app']) for(const visit_type of ['pickup','both']) t
  assert.deepEqual(replies.map(m=>m.body),['Please send your name, release number, and carrier name for verification and further instructions.']);
  assert.equal(f.sends.length,channel==='sms'?1:0);
 });
+
+test('active legacy invalid replies create a clerk hold without texting the driver again',async()=>{
+ const f=fixture();f.advance(Date.parse('2026-11-06T16:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();
+ f.tables.driver_messages.push({id:'legacy-in',conversation_id:c.id,direction:'driver_to_shipping',body:'12345',sent_at:c.created_at});
+ f.tables.driver_messages.push({id:'legacy-out',conversation_id:c.id,direction:'shipping_to_driver',body:require('./release-attempts').INVALID[0],client_message_id:`release-wait:invalid-legacy-in:${c.id}`,delivery_status:'delivered',sent_at:c.created_at});
+ await f.worker.tick();assert.equal(f.tables.shipping_release_verifications[0].attempt_id,'legacy-in');assert.equal(f.sends.length,0);assert.equal(f.worker.health.error,null);
+});
