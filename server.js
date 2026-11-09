@@ -1923,6 +1923,8 @@ app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
 
+app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({db:driverSupabase,findOrCreateConversation:findOrCreateSmsConversation}));
+
 app.post("/api/shipping/edit-arrival", async (req, res) => {
   res.set("Cache-Control", "no-store");
   if (!driverSupabase) return res.status(503).json({ error: "Shipping arrival editing is not configured." });
