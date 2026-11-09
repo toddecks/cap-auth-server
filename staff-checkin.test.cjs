@@ -41,4 +41,4 @@ for(const channel of ['app','sms'])for(const type of ['pickup','both'])test(`${c
  assert.equal(h.messages.filter(m=>m.body===require('./driver-visit-flow').PICKUP_PPE).length,1);
 });
 
-test('pending clerk verification blocks check-in and instructions',async()=>{const h=harness('shipping','sms','pickup',[],{session_key:'12345678-1234-1234-1234-123456789abc',verified_at:null});assert.equal((await h.call()).status,409);assert.equal(h.checks.length,0);assert.equal(h.messages.length,0);assert.equal(h.arrivals.length,0);});
+test('obsolete pending clerk hold cannot block check-in or instructions',async()=>{const h=harness('shipping','sms','pickup',[],{session_key:'12345678-1234-1234-1234-123456789abc',verified_at:null});assert.equal((await h.call()).status,200);assert.equal(h.checks.length,1);assert.equal(h.messages.length,2);assert.equal(h.arrivals.length,1);});

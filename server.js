@@ -1919,9 +1919,6 @@ app.post("/api/shipping/send-photo", async (req, res) => {
 });
 
 const staffCheckinHandler = require('./staff-checkin').createHandler({db:driverSupabase,chartDb:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
-const releaseVerificationHandlers=require('./release-verification-hold').createHandlers({db:driverSupabase,onVerified:()=>releaseValidationWorker.tick()});
-app.get('/api/shipping/release-verifications',releaseVerificationHandlers.list);
-app.post('/api/shipping/verify-release',releaseVerificationHandlers.verify);
 app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 

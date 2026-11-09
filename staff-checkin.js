@@ -19,8 +19,6 @@ function createHandler(deps) {
    if(!['pickup','both'].includes(c.visit_type)||!String(c.release_number||'').trim()||/^(TEXT\s*\d*|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
    if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
-   const releaseHold=await require('./release-verification-hold').createStore(db).get(c);
-   if(releaseHold&&!releaseHold.verified_at)return res.status(409).json({error:'Release verification is paused. A shipping clerk must select Verified before check-in.'});
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
     const {data:contact,error:e}=await db.from('driver_sms_contacts').select('*').eq('phone_e164',c.sms_phone_e164).single();

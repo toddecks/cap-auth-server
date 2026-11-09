@@ -143,20 +143,15 @@ test('Both details without PICK UP do not start pickup reminders',async()=>{
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Lindsey 254571 Tamco',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.equal(f.sends.length,0);
 });
-test('unmatched releases stay paused across restart and corrected numbers until clerk verification',async()=>{
- const f=fixture();f.advance(Date.parse('2026-11-06T15:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',release_number:'1111'});
- f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'968751',scheduleDate:'2026-11-06',scheduleTime:'14:00:00',location:'PROSPY',unloadingDoor:'MB'}]})};return q}};
- const worker=createWorker(f.options);
- const add=body=>f.tables.driver_messages.push({id:'inbound-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
- add('1111');await worker.tick();await worker.tick();assert.equal(f.sends.length,0);
- assert.equal(f.tables.shipping_release_verifications[0].release_number,'1111');
- f.advance(300000);await createWorker(f.options).tick();assert.equal(f.sends.length,0,'pending clerk verification suppresses driver errors and wait reminders');
- add('968751');await worker.tick();assert.equal(f.sends.length,0,'corrected text still needs clerk verification');
- const hold=f.tables.shipping_release_verifications[0];assert.equal(hold.release_number,'968751');
- Object.assign(hold,{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});c.release_number='968751';
- await createWorker(f.options).tick();await worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED]);
- f.advance(179999);await worker.tick();assert.equal(f.sends.length,1);f.advance(1);await worker.tick();assert.equal(f.sends[1].body,SOON);
- assert.equal(worker.health.error,null);assert.equal(f.checkouts.length,0);
+for(const channel of ['sms','app'])test(`${channel} old clerk hold cannot block rejection or valid correction`,async()=>{
+ const f=fixture(channel);f.advance(Date.parse('2026-11-06T15:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',release_number:'1111'});
+ f.tables.shipping_release_verifications.push({conversation_id:c.id,session_key:c.id,verified_at:null,attempt_id:'old',release_number:'1111'});
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'968751',scheduleDate:'2026-11-06',location:'PROSPY',unloadingDoor:'MB'}]})};return q}};
+ const worker=createWorker(f.options);const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
+ const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
+ add('1111');await worker.tick();await worker.tick();assert.deepEqual(replies(),[require('./release-attempts').INVALID[0]]);
+ f.advance(1000);add('968751');await createWorker(f.options).tick();await worker.tick();assert.deepEqual(replies(),[require('./release-attempts').INVALID[0],require('./release-attempts').ACCEPTED]);
+ f.advance(180000);await worker.tick();assert.equal(replies().at(-1),SOON);assert.equal(worker.health.error,null);
 });
 
 for(const type of ['pickup','both'])test(`native ${type} validates initial/corrected release in same visit`,async()=>{
@@ -175,11 +170,9 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
   f.advance(60000);add('PICK UP','pickup');await worker.tick();assert.deepEqual(replies(),[VERIFY]);
   add('72039','wrong');await worker.tick();
  }
- assert.equal(f.tables.shipping_release_verifications[0].release_number,'72039');
+ assert.equal(replies().at(-1),require('./release-attempts').INVALID[0]);
  f.advance(1000);add('72037','correct');await worker.tick();
- assert.ok(!replies().includes(require('./release-attempts').ACCEPTED));
- Object.assign(f.tables.shipping_release_verifications[0],{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});
- await worker.tick();await worker.tick();
+ await worker.tick();
  assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
  assert.equal(c.release_number,'72037');assert.equal(f.tables.driver_arrivals[0].release_number,'72037');
  assert.equal(c.visit_type,type);assert.equal(c.arrival_id,480);assert.equal(f.sends.length,0);
@@ -213,9 +206,7 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   add('PICK UP');await worker.tick();
   if(scenario==='invalid-correction'){
    for(const release of ['11111','22222','33333','72037']){f.advance(1000);add(release);await worker.tick();await worker.tick();}
-   assert.deepEqual(replies(),[VERIFY]);
-   Object.assign(f.tables.shipping_release_verifications[0],{verified_at:new Date(f.options.now()).toISOString(),verified_by:'staff'});
-   await worker.tick();assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
+   assert.deepEqual(replies(),[VERIFY,...require('./release-attempts').INVALID,require('./release-attempts').ACCEPTED]);
   }
   if(scenario==='staff-reply')f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'staff',delivery_status:'sent',sent_at:new Date(f.options.now()).toISOString()});
   if(scenario==='checkout'){c.status='closed';c.session_ended_at=new Date(f.options.now()).toISOString();}
@@ -249,9 +240,9 @@ for(const channel of ['sms','app']) for(const visit_type of ['pickup','both']) t
  assert.equal(f.sends.length,channel==='sms'?1:0);
 });
 
-test('active legacy invalid replies create a clerk hold without texting the driver again',async()=>{
+test('active legacy invalid replies remain deduplicated without creating clerk holds',async()=>{
  const f=fixture();f.advance(Date.parse('2026-11-06T16:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();
  f.tables.driver_messages.push({id:'legacy-in',conversation_id:c.id,direction:'driver_to_shipping',body:'12345',sent_at:c.created_at});
  f.tables.driver_messages.push({id:'legacy-out',conversation_id:c.id,direction:'shipping_to_driver',body:require('./release-attempts').INVALID[0],client_message_id:`release-wait:invalid-legacy-in:${c.id}`,delivery_status:'delivered',sent_at:c.created_at});
- await f.worker.tick();assert.equal(f.tables.shipping_release_verifications[0].attempt_id,'legacy-in');assert.equal(f.sends.length,0);assert.equal(f.worker.health.error,null);
+ await f.worker.tick();assert.equal(f.tables.shipping_release_verifications.length,0);assert.equal(f.sends.length,0);assert.equal(f.worker.health.error,null);
 });
