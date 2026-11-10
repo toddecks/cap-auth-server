@@ -78,7 +78,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v25-pickup-timeouts",
+    shippingSmsMode: "twilio-two-way-v26-require-visit-choice",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -1340,6 +1340,7 @@ const findOrCreateSmsConversation = async (phone, body) => {
     .insert({
       user_id: matchedUserId,
       release_number: `Text ${lastFour}`,
+      visit_type: null,
       facility_id: facilityId,
       status: "open",
       channel: "sms",
@@ -1572,7 +1573,7 @@ app.post(
         .update({
           updated_at: now,
           ...(remembered.releaseNumber ? { release_number: remembered.releaseNumber } : {}),
-          ...(remembered.visitType ? { visit_type: remembered.visitType } : {})
+          ...('visitType' in remembered ? { visit_type: remembered.visitType } : {})
         })
         .eq("id", conversationId);
       if (conversationError) throw conversationError;

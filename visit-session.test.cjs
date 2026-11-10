@@ -12,9 +12,9 @@ test('complete text after checkout starts a new visit, ordinary chat and duplica
  assert(currentCheckin(c,{checked_in_at:'2026-10-01T13:12:00Z'}));
  assert.equal(key(c),'thread:2026-10-01T13:11:00.000Z');
 });
-test('complete current introduction overrides stored identity and infers pickup',()=>{
+test('complete current introduction overrides stored identity without selecting a visit',()=>{
  const r=nextCheckin({existing:{full_name:'Previous Driver',driver_company:'Previous Company'},body:'Todd, CSP, 45678910',conversationCreated:true});
- assert.equal(r.contact.full_name,'Todd');assert.equal(r.contact.driver_company,'CSP');assert.equal(r.contact.last_release_number,'45678910');assert.equal(r.visitType,'pickup');assert.equal(r.reply,'');
+ assert.equal(r.contact.full_name,'Todd');assert.equal(r.contact.driver_company,'CSP');assert.equal(r.contact.last_release_number,'45678910');assert.equal(r.visitType,null);assert.equal(r.reply,require('./driver-visit-flow').TYPE_PROMPT);
 });
 
 test('elapsed time alone does not begin a new visit',()=>{

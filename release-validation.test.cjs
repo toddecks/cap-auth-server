@@ -246,3 +246,19 @@ test('active legacy invalid replies remain deduplicated without creating clerk h
  f.tables.driver_messages.push({id:'legacy-out',conversation_id:c.id,direction:'shipping_to_driver',body:require('./release-attempts').INVALID[0],client_message_id:`release-wait:invalid-legacy-in:${c.id}`,delivery_status:'delivered',sent_at:c.created_at});
  await f.worker.tick();assert.equal(f.tables.shipping_release_verifications.length,0);assert.equal(f.sends.length,0);assert.equal(f.worker.health.error,null);
 });
+
+for(const choice of ['Pick Up','Drop Off','Both'])test(`SMS waits for explicit ${choice} before normal flow`,async()=>{
+ const f=fixture();const flow=require('./driver-visit-flow');const next=require('./sms-checkin-details').nextCheckin;const c=f.tables.driver_conversations[0];c.visit_type=null;
+ const first=next({body:"This is Sean with center express.I'm dropping a coil from f.C p and then I am loading 967851",conversationCreated:true,now:new Date(f.options.now())});
+ assert.equal(first.visitType,null);assert.equal(first.contact.onboarding_step,'awaiting_details');assert.equal(first.reply,'Please TEXT: Drop Off, Pick Up, or Both to begin the check in process.');
+ c.release_number=first.contact.last_release_number;f.tables.driver_messages.push({id:'intro',conversation_id:c.id,direction:'driver_to_shipping',body:'Sean, Center Express, 967851',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();f.advance(300000);await f.worker.tick();assert.equal(f.sends.length,0,'no lookup acknowledgement, check-in, PPE, or timers before a choice');
+ const second=next({existing:first.contact,body:'967851'});assert.equal(second.visitType,null);assert.equal(second.reply,flow.TYPE_PROMPT);
+ const selected=next({existing:second.contact,body:choice,now:new Date(f.options.now())});c.visit_type=selected.visitType;
+ f.tables.driver_messages.push({id:'choice',conversation_id:c.id,direction:'driver_to_shipping',body:choice,sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();
+ if(choice==='Pick Up')assert.equal(f.sends.at(-1).body,VERIFY);
+ else if(choice==='Both'){assert.match(selected.reply,/STEP 1 – DROP OFF/);assert.equal(f.sends.length,0);}
+ else {assert.match(selected.reply,/unchain your load/);assert.equal(f.sends.length,0);}
+ assert.equal(f.worker.health.error,null);
+});

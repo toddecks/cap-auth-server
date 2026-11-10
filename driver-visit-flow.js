@@ -1,11 +1,11 @@
 'use strict';
-const TYPE_PROMPT='Are you here for a pick-up, drop-off, or both? Please reply PICKUP, DROPOFF, or BOTH.';
+const TYPE_PROMPT='Please TEXT: Drop Off, Pick Up, or Both to begin the check in process.';
 const PICKUP_PROMPT='Please send your name, release number, and carrier name for verification and further instructions.';
 const PICKUP_CHECKIN='You have been successfully checked in. Please pull around back and stay to the LEFT.';
 const PICKUP_PPE='Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.';
 // Explicit common typos avoid treating unrelated short words as arrival intent.
-const PICKUP_WORDS = String.raw`(?:pick[\s-]*up|picking[\s-]*up|pik[\s-]*up|pic[\s-]*up|pck[\s-]*up|pcik[\s-]*up|pikc[\s-]*up|pick[\s-]*pu|pick[\s-]*upp|pick[\s-]*ip|pick[\s-]*uo|pickng[\s-]*up|piking[\s-]*up|pick)`;
-const DROPOFF_WORDS = String.raw`(?:drop[\s-]*off|dropping[\s-]*off|drop[\s-]*of|dropp[\s-]*off|dropp[\s-]*of|drpo[\s-]*off|dorp[\s-]*off|drp[\s-]*off|dro[\s-]*off|drop[\s-]*offf|drop[\s-]*oft|droping[\s-]*off|dropping[\s-]*of|delivery|delivering)`;
+const PICKUP_WORDS = String.raw`(?:pick[\s-]*up|picking[\s-]*up|pik[\s-]*up|pic[\s-]*up|pck[\s-]*up|pcik[\s-]*up|pikc[\s-]*up|pick[\s-]*pu|pick[\s-]*upp|pick[\s-]*ip|pick[\s-]*uo|pickng[\s-]*up|piking[\s-]*up)`;
+const DROPOFF_WORDS = String.raw`(?:drop[\s-]*off|dropping[\s-]*off|drop[\s-]*of|dropp[\s-]*off|dropp[\s-]*of|drpo[\s-]*off|dorp[\s-]*off|drp[\s-]*off|dro[\s-]*off|drop[\s-]*offf|drop[\s-]*oft|droping[\s-]*off|dropping[\s-]*of)`;
 // Exact sign wording plus the corresponding native-app labels. Unicode word
 // boundaries keep Cyrillic commands out of names and longer unrelated words.
 const TRANSLATED_VISITS = [
@@ -24,10 +24,10 @@ function translatedCommands(text){
 function visitType(text){
  const value=translatedCommands(text);
  if(/^[\s"'«»“”‘’¡¿]*both\b/i.test(value))return 'both';
- const pickup=new RegExp(String.raw`\b(?:${PICKUP_WORDS}|release)\b`,'i').test(value);
+ const pickup=new RegExp(String.raw`\b(?:${PICKUP_WORDS})\b`,'i').test(value);
  const dropoff=new RegExp(String.raw`\b${DROPOFF_WORDS}\b`,'i').test(value);
  if(dropoff)return pickup?(/(?<!\p{L})(?:or|o|ou|или|або)(?!\p{L})/iu.test(value)?null:'both'):'dropoff';
- return pickup||/^\s*#?\d+\s*$/.test(value)?'pickup':null;
+ return pickup?'pickup':null;
 }
 function stripVisitWords(text){
  return translatedCommands(text).replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\s*(?:and|&|\+|then|y|et|и|і|й)\s*(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\b`,'gi'),'').replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS}|both)\b`,'gi'),'').replace(/^\s*(?:and|&)\s*$/i,'');

@@ -62,7 +62,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  const introduction=parseDetails(flow.stripVisitWords(body),{});
  const completeIntroduction=Boolean(introduction.full_name&&introduction.driver_company&&introduction.last_release_number);
  // Numbers supplied for the pickup leg must not erase a Both visit.
- const type=previousType==='both'?'both':chosen||(introduction.last_release_number?'pickup':previousType)||null;
+ const type=previousType==='both'?'both':chosen||previousType||null;
  const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
  const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
  const detailText=flow.stripVisitWords(body);
@@ -70,7 +70,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  contact.onboarding_step=type==='dropoff'||(['pickup','both'].includes(type)&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';
  const changed=Object.keys(parsed).some(k=>parsed[k]!==base[k]);
  let reply='';
- if(!type&&fresh)reply=flow.TYPE_PROMPT;
+ if(!type)reply=flow.TYPE_PROMPT;
  else if(type&&(fresh||type!==previousType||(type==='dropoff'&&chosen==='dropoff')||(previousType==='both'&&chosen==='pickup'))) {
   if(type==='both'&&chosen!=='pickup')reply=flow.bothReply(now);
   else if(type==='dropoff')reply=flow.dropoffReply(now);
