@@ -87,6 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
     shippingStaffCheckinMode: "staff-verified-v1",
+    shippingManualArrivalMode: "checked-in-with-release-lookup-v2",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
@@ -1923,7 +1924,7 @@ app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
 
-app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({db:driverSupabase,findOrCreateConversation:findOrCreateSmsConversation}));
+app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({db:driverSupabase,chartDb:chartSupabase,findOrCreateConversation:findOrCreateSmsConversation}));
 
 app.post("/api/shipping/edit-arrival", async (req, res) => {
   res.set("Cache-Control", "no-store");

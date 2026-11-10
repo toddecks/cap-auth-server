@@ -1,15 +1,51 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const {parseInput,createHandler}=require('./manual-arrival');
-const body={driverName:'Test Driver',driverCompany:'Test Carrier',phone:'419-555-0123',releaseNumber:'REL1'};
-function setup(role='shipping',active=false){
- const writes=[];let found=0;
- const db={auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){let op='read';const q={select(){return q},eq(){return q},is(){return q},limit(){return Promise.resolve({data:active?[{id:1}]:[]})},upsert(v){op='write';writes.push([table,v]);return q},update(v){op='write';writes.push([table,v]);return q},insert(v){op='write';writes.push([table,v]);return q},single(){return Promise.resolve({data:{id:3}})},then(ok){return Promise.resolve({data:null}).then(ok)}};return q}};
- const handler=createHandler({db,findOrCreateConversation:async()=>{found++;return {id:'conversation'}}});
- const res={code:200,set(){return this},status(n){this.code=n;return this},json(v){this.body=v;return this}};
- return {handler,res,writes,get found(){return found}};
+const at='2026-11-10T15:00:00.000Z';
+const body={driverName:'Test Driver',driverCompany:'Test Carrier',phone:'419-555-0123',releaseNumber:'968529'};
+const load={poRel:'968529/969082/969083-coil',location:'PROSPY',scheduleDate:'2026-11-10',scheduleTime:'11:00:00',unloadingDoor:'COIL',customerNo:'CENTER'};
+function setup({role='shipping',active=null,checkin=null,loads=[load],lookupError=false,checkinError=false,ended=false}={}){
+ const tables={driver_sms_arrivals:active?[{phone_e164:'+14195550123',facility_id:'csp-toledo-main',conversation_id:'conversation',departed_at:null,...active}]:[],driver_conversations:[{id:'conversation',status:'open',created_at:at,session_ended_at:ended?at:null}],driver_sms_contacts:[],shipping_staff_checkins:checkin?[{conversation_id:'conversation',checked_in_at:checkin}]:[]};
+ const writes=[],reads=[];let found=0,command;
+ const db={auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){reads.push(table);let op='read',value,one=false,limit=Infinity,filters=[];
+  const q={select(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},is(k,v){filters.push(r=>(r[k]??null)===v);return q},limit(n){limit=n;return q},upsert(v){op='upsert';value=v;return q},update(v){op='update';value=v;return q},insert(v){op='insert';value=v;return q},single(){one=true;return q},maybeSingle(){one=true;return q},then(resolve,reject){return Promise.resolve().then(()=>{
+   if(!tables[table])throw Error('Unexpected table '+table);
+   if(op!=='read'){
+    writes.push([table,op,value]);
+    if(table==='shipping_staff_checkins'&&checkinError)return {error:{message:'Check-in write failed'}};
+    if(op==='insert')tables[table].push({id:3,...value});
+    else if(op==='upsert'){const key=table==='driver_sms_contacts'?'phone_e164':'conversation_id';const row=tables[table].find(r=>r[key]===value[key]);if(row)Object.assign(row,value);else tables[table].push({...value});}
+    else tables[table].filter(r=>filters.every(f=>f(r))).forEach(r=>Object.assign(r,value));
+   }
+   const rows=tables[table].filter(r=>filters.every(f=>f(r))).slice(0,limit);return {data:one?rows[0]||null:rows};
+  }).then(resolve,reject)}};return q}};
+ const chartDb={from(table){assert.equal(table,'psdata_loads_api');const q={select(){return q},ilike(){return q},order(){return q},range:async()=>lookupError?{error:{message:'Lookup offline'}}:{data:loads}};return q}};
+ const handler=createHandler({db,chartDb,now:()=>at,findOrCreateConversation:async(phone,body)=>{found++;command=body;return {id:'conversation'}}});
+ const call=async(input=body,headers={authorization:'Bearer token'})=>{const res={code:200,set(){return this},status(n){this.code=n;return this},json(v){this.body=v;return this}};await handler({headers,body:input},res);return res;};
+ return {call,tables,writes,reads,get found(){return found},get command(){return command}};
 }
 test('normalizes phone and rejects missing or oversized details',()=>{assert.equal(parseInput(body).phone,'+14195550123');for(const b of [{...body,phone:'bad'},{...body,driverName:''},{...body,releaseNumber:'x'.repeat(101)}])assert.throws(()=>parseInput(b));});
-test('requires a staff session',async()=>{let s=setup();await s.handler({headers:{},body},s.res);assert.equal(s.res.code,401);assert.equal(s.writes.length,0)});
-test('denies driver role before database changes',async()=>{let s=setup('driver');await s.handler({headers:{authorization:'Bearer token'},body},s.res);assert.equal(s.res.code,403);assert.equal(s.writes.length,0)});
-test('does not overwrite a current arrival',async()=>{let s=setup('shipping',true);await s.handler({headers:{authorization:'Bearer token'},body},s.res);assert.equal(s.res.code,409);assert.equal(s.writes.length,0);assert.equal(s.found,0)});
-test('creates arrival with staff attribution without check-in or outgoing message',async()=>{let s=setup();await s.handler({headers:{authorization:'Bearer token'},body},s.res);assert.equal(s.res.code,200);assert.equal(s.res.body.arrivalId,3);assert.deepEqual(s.writes.map(x=>x[0]),['driver_sms_contacts','driver_conversations','driver_sms_arrivals']);assert.equal(s.writes[2][1].added_by,'staff');assert.equal(s.writes[2][1].visit_type,'pickup')});
+test('requires a staff session',async()=>{const f=setup();assert.equal((await f.call(body,{})).code,401);assert.equal(f.writes.length,0)});
+test('denies drivers before database reads or changes',async()=>{const f=setup({role:'driver'});assert.equal((await f.call()).code,403);assert.equal(f.writes.length,0);assert.equal(f.reads.length,0)});
+test('manual add creates an officially checked-in arrival with lookup data and no SMS',async()=>{
+ const f=setup(),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.arrivalId,3);assert.equal(r.body.checkedInAt,at);
+ assert.equal(r.body.appointment.door,'COIL');assert.equal(r.body.appointment.customer,'Center Steel Sales, Inc.');assert.equal(r.body.appointment.appointment_at,'2026-11-10T11:00:00');assert.equal(r.body.appointment.release_reference,load.poRel);
+ assert.equal(f.tables.driver_sms_arrivals[0].checked_in_at,at);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_at,at);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_by,'staff');assert.equal(f.command,'PICK UP');
+ assert.deepEqual(f.writes.map(x=>x[0]),['driver_sms_contacts','driver_conversations','driver_sms_arrivals','shipping_staff_checkins']);
+});
+test('repairs hidden unchecked arrival without a new arrival or conversation',async()=>{
+ const f=setup({active:{id:8,release_number:'111111',checked_in_at:null}}),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.recovered,true);assert.equal(r.body.arrivalId,8);assert.equal(f.found,0);assert.equal(f.tables.driver_sms_arrivals.length,1);assert.equal(f.tables.driver_sms_arrivals[0].release_number,body.releaseNumber);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_at,at);
+});
+test('retry reuses checked-in arrival without moving its time or duplicating it',async()=>{
+ const f=setup();await f.call();const writes=f.writes.length;const r=await f.call();assert.equal(r.code,200);assert.equal(r.body.alreadyAdded,true);assert.equal(f.writes.length,writes);assert.equal(f.tables.driver_sms_arrivals.length,1);assert.equal(f.found,1);
+});
+test('different release cannot overwrite a checked-in driver',async()=>{
+ const f=setup({active:{id:8,release_number:'999999',checked_in_at:at},checkin:at}),r=await f.call();assert.equal(r.code,409);assert.equal(r.body.arrivalId,8);assert.equal(f.writes.length,0);assert.equal(f.found,0);
+});
+test('release lookup outage makes no writes or empty text conversation',async()=>{const f=setup({lookupError:true}),r=await f.call();assert.equal(r.code,503);assert.equal(f.found,0);assert.equal(f.writes.length,0)});
+test('unknown release is not falsely marked matched and still permits clerk entry',async()=>{const f=setup({loads:[]}),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.appointment,null);assert.equal(f.tables.shipping_staff_checkins.length,1)});
+test('ambiguous release does not assign a guessed loading door',async()=>{const f=setup({loads:[load,{...load,unloadingDoor:'MB'}]}),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.appointment.status,'ambiguous');assert.equal(r.body.appointment.door,null)});
+test('ended visit cannot be revived by changing arrival details',async()=>{const f=setup({active:{id:8},ended:true}),r=await f.call();assert.equal(r.code,409);assert.equal(f.writes.length,0)});
+test('failed official check-in can be retried even if arrival timestamp already saved',async()=>{
+ const f=setup({checkinError:true});assert.equal((await f.call()).code,500);assert.equal(f.tables.driver_sms_arrivals.length,1);
+ const retry=setup({active:f.tables.driver_sms_arrivals[0]});assert.equal((await retry.call()).code,200);assert.equal(retry.tables.driver_sms_arrivals.length,1);assert.equal(retry.tables.shipping_staff_checkins.length,1);
+});
