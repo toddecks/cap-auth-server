@@ -25,7 +25,7 @@ function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().t
    if(!['shipping','admin'].includes(staff.app_metadata?.csp_role))return res.status(403).json({error:'Shipping access is required.'});
    if(pending.has(input.phone))return res.status(409).json({error:'This driver is already being added. Refresh arrivals.'});
    pending.add(input.phone);locked=true;
-   const timestamp=now();
+   let timestamp=now();
    const facilityId='csp-toledo-main';
    // Match against the same catalog and punctuation/slash rules used by the cards.
    let appointment;
@@ -37,19 +37,38 @@ function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().t
     console.error('Manual arrival release lookup:',error.message);
     return res.status(503).json({error:'The release lookup is unavailable. No arrival was added. Please try again.'});
    }
-   const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).limit(1);
+   const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at,entered_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).order('entered_at',{ascending:false}).limit(50);
    if(active.error)throw active.error;
-   const existing=active.data?.[0];
-   // Retry a partial add using its existing arrival; never create a duplicate thread.
+   const readConversation=async id=>{
+    const result=await db.from('driver_conversations').select('id,status,created_at,updated_at,session_started_at,session_ended_at').eq('id',id).single();
+    if(result.error)throw result.error;
+    return result.data;
+   };
+   let existing=null,currentVisit=null;
+   for(const arrival of active.data||[]){
+    const visit=await readConversation(arrival.conversation_id);
+    const olderSession=visit?.session_started_at&&Date.parse(arrival.entered_at)<Date.parse(visit.session_started_at);
+    if(visit&&(visit.status!=='open'||visit.session_ended_at||olderSession)){
+     // Checkout can end the thread while leaving an old arrival row active.
+     // Finish that old row at its original session boundary, preserving history.
+     const departedAt=olderSession?new Date(Date.parse(visit.session_started_at)-1).toISOString():visit.session_ended_at||visit.updated_at||timestamp;
+     const closed=await db.from('driver_sms_arrivals').update({departed_at:departedAt}).eq('id',arrival.id).is('departed_at',null);
+     if(closed.error)throw closed.error;
+     continue;
+    }
+    if(!existing){existing=arrival;currentVisit=visit;}
+   }
+   // A returning driver starts a new visit; a partial current add is repaired.
    const found=existing?{id:existing.conversation_id}:await findOrCreateConversation(input.phone,'PICK UP');
-   if(found.sessionEnded)return res.status(409).json({error:'This driver has an ended visit. Refresh Shipping before adding a new arrival.'});
    const conversationId=found.id;
-   const current=await db.from('driver_conversations').select('id,status,session_started_at,session_ended_at').eq('id',conversationId).single();
-   if(current.error)throw current.error;
-   if(!current.data||current.data.status!=='open'||current.data.session_ended_at)return res.status(409).json({error:'This visit has ended. Refresh Shipping before adding a new arrival.'});
+   currentVisit=currentVisit||await readConversation(conversationId);
+   if(!currentVisit||currentVisit.status!=='open'||currentVisit.session_ended_at)return res.status(409).json({error:'The visit changed while adding this driver. Please try Add & check in again.'});
+   // Starting a new session uses the database clock. The arrival must belong
+   // to that session even if the server clock is slightly behind it.
+   timestamp=new Date(Math.max(Date.parse(now()),Date.parse(currentVisit.session_started_at)||0)).toISOString();
    const checked=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',conversationId).maybeSingle();
    if(checked.error)throw checked.error;
-   const checkedInAt=require('./visit-session').currentCheckin(current.data,checked.data)?checked.data.checked_in_at:null;
+   const checkedInAt=require('./visit-session').currentCheckin(currentVisit,checked.data)?checked.data.checked_in_at:null;
    if(existing&&checkedInAt){
     const normalize=value=>String(value||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(normalize(existing.release_number)!==normalize(input.releaseNumber))return res.status(409).json({error:'This driver is already checked in with a different release. Edit their existing arrival card instead.',arrivalId:existing.id,conversationId});

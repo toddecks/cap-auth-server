@@ -87,7 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
     shippingStaffCheckinMode: "staff-verified-v1",
-    shippingManualArrivalMode: "checked-in-with-release-lookup-v2",
+    shippingManualArrivalMode: "checked-in-returning-drivers-v3",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
       driverSupabase
