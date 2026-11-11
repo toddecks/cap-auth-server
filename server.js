@@ -81,6 +81,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingSmsMode: "twilio-two-way-v32-complete-pu-references",
     shippingDriverNameRepair: driverNameRepair.health,
     shippingReviewMode: "manual-chat-button-v1",
+    townHallFormMode: "anonymous-kim-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "targeted-release-lookup-v3-bol",
@@ -6568,6 +6569,8 @@ app.post("/api/fantasy-football-invite-test", async (req, res) => {
 require("./forms-hub").register(app, {auth:supabase,chart:chartSupabase,roleRows:fetchUserRoleRows,roleNames:roleNamesFromRows,recipients:{fantasy:FANTASY_FOOTBALL_ADMIN_RECIPIENTS,shift:SHIFT_REPORT_RECIPIENTS,forklift:FORKLIFT_INSPECTION_RECIPIENTS,crane:CRANE_INSPECTION_RECIPIENTS,pro:PRO_FORMS_RECIPIENTS,expansion:EXPANSION_LEAD_RECIPIENTS,maintenance:SHIFT_MAINTENANCE_RECIPIENTS}});
 
 require("./guest").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, recipients:["todd@coilsteelprocessing.com"], resolveRecipients:require("./guest-recipients").createGuestRecipientResolver(listAllAuthUsers)});
+
+require("./town-hall").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
 require("./veterans-day").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
