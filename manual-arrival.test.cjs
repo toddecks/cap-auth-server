@@ -30,7 +30,7 @@ test('manual add creates an officially checked-in arrival then invokes shared in
  const f=setup(),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.arrivalId,3);assert.equal(r.body.checkedInAt,at);
  assert.equal(r.body.appointment.door,'COIL');assert.equal(r.body.appointment.customer,'Center Steel Sales, Inc.');assert.equal(r.body.appointment.appointment_at,'2026-11-10T11:00:00');assert.equal(r.body.appointment.release_reference,load.poRel);
  assert.equal(f.tables.driver_sms_arrivals[0].checked_in_at,at);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_at,at);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_by,'staff');assert.equal(f.command,'PICK UP');
- assert.deepEqual(f.writes.map(x=>x[0]),['driver_sms_contacts','driver_conversations','driver_sms_arrivals','shipping_staff_checkins']);
+ assert.deepEqual(f.writes.map(x=>x[0]),['driver_sms_contacts','driver_sms_arrivals','shipping_staff_checkins','driver_conversations']);
 });
 test('repairs hidden unchecked arrival without a new arrival or conversation',async()=>{
  const f=setup({active:{id:8,release_number:'111111',checked_in_at:null}}),r=await f.call();assert.equal(r.code,200);assert.equal(r.body.recovered,true);assert.equal(r.body.arrivalId,8);assert.equal(f.found,0);assert.equal(f.tables.driver_sms_arrivals.length,1);assert.equal(f.tables.driver_sms_arrivals[0].release_number,body.releaseNumber);assert.equal(f.tables.shipping_staff_checkins[0].checked_in_at,at);

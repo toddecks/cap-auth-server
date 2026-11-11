@@ -76,6 +76,11 @@ function createHandler(deps) {
    const checked=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',conversationId).maybeSingle();
    if(checked.error)throw checked.error;
    const checkedInAt=require('./visit-session').currentCheckin(currentVisit,checked.data)?checked.data.checked_in_at:null;
+   const reconcileConversation=async()=>{
+    if(currentVisit.release_number===input.releaseNumber&&currentVisit.visit_type==='pickup')return;
+    const updated=await db.from('driver_conversations').update({release_number:input.releaseNumber,visit_type:'pickup'}).eq('id',conversationId);
+    if(updated.error)throw updated.error;
+   };
    const notify=async arrivalId=>{
     try{
      await sendInstructions({...deps,conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions,alwaysSendPpe:true});
@@ -85,12 +90,11 @@ function createHandler(deps) {
    if(existing&&checkedInAt){
     const normalize=value=>String(value||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(normalize(existing.release_number)!==normalize(input.releaseNumber))return res.status(409).json({error:'This driver is already checked in with a different release. Edit their existing arrival card instead.',arrivalId:existing.id,conversationId});
+    await reconcileConversation();
     return res.json({ok:true,arrivalId:existing.id,conversationId,checkedInAt,appointment,alreadyAdded:true,warning:await notify(existing.id)});
    }
    const contact=await db.from('driver_sms_contacts').upsert({phone_e164:input.phone,full_name:input.driverName,driver_company:input.driverCompany,last_release_number:input.releaseNumber,visit_type:'pickup',onboarding_step:'ready',updated_at:timestamp},{onConflict:'phone_e164'});
    if(contact.error)throw contact.error;
-   const conversation=await db.from('driver_conversations').update({release_number:input.releaseNumber,visit_type:'pickup'}).eq('id',conversationId);
-   if(conversation.error)throw conversation.error;
    const arrivalValues={phone_e164:input.phone,conversation_id:conversationId,facility_id:facilityId,release_number:input.releaseNumber,driver_name:input.driverName,driver_company:input.driverCompany,visit_type:'pickup',added_by:staff.id,entered_at:timestamp,checked_in_at:timestamp};
    const arrival=existing
     ? await db.from('driver_sms_arrivals').update(arrivalValues).eq('id',existing.id).is('departed_at',null).select('id').single()
@@ -99,6 +103,9 @@ function createHandler(deps) {
    // Both feeds use the official check-in record, not just the raw arrival row.
    const checkin=await db.from('shipping_staff_checkins').upsert({conversation_id:conversationId,checked_in_by:staff.id,checked_in_at:timestamp},{onConflict:'conversation_id'});
    if(checkin.error)throw checkin.error;
+   // Publish pickup readiness only after official check-in exists, so the
+   // reminder worker cannot request details during a manual add.
+   await reconcileConversation();
    // The shared sender provides first-visit images and per-visit message IDs.
    // Its check-in message also activates the existing one-minute follow-up.
    const warning=await notify(arrival.data.id);
