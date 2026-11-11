@@ -5,11 +5,14 @@ function parseInput(body = {}) {
  const driverCompany=cleanIdentity(body.driverCompany);
  const releaseNumber=String(body.releaseNumber||'').trim();
  const digits=String(body.phone||'').replace(/\D/g,'');
+ const loadingDoor=String(body.loadingDoor||'').trim().toUpperCase();
+ if(loadingDoor&&!['COIL','OTHER'].includes(loadingDoor))throw Error('Choose COIL or Other loading door.');
  const phone=digits.length===10?`+1${digits}`:digits.length===11&&digits[0]==='1'?`+${digits}`:/^\+[1-9]\d{7,14}$/.test(String(body.phone||'').trim())?String(body.phone).trim():'';
  if(!driverName||driverName.length>120||!driverCompany||driverCompany.length>160||!releaseNumber||releaseNumber.length>100||!phone)throw new Error('Enter a driver name, company, valid phone number, and release number.');
- return {driverName,driverCompany,releaseNumber,phone};
+ return {driverName,driverCompany,releaseNumber,phone,loadingDoor};
 }
-function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().toISOString()}) {
+function createHandler(deps) {
+ const {db,chartDb,findOrCreateConversation,now=()=>new Date().toISOString(),sendInstructions=require('./checkin-instructions').sendCheckinInstructions}=deps;
  const pending=new Set();
  return async(req,res)=>{
   res.set('Cache-Control','no-store');
@@ -38,10 +41,13 @@ function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().t
     console.error('Manual arrival release lookup:',error.message);
     return res.status(503).json({error:'The release lookup is unavailable. No arrival was added. Please try again.'});
    }
+   const routing=input.loadingDoor||(appointment?.door&&appointment.status!=='ambiguous'?(String(appointment.door).toUpperCase()==='COIL'?'COIL':'OTHER'):'');
+   if(!routing)return res.status(409).json({code:'LOADING_DOOR_REQUIRED',error:'Select COIL (RIGHT) or Other loading door (LEFT) so the driver receives the correct check-in instructions.'});
+   const preparedInstructions=await require('./pickup-directions').pickupInstructions(null,{},new Date(timestamp),routing);
    const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at,entered_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).order('entered_at',{ascending:false}).limit(50);
    if(active.error)throw active.error;
    const readConversation=async id=>{
-    const result=await db.from('driver_conversations').select('id,status,created_at,updated_at,session_started_at,session_ended_at').eq('id',id).single();
+    const result=await db.from('driver_conversations').select('*').eq('id',id).single();
     if(result.error)throw result.error;
     return result.data;
    };
@@ -70,10 +76,16 @@ function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().t
    const checked=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',conversationId).maybeSingle();
    if(checked.error)throw checked.error;
    const checkedInAt=require('./visit-session').currentCheckin(currentVisit,checked.data)?checked.data.checked_in_at:null;
+   const notify=async arrivalId=>{
+    try{
+     await sendInstructions({...deps,conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions});
+     return null;
+    }catch(error){console.error('Manual arrival instructions:',error.message);return 'Check-in recorded, but the automatic instructions could not be confirmed. Review the conversation for failed messages.';}
+   };
    if(existing&&checkedInAt){
     const normalize=value=>String(value||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(normalize(existing.release_number)!==normalize(input.releaseNumber))return res.status(409).json({error:'This driver is already checked in with a different release. Edit their existing arrival card instead.',arrivalId:existing.id,conversationId});
-    return res.json({ok:true,arrivalId:existing.id,conversationId,checkedInAt,appointment,alreadyAdded:true});
+    return res.json({ok:true,arrivalId:existing.id,conversationId,checkedInAt,appointment,alreadyAdded:true,warning:await notify(existing.id)});
    }
    const contact=await db.from('driver_sms_contacts').upsert({phone_e164:input.phone,full_name:input.driverName,driver_company:input.driverCompany,last_release_number:input.releaseNumber,visit_type:'pickup',onboarding_step:'ready',updated_at:timestamp},{onConflict:'phone_e164'});
    if(contact.error)throw contact.error;
@@ -87,8 +99,10 @@ function createHandler({db,chartDb,findOrCreateConversation,now=()=>new Date().t
    // Both feeds use the official check-in record, not just the raw arrival row.
    const checkin=await db.from('shipping_staff_checkins').upsert({conversation_id:conversationId,checked_in_by:staff.id,checked_in_at:timestamp},{onConflict:'conversation_id'});
    if(checkin.error)throw checkin.error;
-   // A clerk is entering an arrival, not composing a message: do not send SMS here.
-   return res.json({ok:true,arrivalId:arrival.data.id,conversationId,checkedInAt:timestamp,appointment,recovered:Boolean(existing)});
+   // The shared sender provides first-visit images and per-visit message IDs.
+   // Its check-in message also activates the existing one-minute follow-up.
+   const warning=await notify(arrival.data.id);
+   return res.json({ok:true,arrivalId:arrival.data.id,conversationId,checkedInAt:timestamp,appointment,recovered:Boolean(existing),warning});
 
   }catch(e){console.error('Manual arrival:',e.message);return res.status(500).json({error:'The driver could not be added. Refresh arrivals before trying again.'});}
   finally{if(locked)pending.delete(input.phone);}
