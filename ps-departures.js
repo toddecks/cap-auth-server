@@ -34,22 +34,43 @@ function confirmedDeparture(visit,rows,now=Date.now()){
  return {departedAt:new Date(times[0].ship).toISOString(),bolNumber:[...bols][0]};
 }
 function createWorker({db,chart,now=()=>Date.now(),candidates=require('./release-catalog').releaseCandidatesForMany}){
- const health={mode:'ps-shipped-departures-v1',state:'idle',lastChecked:null,confirmed:0,removed:0,totalRemoved:0,error:null};
+ const health={mode:'ps-shipped-departures-v2',state:'idle',lastChecked:null,confirmed:0,removed:0,totalRemoved:0,error:null};
  let running=false,timer;
  async function result(query){const r=await query;if(r.error)throw r.error;return r.data;}
- async function active(table){const rows=[];for(let offset=0;;offset+=500){const page=await result(db.from(table).select('*').is('departed_at',null).not('checked_in_at','is',null).gte('entered_at',new Date(now()-30*86400000).toISOString()).order('arrival_id').range(offset,offset+499));rows.push(...page);if(page.length<500)return rows;}}
+ async function pages(table,build){const rows=[];for(let offset=0;;offset+=500){const page=await result(build(db.from(table).select('*')).order('id').range(offset,offset+499));rows.push(...page);if(page.length<500)return rows;}}
+ async function appVisit(c){
+  if(!c?.arrival_id||c.status!=='open'||c.session_ended_at)return null;
+  const arrival=await result(db.from('driver_arrivals').select('*').eq('id',c.arrival_id).maybeSingle());
+  if(!arrival||!['geofence_enter','manual_check_in'].includes(arrival.event_type))return null;
+  const checked=await result(db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',c.id).maybeSingle());
+  if(!checked||Date.parse(checked.checked_in_at)<Date.parse(c.session_started_at||c.created_at))return null;
+  const exits=await result(db.from('driver_arrivals').select('id').eq('user_id',arrival.user_id).eq('facility_id',arrival.facility_id).gt('occurred_at',arrival.occurred_at).in('event_type',['geofence_exit','manual_check_out','manual_check_in']).limit(1));
+  if(exits.length)return null;
+  return {...arrival,arrival_id:arrival.id,conversation_id:c.id,entered_at:arrival.occurred_at,checked_in_at:checked.checked_in_at,release_number:c.release_number||arrival.release_number,visit_type:c.visit_type||arrival.visit_type,source:'app'};
+ }
+ async function activeVisits(){
+  // Staff-only UI views deliberately exclude service identities. Read protected
+  // base tables with the existing server service client instead of changing RLS.
+  const [sms,conversations]=await Promise.all([
+   pages('driver_sms_arrivals',q=>q.is('departed_at',null).not('checked_in_at','is',null).gte('entered_at',new Date(now()-30*86400000).toISOString())),
+   pages('driver_conversations',q=>q.eq('channel','app').eq('status','open').is('session_ended_at',null))
+  ]);
+  const app=[];for(const c of conversations){const visit=await appVisit(c);if(visit&&Date.parse(visit.entered_at)>=now()-30*86400000)app.push(visit);}
+  return [...sms.map(v=>({...v,arrival_id:v.id,source:'sms'})),...app];
+ }
  async function tick(){
   if(running||!db||!chart)return;
   running=true;Object.assign(health,{state:'running',confirmed:0,removed:0,error:null});
   try{
-   const [sms,app]=await Promise.all([active('shipping_sms_arrival_feed'),active('driver_arrival_history_feed')]);
-   const visits=[...sms.map(v=>({...v,source:'sms'})),...app.map(v=>({...v,source:'app'}))].filter(v=>['pickup','both'].includes(v.visit_type));
+   const visits=(await activeVisits()).filter(v=>['pickup','both'].includes(v.visit_type));
+   health.activeVisits=visits.length;
    const loads=visits.length?await candidates(chart,visits.map(v=>v.release_number)):[];
    for(const visit of visits){
     const departure=confirmedDeparture(visit,loads,now());if(!departure)continue;health.confirmed++;
     // Recheck active state after source lookup. Do not overwrite manual checkout.
-    const table=visit.source==='sms'?'shipping_sms_arrival_feed':'driver_arrival_history_feed';
-    const current=await result(db.from(table).select('*').eq('arrival_id',visit.arrival_id).is('departed_at',null).maybeSingle());
+    const current=visit.source==='sms'
+     ? await result(db.from('driver_sms_arrivals').select('*').eq('id',visit.arrival_id).is('departed_at',null).maybeSingle())
+     : await appVisit(await result(db.from('driver_conversations').select('*').eq('id',visit.conversation_id).maybeSingle()));
     const currentDeparture=current&&confirmedDeparture(current,loads,now());
     if(!currentDeparture||currentDeparture.departedAt!==departure.departedAt||currentDeparture.bolNumber!==departure.bolNumber)continue;
     if(visit.source==='sms'){
