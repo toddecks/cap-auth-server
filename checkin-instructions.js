@@ -3,7 +3,7 @@ const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
 const {PICKUP_PPE}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
-async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions}){
+async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions,alwaysSendPpe=false}){
  if(!['pickup','both'].includes(visitType))return null;
  const instructions=preparedInstructions||await require('./pickup-directions').pickupInstructions(chartDb,conversation);
  const includeImages=await needsImages(db,conversation);
@@ -22,7 +22,7 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
  }
  await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,instructions,includeImages?await prepareMap(db,conversation):null);
  // COIL's first text already contains PPE; a second text is only needed for the first-visit safety picture.
- if(instructions!==require('./pickup-directions').COIL_CHECKIN||includeImages)
+ if(alwaysSendPpe||instructions!==require('./pickup-directions').COIL_CHECKIN||includeImages)
   await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,PICKUP_PPE,includeImages?await preparePpe(db,conversation):null);
  return null;
 }

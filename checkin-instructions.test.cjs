@@ -42,3 +42,7 @@ for(const channel of ['sms','app'])test(`first-time COIL ${channel} gets map on 
  x.input.db.storage={from:()=>({upload:async()=>({}),createSignedUrl:async path=>({data:{signedUrl:'https://example.invalid/'+path}})})};
  await sendCheckinInstructions(x.input);const messages=x.writes.filter(m=>m.body);assert.equal(messages.length,2);assert.equal(messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert.match(messages[0].attachment_path,/shipping-map.jpg$/);assert.match(messages[1].attachment_path,/ray-ppe.png$/);
 });
+test('manual COIL check-in still sends a separate PPE message for returning drivers',async()=>{
+ const x=setup(false,'COIL');await sendCheckinInstructions({...x.input,alwaysSendPpe:true});
+ const messages=x.writes.filter(m=>m.body);assert.equal(messages.length,2);assert.equal(messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert.equal(messages[1].body,require('./driver-visit-flow').PICKUP_PPE);assert.equal(x.sent(),2);
+});

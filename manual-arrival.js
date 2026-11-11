@@ -78,7 +78,7 @@ function createHandler(deps) {
    const checkedInAt=require('./visit-session').currentCheckin(currentVisit,checked.data)?checked.data.checked_in_at:null;
    const notify=async arrivalId=>{
     try{
-     await sendInstructions({...deps,conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions});
+     await sendInstructions({...deps,conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions,alwaysSendPpe:true});
      return null;
     }catch(error){console.error('Manual arrival instructions:',error.message);return 'Check-in recorded, but the automatic instructions could not be confirmed. Review the conversation for failed messages.';}
    };
