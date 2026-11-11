@@ -35,7 +35,9 @@ async function releaseCandidates(db,release){
  if(!db)throw Error('Release database is unavailable.');
  const key=String(release||'').normalize('NFKC').toUpperCase().replace(/[^0-9]/g,'');
  if(!key)return [];
- const pattern='%'+key.split('').join('%')+'%';
+ // A short fragment must not trigger a broad catalog scan. Only an exact
+ // short reference is eligible; longer references retain punctuation support.
+ const pattern=key.length<4?String(release).trim():'%'+key.split('').join('%')+'%';
  const rows=[];
  for(let offset=0;;offset+=PAGE_SIZE){
   const {data,error}=await db.from('psdata_loads_api')

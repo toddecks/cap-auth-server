@@ -14,6 +14,11 @@ function parseDetails(text, existing={}) {
   part=part.replace(/\uE000/g,'/');
   part=part.replace(/^\d[.)]\s*/,'');
   if(/^(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}$/.test(part)||/^\+?1\d{10}$/.test(part))continue;
+  // Drivers often provide multiple complete release numbers after PU #.
+  // Use the first complete reference for lookup; retain all supplied references
+  // in the original message rather than turning a prefix into the release.
+  const releaseList=part.match(/^(?:(?:pu|pickup|pick-up|release|load)(?:\s*(?:number|no\.?))?\s*[:=#]?\s*|#\s*)(\d{4,12})(?:\s+(?:and\s+)?#?\d{4,12})+[.!]?$/i);
+  if(releaseList){found.last_release_number=releaseList[1];continue;}
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.full_name=driverName(m[1]).slice(0,120);continue;}
   m=part.match(/^(?:(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*(.+)$/i);

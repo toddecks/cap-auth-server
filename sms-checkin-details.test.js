@@ -71,3 +71,10 @@ test('keeps slash release while separating driver and carrier fields',()=>{
  assert.deepEqual(parsed,{full_name:'Ron',driver_company:'PLS Logistics',last_release_number:'CB7201P1-2/7'});
  assert.deepEqual(parseDetails('Ron/PLS Logistics/CB7201P1-2/7'),parsed);
 });
+test('PU release lists keep a complete primary release',()=>{
+ for(const body of ['PU # 968638 968896','Pickup # 968638 968896','# 968638 968896']){
+  assert.equal(parseDetails(body).last_release_number,'968638',body);
+ }
+ const result=nextCheckin({existing:{full_name:'Sergii Iaromenko',driver_company:'SVB express',visit_type:'pickup',last_release_number:'968'},body:'PU # 968638 968896'});
+ assert.equal(result.releaseNumber,'968638');assert.equal(result.contact.full_name,'Sergii Iaromenko');
+});
