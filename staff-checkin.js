@@ -19,6 +19,9 @@ function createHandler(deps) {
    if(!['pickup','both'].includes(c.visit_type)||!String(c.release_number||'').trim()||/^(TEXT\s*\d*|drop[ -]?off)$/i.test(c.release_number))return res.status(409).json({error:'A pick-up and verified release number are required.'});
    if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
+   let preparedInstructions;
+   try {preparedInstructions=await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor);}
+   catch(error){return res.status(409).json({error:error.message,code:'LOADING_DOOR_REQUIRED'});}
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
     const {data:contact,error:e}=await db.from('driver_sms_contacts').select('*').eq('phone_e164',c.sms_phone_e164).single();
@@ -40,7 +43,7 @@ function createHandler(deps) {
    if(ve)throw ve;
    if(c.channel==='sms'){const {error:e}=await db.from('driver_sms_arrivals').update({checked_in_at:verified.checked_in_at}).eq('id',arrivalId);if(e)throw e;}
    let warning=null;
-   try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type});}
+   try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type,preparedInstructions});}
    catch(error){console.error('Staff check-in instructions:',error.message);warning='Check-in recorded, but instructions could not be confirmed. Review the conversation before sending them manually.';}
    return res.json({ok:true,arrivalId,checkedInAt:verified.checked_in_at,warning});
   } catch(error){console.error('Staff check-in:',error.message);return res.status(500).json({error:'Check-in could not be completed. Refresh and try again.'});}

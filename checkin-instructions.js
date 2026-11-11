@@ -3,9 +3,9 @@ const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
 const {PICKUP_PPE}=require('./driver-visit-flow');
 const {prepareMap,preparePpe}=require('./checkin-map');
-async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType}){
+async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions}){
  if(!['pickup','both'].includes(visitType))return null;
- const instructions=await require('./pickup-directions').pickupInstructions(chartDb,conversation);
+ const instructions=preparedInstructions||await require('./pickup-directions').pickupInstructions(chartDb,conversation);
  const includeImages=await needsImages(db,conversation);
  async function sendOnce(id,body,attachment) {
   const {data:message,error}=await db.from('driver_messages').insert({...attachment?.fields,client_message_id:id,conversation_id:conversation.id,sender_user_id:staffId,direction:'shipping_to_driver',driver_phone:conversation.sms_phone_e164,body,original_body:body,original_language:'English',sent_at:new Date().toISOString(),delivery_status:conversation.channel==='sms'?'queued':'sent'}).select('id').single();
@@ -21,7 +21,9 @@ async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBase
   }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',message.id);throw error;}
  }
  await sendOnce(`staff-pickup-checkin:${session.key(conversation)}`,instructions,includeImages?await prepareMap(db,conversation):null);
- await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,PICKUP_PPE,includeImages?await preparePpe(db,conversation):null);
+ // COIL's first text already contains PPE; a second text is only needed for the first-visit safety picture.
+ if(instructions!==require('./pickup-directions').COIL_CHECKIN||includeImages)
+  await sendOnce(`staff-pickup-ppe:${session.key(conversation)}`,PICKUP_PPE,includeImages?await preparePpe(db,conversation):null);
  return null;
 }
 module.exports={sendCheckinInstructions};

@@ -1,5 +1,5 @@
 const{test}=require('node:test'),assert=require('node:assert/strict'),{sendCheckinInstructions}=require('./checkin-instructions');
-function setup(duplicate=false) {
+function setup(duplicate=false,door='MB') {
  let sent=0; const writes=[];
  const db={from(){
   const query={
@@ -12,7 +12,7 @@ function setup(duplicate=false) {
   };
   return query;
  }};
- return {input:{db,chartDb:{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[]})};return q}},twilio:{messages:{create:async()=>{sent++;return{sid:'mock',status:'sent'};}}},messagingServiceSid:'mock',publicBaseUrl:'https://example.com',scheduleStatusSync(){},conversation:{id:'test',channel:'sms',sms_phone_e164:'mock',facility_id:'csp-toledo-main',release_number:'12345'},arrivalId:1,staffId:'staff',visitType:'pickup'},sent:()=>sent,writes};
+ return {input:{db,chartDb:{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'12345',scheduleDate:'2026-11-11',location:'PROSPY',unloadingDoor:door}]})};return q}},twilio:{messages:{create:async()=>{sent++;return{sid:'mock',status:'sent'};}}},messagingServiceSid:'mock',publicBaseUrl:'https://example.com',scheduleStatusSync(){},conversation:{id:'test',channel:'sms',sms_phone_e164:'mock',facility_id:'csp-toledo-main',release_number:'12345'},arrivalId:1,staffId:'staff',visitType:'pickup'},sent:()=>sent,writes};
 }
 test('returning driver gets separate confirmation and PPE messages without pictures',async()=>{
  const x=setup();await sendCheckinInstructions(x.input);assert.equal(x.sent(),2);
@@ -33,3 +33,12 @@ for(const channel of ['sms','app'])test('first-time '+channel+' gets map on conf
 });
 test('dropoff never receives conflicting left-side instructions',async()=>{const x=setup();await sendCheckinInstructions({...x.input,visitType:'dropoff'});assert.equal(x.sent(),0);assert.equal(x.writes.length,0)});
 test('repeat click does not resend instructions',async()=>{const x=setup(true);await sendCheckinInstructions(x.input);assert.equal(x.sent(),0)});
+
+for(const channel of ['sms','app'])test(`returning COIL ${channel} gets exact combined first message without duplicate PPE`,async()=>{
+ const x=setup(false,'COIL');x.input.conversation.channel=channel;await sendCheckinInstructions(x.input);const messages=x.writes.filter(m=>m.body);assert.equal(messages.length,1);assert.equal(messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert(!messages[0].attachment_path);
+});
+for(const channel of ['sms','app'])test(`first-time COIL ${channel} gets map on combined first text and safety image second`,async()=>{
+ const x=setup(false,'COIL');x.input.conversation.channel=channel;const from=x.input.db.from;x.input.db.from=(...args)=>{const q=from(...args);q.limit=async()=>({data:[]});return q;};
+ x.input.db.storage={from:()=>({upload:async()=>({}),createSignedUrl:async path=>({data:{signedUrl:'https://example.invalid/'+path}})})};
+ await sendCheckinInstructions(x.input);const messages=x.writes.filter(m=>m.body);assert.equal(messages.length,2);assert.equal(messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert.match(messages[0].attachment_path,/shipping-map.jpg$/);assert.match(messages[1].attachment_path,/ray-ppe.png$/);
+});

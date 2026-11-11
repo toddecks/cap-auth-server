@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createHandler}=require('./staff-checkin');
 const {dropoffReply,PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {sendCheckinInstructions}=require('./checkin-instructions');
-function harness(role='shipping',channel='app',visitType='pickup',loads=[],releaseHold=null){
+function harness(role='shipping',channel='app',visitType='pickup',loads=[{poRel:'12345',scheduleDate:'2026-11-11',location:'PROSPY',unloadingDoor:'MB'}],releaseHold=null){
  const messages=[],checks=[],arrivals=[];let clock=0;
  const db={storage:{from:()=>({upload:async()=>({}),createSignedUrl:async()=>({data:{signedUrl:"https://example.invalid/test.png"}})})},auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){let op='read',value,singular=false;const q={select(){return q},ilike(){return q},in(){return q},like(){return q},not(){return q},neq(){return q},limit(){return q},eq(){return q},single(){singular=true;return q},maybeSingle(){singular=true;return q},is(){return q},update(v){op='update';value=v;return q},upsert(v){op='write';value=v;return q},insert(v){op='insert';value=v;return q},then(resolve){
   if(table==='driver_conversations'&&!singular)return Promise.resolve({data:[]}).then(resolve);
@@ -15,7 +15,7 @@ function harness(role='shipping',channel='app',visitType='pickup',loads=[],relea
   throw Error('Unexpected table '+table);
  }};return q;}};
  const handler=createHandler({db,twilio:{messages:{create:async()=>({sid:'test',status:'sent'})}},messagingServiceSid:'test',publicBaseUrl:'https://example.invalid',chartDb:{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:loads})};return q;}}});
- async function call(verified=true,dropOffComplete=false){let status=200,payload;await handler({headers:{authorization:'Bearer token'},body:{conversationId:'12345678-1234-1234-1234-123456789abc',releaseVerified:verified,dropOffComplete}},{set(){},status(n){status=n;return this},json(p){payload=p;return this}});return{status,payload};}
+ async function call(verified=true,dropOffComplete=false,loadingDoor=''){let status=200,payload;await handler({headers:{authorization:'Bearer token'},body:{conversationId:'12345678-1234-1234-1234-123456789abc',releaseVerified:verified,dropOffComplete,loadingDoor}},{set(){},status(n){status=n;return this},json(p){payload=p;return this}});return{status,payload};}
  return {call,messages,checks,arrivals};
 }
 test('staff check-in records official time once and sends app instructions once',async()=>{const h=harness();const a=await h.call(),b=await h.call();assert.equal(a.status,200);assert.equal(a.payload.checkedInAt,b.payload.checkedInAt);assert.equal(h.checks.length,1);assert.equal(h.messages.length,2);assert.equal(h.messages[0].body,PICKUP_CHECKIN);assert.equal(h.messages[0].delivery_status,'sent');});
@@ -36,9 +36,14 @@ for(const channel of ['app','sms'])for(const type of ['pickup','both'])test(`${c
  const h=harness('shipping',channel,type,[{poRel:'12345',scheduleDate:'2026-10-13',scheduleTime:'12:00:00',location:'PROSPY',unloadingDoor:'COIL'}]);
  assert.equal((await h.call(true,true)).payload.warning,null);
  await h.call(true,true);
- const expected='You have been successfully checked in. Please pull around back and stay to the RIGHT.';
+ const expected=require('./pickup-directions').COIL_CHECKIN;
  assert.equal(h.messages.filter(m=>m.body===expected).length,1);
  assert.equal(h.messages.filter(m=>m.body===require('./driver-visit-flow').PICKUP_PPE).length,1);
 });
 
-test('obsolete pending clerk hold cannot block check-in or instructions',async()=>{const h=harness('shipping','sms','pickup',[],{session_key:'12345678-1234-1234-1234-123456789abc',verified_at:null});assert.equal((await h.call()).status,200);assert.equal(h.checks.length,1);assert.equal(h.messages.length,2);assert.equal(h.arrivals.length,1);});
+test('obsolete pending clerk hold cannot block check-in or instructions',async()=>{const h=harness('shipping','sms','pickup',undefined,{session_key:'12345678-1234-1234-1234-123456789abc',verified_at:null});assert.equal((await h.call()).status,200);assert.equal(h.checks.length,1);assert.equal(h.messages.length,2);assert.equal(h.arrivals.length,1);});
+
+for(const channel of ['sms','app'])test(`${channel}: unmatched door cannot record check-in or send LEFT; clerk COIL choice sends RIGHT`,async()=>{
+ const h=harness('shipping',channel,'pickup',[]);const before=await h.call();assert.equal(before.status,409);assert.equal(before.payload.code,'LOADING_DOOR_REQUIRED');assert.equal(h.checks.length,0);assert.equal(h.arrivals.length,0);assert.equal(h.messages.length,0);
+ const after=await h.call(true,false,'COIL');assert.equal(after.status,200);assert.equal(after.payload.warning,null);assert.equal(h.checks.length,1);assert.equal(h.messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert(!h.messages.some(m=>m.body.includes('LEFT')));
+});

@@ -86,7 +86,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
-    shippingStaffCheckinMode: "staff-verified-v1",
+    shippingStaffCheckinMode: "coil-routing-v2",
     shippingManualArrivalMode: "checked-in-returning-drivers-v3",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
