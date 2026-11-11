@@ -78,7 +78,8 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v27-driver-names",
+    shippingSmsMode: "twilio-two-way-v28-existing-driver-names",
+    shippingDriverNameRepair: driverNameRepair.health,
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -7325,6 +7326,8 @@ const releaseValidationWorker=require('./release-validation').createWorker({db:d
 
 const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
 
+const driverNameRepair=require('./repair-driver-names').createRepair(driverSupabase);
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -7332,6 +7335,7 @@ app.listen(PORT, () => {
   releaseValidationWorker.start();
   driverTranslationWorker.start();
   void shippingOwnership.provision();
+  void driverNameRepair.run();
   // Shipping takes over after the first welcome text; no automatic departure SMS.
   syncRecentQueuedTwilioMessages().catch((error) => {
     console.error("Initial Twilio message status sync failed:", error?.message || error);
