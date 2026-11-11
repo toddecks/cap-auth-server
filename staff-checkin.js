@@ -1,4 +1,5 @@
 'use strict';
+const {driverName,cleanIdentity}=require('./driver-identity');
 const {sendCheckinInstructions} = require('./checkin-instructions');
 function createHandler(deps) {
  const {db} = deps;
@@ -25,7 +26,7 @@ function createHandler(deps) {
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
     const {data:contact,error:e}=await db.from('driver_sms_contacts').select('*').eq('phone_e164',c.sms_phone_e164).single();
-    if(e||!contact?.full_name||!contact?.driver_company)return res.status(409).json({error:'Complete the driver name and company before checking in.'});
+    if(e||!driverName(contact?.full_name)||!cleanIdentity(contact?.driver_company))return res.status(409).json({error:'Complete the driver name and company before checking in.'});
     const {data:existing,error:ee}=await db.from('driver_sms_arrivals').select('id').eq('conversation_id',id).is('departed_at',null).maybeSingle();
     if(ee)throw ee;
     arrivalId=existing?.id;

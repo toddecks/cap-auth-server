@@ -78,7 +78,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v26-require-visit-choice",
+    shippingSmsMode: "twilio-two-way-v27-driver-names",
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
@@ -1940,8 +1940,8 @@ app.post("/api/shipping/edit-arrival", async (req, res) => {
   const visitType = String(req.body?.visitType || '').trim();
   if (visitType && !['pickup','dropoff','both'].includes(visitType)) return res.status(400).json({error:'Choose pick-up, drop-off, or both.'});
   const typeUpdate = visitType ? {visit_type:visitType} : {};
-  const driverName = String(req.body?.driverName || "").trim().slice(0, 120);
-  const driverCompany = String(req.body?.driverCompany || "").trim().slice(0, 160);
+  const driverName = require("./driver-identity").driverName(req.body?.driverName).slice(0, 120);
+  const driverCompany = require("./driver-identity").cleanIdentity(req.body?.driverCompany).slice(0, 160);
   const releaseNumber = String(req.body?.releaseNumber || "").trim().slice(0, 120);
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!(arrivalSource === "sms" && uuidPattern.test(conversationId)) && (!Number.isSafeInteger(arrivalId) || arrivalId < 1 || !["app", "sms"].includes(arrivalSource))) {

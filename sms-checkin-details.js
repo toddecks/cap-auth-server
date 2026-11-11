@@ -1,5 +1,6 @@
 'use strict';
 const clean=v=>String(v||'').trim();
+const {driverName,cleanIdentity}=require('./driver-identity');
 const companyPattern=/\b(trucking|transport(?:ation)?|logistics|carriers?|freight|express|inc|llc|corp|company|steel|viqtory)\b/i;
 const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|dock|where|when|how|wrong|sorry|please|arrived|here|need|have|can|will|ready|morning|afternoon)\b/i;
 function parseDetails(text, existing={}) {
@@ -14,7 +15,7 @@ function parseDetails(text, existing={}) {
   part=part.replace(/^\d[.)]\s*/,'');
   if(/^(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}$/.test(part)||/^\+?1\d{10}$/.test(part))continue;
   let m=part.match(/^(?:full\s+name|name|driver(?:\s+name)?)\s*[:=]\s*(.+)$/i);
-  if(m){found.full_name=clean(m[1]).slice(0,120);continue;}
+  if(m){found.full_name=driverName(m[1]).slice(0,120);continue;}
   m=part.match(/^(?:(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*(.+)$/i);
   if(m){found.driver_company=clean(m[1]).slice(0,160);continue;}
   m=part.match(/^(?:(?:(?:correct|new|actual)\s+)?(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?\s*(?:is|[:=#])?\s*)([a-z0-9][a-z0-9./_-]{2,39})[.!]?$/i);
@@ -28,15 +29,17 @@ function parseDetails(text, existing={}) {
   }
   if(part)rest.push(part);
  }
- for(const part of rest){
+ for(const rawPart of rest){
+  const part=driverName(rawPart);
+  if(!part)continue;
+  const split=part.match(/^(.+?)\s+(?:with|from|driving for)\s+(.+)$/i);
+  if(split&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=driverName(split[1]).slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
   // A known multiword carrier can follow a driver's name without punctuation.
   // Keep standalone carrier names intact; do not guess a boundary for unknown carriers.
   const carrierIntroduction=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(Center\s+Express[.]?)$/iu);
   if(carrierIntroduction&&!chatPattern.test(carrierIntroduction[1])&&!companyPattern.test(carrierIntroduction[1])&&!/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(carrierIntroduction[1])){
    found.full_name=clean(carrierIntroduction[1]);found.driver_company=clean(carrierIntroduction[2]);continue;
   }
-  const split=part.match(/^(.+?)\s+(?:with|from|driving for)\s+(.+)$/i);
-  if(split&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=clean(split[1]).replace(/^I'm\s+|^I am\s+/i,'').slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
   if(companyPattern.test(part)&&!chatPattern.test(part)){
    if(!existing.driver_company)found.driver_company=part.slice(0,160);
    continue;
@@ -45,11 +48,15 @@ function parseDetails(text, existing={}) {
   if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(part))found.full_name=part.slice(0,120);
   else if(!found.driver_company&&!existing.driver_company&&(found.full_name||existing.full_name)&&/^[\p{L}\d .&'’-]{2,160}$/u.test(part))found.driver_company=part;
  }
+ if('full_name' in found)found.full_name=driverName(found.full_name);
+ if('driver_company' in found)found.driver_company=cleanIdentity(found.driver_company);
  return found;
 }
 function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new Date()}){
  const flow=require('./driver-visit-flow');
  let prior={...(existing||{})};
+ prior.full_name=driverName(prior.full_name);
+ prior.driver_company=cleanIdentity(prior.driver_company);
  // Recover legacy contacts where punctuation caused the name to be stored with the carrier.
  if(!clean(prior.full_name)&&/\.{2,}/.test(prior.driver_company||'')){
   const recovered=parseDetails(prior.driver_company,{});
@@ -64,7 +71,7 @@ function nextCheckin({existing,matchedProfile,body,conversationCreated,now=new D
  // Numbers supplied for the pickup leg must not erase a Both visit.
  const type=previousType==='both'?'both':chosen||previousType||null;
  const started=fresh?new Date(now).toISOString():(prior.visit_started_at||new Date(now).toISOString());
- const base={full_name:clean(prior.full_name||matchedProfile?.full_name),driver_company:clean(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
+ const base={full_name:driverName(prior.full_name||matchedProfile?.full_name),driver_company:cleanIdentity(prior.driver_company||matchedProfile?.driver_company||matchedProfile?.hauling_for),last_release_number:fresh?'':clean(prior.last_release_number)};
  const detailText=flow.stripVisitWords(body);
  const parsed=completeIntroduction?introduction:parseDetails(detailText,base),contact={...base,...parsed,visit_type:type,visit_started_at:started};
  contact.onboarding_step=type==='dropoff'||(['pickup','both'].includes(type)&&contact.full_name&&contact.driver_company&&contact.last_release_number)?'ready':'awaiting_details';

@@ -1,7 +1,8 @@
 'use strict';
+const {driverName:normalizeName,cleanIdentity}=require('./driver-identity');
 function parseInput(body = {}) {
- const driverName=String(body.driverName||'').trim();
- const driverCompany=String(body.driverCompany||'').trim();
+ const driverName=normalizeName(body.driverName);
+ const driverCompany=cleanIdentity(body.driverCompany);
  const releaseNumber=String(body.releaseNumber||'').trim();
  const digits=String(body.phone||'').replace(/\D/g,'');
  const phone=digits.length===10?`+1${digits}`:digits.length===11&&digits[0]==='1'?`+${digits}`:/^\+[1-9]\d{7,14}$/.test(String(body.phone||'').trim())?String(body.phone).trim():'';
