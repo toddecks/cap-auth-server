@@ -83,7 +83,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "targeted-release-lookup-v2",
+    shippingArrivalLogMode: "targeted-release-lookup-v3-bol",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,
     shippingTranslation: driverTranslationWorker.health,

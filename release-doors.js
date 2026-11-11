@@ -40,7 +40,9 @@ function doorMatches(rows,releases,date){
    const incomplete=latest.some(r=>!String(r.unloadingDoor||'').trim());
    const appointments=[...new Set(latest.map(r=>r.scheduleDate&&r.scheduleTime?`${r.scheduleDate}T${String(r.scheduleTime).slice(0,8)}`:null))];
    const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
-   result[key]={door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:latest[0]?.poRel||null,customer:!ambiguous?[...new Set(latest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
+   const bols=[...new Set(latest.map(r=>String(r.bolNumber||'').trim()).filter(b=>b&&!/^0+$/.test(b)))];
+   const bolAmbiguous=bols.length>1||(bols.length===1&&latest.some(r=>!String(r.bolNumber||'').trim()||/^0+$/.test(String(r.bolNumber).trim())));
+   result[key]={bol_number:!ambiguous&&!bolAmbiguous&&bols.length===1?bols[0]:null,bol_ambiguous:bolAmbiguous,door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:latest[0]?.poRel||null,customer:!ambiguous?[...new Set(latest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
   }
  }
  return result;

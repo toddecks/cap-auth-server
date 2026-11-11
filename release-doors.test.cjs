@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {doorMatches}=require('./release-doors');
 const row={poRel:'880740',unloadingDoor:'BD',location:'PROSPY',scheduleDate:'2026-10-06',scheduleTime:null};
 const lookup=rows=>doorMatches(rows,['880740'],'2026-10-06')['880740:PROSPY'];
-test('matches release without appointment time',()=>assert.deepEqual(lookup([row]),{door:'BD',status:'matched',appointment_at:null,match_type:'exact',release_reference:'880740',customer:''}));
+test('matches release without appointment time',()=>assert.deepEqual(lookup([row]),{bol_number:null,bol_ambiguous:false,door:'BD',status:'matched',appointment_at:null,match_type:'exact',release_reference:'880740',customer:''}));
 test('matches explicit release in list',()=>assert.equal(lookup([{...row,poRel:'123456/880740'}]).door,'BD'));
 test('supports shorthand suffixes in explicit release lists',()=>assert.equal(lookup([{...row,poRel:'880739/740'}]).door,'BD'));
 test('conflicting doors require confirmation',()=>assert.equal(lookup([row,{...row,unloadingDoor:'MB'}]).status,'ambiguous'));
@@ -47,4 +47,18 @@ test('letters and punctuation ignored, all digits still required',()=>{
   for(const input of ['232662','232662-coil','ABC232662'])assert.equal(doorMatches(rows,[input],'2026-10-13')[input.toUpperCase().replace(/[^A-Z0-9]/g,'')+':PROSPY'].status,'matched');
   assert.equal(doorMatches(rows,['232622'],'2026-10-13')['232622:PROSPY'],undefined);
  }
+});
+test('BOL comes from the same newest release/facility match',()=>{
+ const newer={...row,scheduleDate:'2026-11-11',bolNumber:'94978'};
+ const m=lookup([{...row,bolNumber:'11111'},newer,{...newer,location:'ENTPRS',bolNumber:'99999'}]);
+ assert.equal(m.bol_number,'94978');assert.equal(m.bol_ambiguous,false);
+});
+test('conflicting or incomplete BOLs do not silently choose one',()=>{
+ const first={...row,bolNumber:'94978'};
+ for(const second of [{...row,bolNumber:'94979'},row]){const m=lookup([first,second]);assert.equal(m.bol_number,null);assert.equal(m.bol_ambiguous,true);}
+ assert.equal(lookup([{...row,bolNumber:'0'}]).bol_number,null);
+});
+test('BOL preserves leading zeroes and respects slash references',()=>{
+ const m=doorMatches([{...row,poRel:'968638/896',bolNumber:'0094978'}],['968896'],'2026-10-06')['968896:PROSPY'];
+ assert.equal(m.bol_number,'0094978');
 });
