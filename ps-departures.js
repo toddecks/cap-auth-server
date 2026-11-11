@@ -1,5 +1,6 @@
 'use strict';
 const {references}=require('./release-doors');
+const {resolveCombo}=require('./combo-loads');
 const normalize=v=>String(v||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
 const localDay=ms=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms));
 // PS timestamps are facility wall time, not UTC. Resolve the Eastern offset,
@@ -21,17 +22,20 @@ function confirmedDeparture(visit,rows,now=Date.now()){
  const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[visit.facility_id];
  const release=normalize(visit.release_number),digits=release.replace(/[A-Z]/g,'');
  if(!location||!digits)return null;
- const candidates=rows.filter(r=>normalize(r.location)===location&&r.cancelLoad!==true&&String(r.cancelLoad).toLowerCase()!=='true'&&
-  r.arrivalDate===localDay(entered)&&(normalize(r.poRel)===release||references(r.poRel).includes(digits)));
+ const currentRows=rows.filter(r=>normalize(r.location)===location&&r.cancelLoad!==true&&String(r.cancelLoad).toLowerCase()!=='true'&&r.arrivalDate===localDay(entered));
+ const exact=currentRows.filter(r=>normalize(r.poRel)===release||references(r.poRel).includes(digits));
+ const combo=exact.length?null:resolveCombo(currentRows,release);
+ const candidates=combo?combo.rows:exact;
  if(!candidates.length)return null;
  // Multiple BOLs could represent different trucks using the same release.
  const bols=new Set(candidates.map(r=>String(r.bolNumber||'').trim()));
- if(bols.size!==1||bols.has(''))return null;
+ if((!combo&&bols.size!==1)||bols.has(''))return null;
  const times=candidates.map(r=>({arrival:easternTimestamp(r.arrivalDate,r.arrivalTime),ship:easternTimestamp(r.shipDate,r.shipTime)}));
  if(times.some(t=>!Number.isFinite(t.arrival)||!Number.isFinite(t.ship)||t.arrival<entered-15*60000||t.arrival>checked+15*60000||t.ship<checked||t.ship<t.arrival||t.ship>now))return null;
  // Conflicting snapshots are not confirmation of one departure.
- if(new Set(times.map(t=>t.ship)).size!==1||new Set(times.map(t=>t.arrival)).size!==1)return null;
- return {departedAt:new Date(times[0].ship).toISOString(),bolNumber:[...bols][0]};
+ if(!combo&&(new Set(times.map(t=>t.ship)).size!==1||new Set(times.map(t=>t.arrival)).size!==1))return null;
+ if(combo&&Math.max(...times.map(t=>t.arrival))-Math.min(...times.map(t=>t.arrival))>15*60000)return null;
+ return {departedAt:new Date(Math.max(...times.map(t=>t.ship))).toISOString(),bolNumber:combo?String(combo.primary.bolNumber).trim():[...bols][0]};
 }
 function createWorker({db,chart,now=()=>Date.now(),candidates=require('./release-catalog').releaseCandidatesForMany}){
  const health={mode:'ps-shipped-departures-v2',state:'idle',lastChecked:null,confirmed:0,removed:0,totalRemoved:0,error:null};

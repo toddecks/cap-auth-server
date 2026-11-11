@@ -2,6 +2,7 @@
 // Customer account names from the PS customer export (pro/vendor list.csv).
 // Ship-to names describe destinations and must not be used as account names.
 const customerNames=require('./customer-names.json');
+const {resolveCombo}=require('./combo-loads');
 const customerName=row=>customerNames[String(row.customerNo||'').trim().toUpperCase()]||String(row.customerNo||'').trim();
 const normalize=v=>String(v||'').normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
 function references(value){
@@ -20,6 +21,8 @@ function doorMatches(rows,releases,date){
   for(const [location,loads] of facilities){
    // Match a complete slash-separated reference as a whole, too.
    let candidates=loads.filter(r=>r.refs.includes(digits)||normalize(r.poRel)===release),matchType='exact';
+   const combo=!candidates.length?resolveCombo(loads,release):null;
+   if(combo)candidates=[combo.primary];
    if(!candidates.length&&digits.length>=4&&/\d/.test(release)){
     candidates=loads.filter(r=>r.refs.some(ref=>ref.includes(digits)));matchType='partial';
    }
@@ -42,7 +45,7 @@ function doorMatches(rows,releases,date){
    const ambiguous=doors.length>1||(doors.length&&incomplete)||appointments.length>1;
    const bols=[...new Set(latest.map(r=>String(r.bolNumber||'').trim()).filter(b=>b&&!/^0+$/.test(b)))];
    const bolAmbiguous=bols.length>1||(bols.length===1&&latest.some(r=>!String(r.bolNumber||'').trim()||/^0+$/.test(String(r.bolNumber).trim())));
-   result[key]={bol_number:!ambiguous&&!bolAmbiguous&&bols.length===1?bols[0]:null,bol_ambiguous:bolAmbiguous,door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:latest[0]?.poRel||null,customer:!ambiguous?[...new Set(latest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
+   result[key]={...(combo?{combo_load:true,master_bol_number:combo.masterBolNumber,release_base:combo.base,combo_bol_numbers:[...new Set(combo.rows.map(r=>String(r.bolNumber).trim()))],carrier_name:combo.primary.carrierName}:{}),bol_number:!ambiguous&&!bolAmbiguous&&bols.length===1?bols[0]:null,bol_ambiguous:bolAmbiguous,door:!ambiguous&&doors.length===1&&!incomplete?doors[0]:null,status:ambiguous?'ambiguous':doors.length?'matched':'unassigned',appointment_at:!ambiguous&&appointments.length===1?appointments[0]:null,match_type:matchType,release_reference:latest[0]?.poRel||null,customer:!ambiguous?[...new Set(latest.map(r=>customerName(r)).filter(Boolean))].join(' / '):null};
   }
  }
  return result;

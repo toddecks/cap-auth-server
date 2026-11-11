@@ -84,7 +84,7 @@ app.get("/api/deploy-status", (_req, res) => {
     townHallFormMode: "anonymous-kim-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "targeted-release-lookup-v3-bol",
+    shippingArrivalLogMode: "targeted-release-lookup-v4-combo-loads",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,
     shippingTranslation: driverTranslationWorker.health,
@@ -2131,7 +2131,14 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
         if (row.scheduleDate > existingDate) matches[key] = candidate;
       });
     });
-    return res.json({ matches, doors: require("./release-doors").doorMatches(data || [], releases, date) });
+    const doors=require("./release-doors").doorMatches(data || [], releases, date);
+    // Log and card lookups must resolve combo bases to the same first BOL.
+    for(const [key,match] of Object.entries(doors)){
+      if(!match.combo_load)continue;
+      const split=key.lastIndexOf(':');
+      matches[key.slice(0,split)]={appointment_at:match.appointment_at,release_reference:match.release_reference,carrier_name:match.carrier_name,location:key.slice(split+1),bol_number:match.bol_number,combo_load:true,master_bol_number:match.master_bol_number};
+    }
+    return res.json({matches,doors});
   } catch (error) {
     console.error("Shipping appointment match failed:", error?.message || error);
     return res.status(500).json({ error: "Appointment data could not be loaded." });
