@@ -78,7 +78,7 @@ app.get("/api/deploy-status", (_req, res) => {
       supabaseServiceRole: Boolean(process.env.DRIVER_SUPABASE_SERVICE_ROLE_KEY),
       fromEmail: Boolean(process.env.SHIPPING_AUTH_FROM_EMAIL || process.env.PRO_FORMS_FROM_EMAIL)
     },
-    shippingSmsMode: "twilio-two-way-v30-acknowledgements",
+    shippingSmsMode: "twilio-two-way-v31-both-option-five",
     shippingDriverNameRepair: driverNameRepair.health,
     shippingReviewMode: "manual-chat-button-v1",
     shippingReviewWorker: driverReviewWorker.health,

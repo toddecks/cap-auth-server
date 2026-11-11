@@ -40,6 +40,6 @@ function dropoffReply(at=new Date()){
  return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
 }
 function bothReply(){
- return 'Please call 419-269-9706 for further instructions.';
+ return 'Please call 419-269-9706 and select option 5 for further instructions.';
 }
 module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,PICKUP_PPE,visitType,stripVisitWords,dropoffReply,bothReply};

@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {bothReply,dropoffReply}=require('./driver-visit-flow');
 const {nextCheckin}=require('./sms-checkin-details');
-const expected='Please call 419-269-9706 for further instructions.';
+const expected='Please call 419-269-9706 and select option 5 for further instructions.';
 test('Both always receives the exact call instructions',()=>{
  for(const now of ['2026-11-11T15:19:00Z','2026-11-11T23:00:00Z','2026-11-14T15:00:00Z']){
  assert.equal(bothReply(new Date(now)),expected);

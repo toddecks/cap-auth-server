@@ -7,7 +7,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 09:59:59+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -17,7 +17,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 10:00:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -27,7 +27,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 21:29:59+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -37,7 +37,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 21:30:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -47,7 +47,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 21:59:59+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -57,7 +57,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-13 22:00:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -67,7 +67,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-10-17 16:00:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -77,7 +77,7 @@
   {
     "visit_type": "both",
     "at_time": "2026-12-15 11:00:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   },
   {
     "visit_type": "dropoff",
@@ -87,6 +87,6 @@
   {
     "visit_type": "both",
     "at_time": "2026-12-15 23:00:00+00",
-    "body": "Please call 419-269-9706 for further instructions."
+    "body": "Please call 419-269-9706 and select option 5 for further instructions."
   }
 ]
