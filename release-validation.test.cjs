@@ -258,7 +258,7 @@ for(const choice of ['Pick Up','Drop Off','Both'])test(`SMS waits for explicit $
  f.tables.driver_messages.push({id:'choice',conversation_id:c.id,direction:'driver_to_shipping',body:choice,sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();
  if(choice==='Pick Up')assert.equal(f.sends.at(-1).body,VERIFY);
- else if(choice==='Both'){assert.match(selected.reply,/STEP 1 – DROP OFF/);assert.equal(f.sends.length,0);}
+ else if(choice==='Both'){assert.equal(selected.reply,'Please call 419-269-9706 for further instructions.');assert.equal(f.sends.length,0);}
  else {assert.match(selected.reply,/unchain your load/);assert.equal(f.sends.length,0);}
  assert.equal(f.worker.health.error,null);
 });

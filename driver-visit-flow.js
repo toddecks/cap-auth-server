@@ -39,8 +39,7 @@ function dropoffReply(at=new Date()){
  if(minutes>=1050)return 'We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions.';
  return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
 }
-function bothReply(at=new Date()){
- const reply=dropoffReply(at);
- return reply.startsWith('Please pull around back') ? 'STEP 1 – DROP OFF: Pull around back and stay to the RIGHT. Once stopped in line, unchain your load and open your trailer for unloading. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.\n\nSTEP 2 – PICK UP: Once unloaded, pull around the building and return to your original arrival point and text PICK UP to begin the pick-up process.' : reply;
+function bothReply(){
+ return 'Please call 419-269-9706 for further instructions.';
 }
 module.exports={TYPE_PROMPT,PICKUP_PROMPT,PICKUP_CHECKIN,PICKUP_PPE,visitType,stripVisitWords,dropoffReply,bothReply};
