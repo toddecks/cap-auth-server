@@ -85,6 +85,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "targeted-release-lookup-v2",
     shippingReleaseValidation: releaseValidationWorker.health,
+    shippingPsDepartures: psDepartureWorker.health,
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
     shippingStaffCheckinMode: "coil-routing-v2",
@@ -1332,7 +1333,7 @@ const findOrCreateSmsConversation = async (phone, body) => {
       if(startError)throw startError;
       return {id:existing.data.id,created:Boolean(started),matchedProfile};
     }
-    return { id: existing.data.id, created: false, matchedProfile, sessionEnded:Boolean(existing.data.session_ended_at) };
+    return { id: existing.data.id, created: false, matchedProfile, sessionEnded:Boolean(existing.data.session_ended_at || arrivals?.[0]?.departed_at) };
   }
 
   const lastFour = phone.replace(/\D/g, "").slice(-4) || "driver";
@@ -7326,6 +7327,7 @@ const releaseValidationWorker=require('./release-validation').createWorker({db:d
 
 const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
 
+const psDepartureWorker=require('./ps-departures').createWorker({db:driverSupabase,chart:chartSupabase});
 const driverNameRepair=require('./repair-driver-names').createRepair(driverSupabase);
 
 // Start server
@@ -7333,6 +7335,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
   releaseValidationWorker.start();
+  psDepartureWorker.start();
   driverTranslationWorker.start();
   void shippingOwnership.provision();
   void driverNameRepair.run();
