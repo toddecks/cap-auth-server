@@ -11,13 +11,18 @@ async function needsImages(db,conversation,excludeIds=[]){
   for(const row of data||[])ids.add(row.id);
  }
  const current=session.key(conversation);
- let query=db.from('driver_messages').select('id').in('conversation_id',[...ids])
-  .like('client_message_id','staff-pickup-%').not('attachment_path','is',null)
+ let query=db.from('driver_messages').select('id,conversation_id,client_message_id,sent_at').in('conversation_id',[...ids])
+  .or('client_message_id.like.staff-pickup-%,client_message_id.like.dropoff-instructions:%').not('attachment_path','is',null)
   .neq('client_message_id',`staff-pickup-checkin:${current}`).neq('client_message_id',`staff-pickup-ppe:${current}`)
+  .neq('client_message_id',`staff-pickup-dropoff-map:${current}`)
   .in('delivery_status',['sent','delivered','queued']);
  for(const id of excludeIds)query=query.neq('client_message_id',id);
- const {data,error}=await query.limit(1);
+ const {data,error}=await query;
  if(error)throw error;
- return !data?.length;
+ return !(data||[]).some(message=>{
+  // Current-visit images must not suppress a later PPE/map stage or retry.
+  if(message.conversation_id===conversation.id&&Number.isFinite(session.start(conversation))&&Date.parse(message.sent_at)>=session.start(conversation))return false;
+  return true;
+ });
 }
 module.exports={needsImages};

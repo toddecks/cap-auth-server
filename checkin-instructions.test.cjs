@@ -8,7 +8,7 @@ function setup(duplicate=false,door='MB') {
    single:async()=>duplicate?{error:{code:'23505'}}:{data:{id:1}},
    update(row){writes.push(row);return query;},
    eq(){return query;},
-   in(){return query},like(){return query},not(){return query},neq(){return query},limit:async()=>({data:[{id:"previous-image"}]})
+   in(){return query},or(){return query},not(){return query},neq(){return query},limit:async()=>({data:[{id:"previous-image"}]}),then(resolve,reject){return query.limit().then(resolve,reject)}
   };
   return query;
  }};

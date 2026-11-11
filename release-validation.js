@@ -20,7 +20,7 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages}) {
+function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
   const health = {mode:'pickup-followups-v21-no-clerk-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
@@ -53,7 +53,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     if(!c || c.status!=='open' || c.session_ended_at) return;
     const [checked,allMessages] = await Promise.all([
       result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle()),
-      result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body').eq('conversation_id',id))
+      result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
     ]);
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
@@ -61,6 +61,15 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       if(!mediaJobs.has(mediaKey)){
         const job=Promise.resolve().then(()=>sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages}))
           .catch(error=>{health.mediaError=String(error.message||error);console.error('First-visit images failed:',health.mediaError);})
+          .finally(()=>mediaJobs.delete(mediaKey));
+        mediaJobs.set(mediaKey,job);
+      }
+    }
+    if(c.channel==='app'&&c.visit_type==='dropoff'){
+      const mediaKey=`dropoff:${session.key(c)}`;
+      if(!mediaJobs.has(mediaKey)){
+        const job=Promise.resolve().then(()=>attachAppMap({db,conversation:c,messages}))
+          .catch(error=>{health.mediaError=String(error.message||error);console.error('Drop-off map failed:',health.mediaError);})
           .finally(()=>mediaJobs.delete(mediaKey));
         mediaJobs.set(mediaKey,job);
       }

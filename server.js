@@ -85,6 +85,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "targeted-release-lookup-v4-combo-loads",
+    shippingDropoffMapMode: "first-visit-map-v1",
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,
     shippingTranslation: driverTranslationWorker.health,
@@ -1390,16 +1391,18 @@ const rememberSmsDriver = async (input) => {
   try{return await task;}finally{if(smsContactUpdates.get(input.phone)===task)smsContactUpdates.delete(input.phone);}
 };
 
-const sendAutomatedSmsReply = async ({ phone, conversationId, body }) => {
+const sendAutomatedSmsReply = async ({ phone, conversationId, body, attachment = null, clientMessageId = null }) => {
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
   const sent = await twilioClient.messages.create({
     to: phone,
     body,
+    ...(attachment?.mediaUrl ? {mediaUrl:[attachment.mediaUrl]} : {}),
     messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
     statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
   });
   const { error } = await driverSupabase.from("driver_messages").insert({
-    client_message_id: `twilio:auto:${sent.sid}`,
+    client_message_id: clientMessageId ? `${clientMessageId}:${sent.sid}` : `twilio:auto:${sent.sid}`,
+    ...attachment?.fields,
     conversation_id: conversationId,
     sender_user_id: null,
     direction: "shipping_to_driver",
@@ -1614,7 +1617,15 @@ app.post(
 
       if (remembered.reply) {
         try {
-          await sendAutomatedSmsReply({ phone: from, conversationId, body: remembered.reply });
+          let attachment=null,clientMessageId=null;
+          const dropoffMap=require('./dropoff-map');
+          if(remembered.reply===dropoffMap.BODY){
+            const {data:current,error}=await driverSupabase.from('driver_conversations').select('*').eq('id',conversationId).single();
+            if(error)throw error;
+            attachment=await dropoffMap.attachmentForReply({db:driverSupabase,conversation:current,body:remembered.reply});
+            if(attachment)clientMessageId=dropoffMap.messageId(current);
+          }
+          await sendAutomatedSmsReply({ phone: from, conversationId, body: remembered.reply,attachment,clientMessageId });
         } catch (replyError) {
           console.error("Twilio automated check-in reply failed:", replyError?.message || replyError);
         }
