@@ -8,7 +8,7 @@ function repairedName(value){
  return introduction.test(original)&&name!==original&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(name)&&!/\b(?:with|from|for|pickup|release|dropping|loading)\b/i.test(name)?name:null;
 }
 function createRepair(db){
- const health={version:'driver-name-acknowledgements-v2',state:'pending',updated:0,verified:0,error:null};
+ const health={version:'driver-name-acknowledgements-v3',state:'pending',updated:0,verified:0,error:null};
  async function run(){
   if(!db){health.state='unavailable';return;}
   health.state='running';
@@ -18,7 +18,7 @@ function createRepair(db){
     for(let offset=0;;offset+=500){
      const {data,error}=await db.from(table).select(`${key},${column}`).order(key).range(offset,offset+499);
      if(error)throw error;
-     for(const row of data||[]){const name=repairedName(row[column]);if(name!==null)candidates.push({row,name});}
+     for(const row of data||[]){const name=repairedName(row[column]);if(name!==null)candidates.push({row,name:name || (table==='driver_sms_arrivals'?'Name not provided':'')});}
      if((data||[]).length<500)break;
     }
     for(const {row,name} of candidates){

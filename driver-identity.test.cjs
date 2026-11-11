@@ -33,13 +33,13 @@ test('existing-record repair changes only clear introductions, never guesses fro
 });
 test('saved-record repair verifies writes and preserves concurrent clerk edits',async()=>{
  const {createRepair}=require('./repair-driver-names');
- const tables={driver_sms_contacts:[{phone_e164:'p1',full_name:'This is John'},{phone_e164:'p2',full_name:'?'}],driver_sms_arrivals:[{id:'a1',driver_name:'This is John'},{id:'a2',driver_name:'My name is Sean'}]};
+ const tables={driver_sms_contacts:[{phone_e164:'p1',full_name:'This is John'},{phone_e164:'p2',full_name:'?'}],driver_sms_arrivals:[{id:'a1',driver_name:'This is John'},{id:'a2',driver_name:'My name is Sean'},{id:'a3',driver_name:'Copy'}]};
  let changedDuringRepair=false;
  const db={from(table){let filters=[],patch,cols='';const q={select(c){cols=c;return q},order(){return q},eq(k,v){filters.push([k,v]);return q},update(p){patch=p;return q},range(){return Promise.resolve({data:tables[table].map(r=>({...r}))})},single(){return Promise.resolve({data:tables[table].find(r=>filters.every(([k,v])=>r[k]===v))})},then(resolve){if(table==='driver_sms_arrivals'&&!changedDuringRepair){tables[table][1].driver_name='Sean Smith';changedDuringRepair=true;}const rows=tables[table].filter(r=>filters.every(([k,v])=>r[k]===v));rows.forEach(r=>Object.assign(r,patch));return Promise.resolve({data:rows.map(r=>({...r}))}).then(resolve)}};return q;}};
  const repair=createRepair(db);await repair.run();
- assert.equal(repair.health.state,'complete');assert.equal(repair.health.updated,2);assert.equal(repair.health.verified,2);
+ assert.equal(repair.health.state,'complete');assert.equal(repair.health.updated,3);assert.equal(repair.health.verified,3);
  assert.equal(tables.driver_sms_contacts[0].full_name,'John');assert.equal(tables.driver_sms_contacts[1].full_name,'?');
- assert.equal(tables.driver_sms_arrivals[0].driver_name,'John');assert.equal(tables.driver_sms_arrivals[1].driver_name,'Sean Smith');
+ assert.equal(tables.driver_sms_arrivals[0].driver_name,'John');assert.equal(tables.driver_sms_arrivals[1].driver_name,'Sean Smith');assert.equal(tables.driver_sms_arrivals[2].driver_name,'Name not provided');
 });
 test('acknowledgements never become names or replace a known driver',()=>{
  const {repairedName}=require('./repair-driver-names');
