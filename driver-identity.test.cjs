@@ -41,3 +41,15 @@ test('saved-record repair verifies writes and preserves concurrent clerk edits',
  assert.equal(tables.driver_sms_contacts[0].full_name,'John');assert.equal(tables.driver_sms_contacts[1].full_name,'?');
  assert.equal(tables.driver_sms_arrivals[0].driver_name,'John');assert.equal(tables.driver_sms_arrivals[1].driver_name,'Sean Smith');
 });
+test('acknowledgements never become names or replace a known driver',()=>{
+ const {repairedName}=require('./repair-driver-names');
+ for(const body of ['Copy','copy that','Copied.','Got it','Understood','Roger that','10-4','Okay','Thank you']){
+  assert.equal(driverName(body),'',body);
+  assert.equal(parseDetails(body).full_name,undefined,body);
+  assert.equal(repairedName(body),'',body);
+  const existing={full_name:'John',driver_company:'JLS',visit_type:'dropoff'};
+  assert.equal(nextCheckin({existing,body}).contact.full_name,'John',body);
+ }
+ assert.equal(driverName('Roger'),'Roger');
+ assert.equal(nextCheckin({existing:{full_name:'Copy',driver_company:'JLS',visit_type:'dropoff'},body:'Copy'}).contact.full_name,'');
+});

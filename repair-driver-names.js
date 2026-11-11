@@ -1,13 +1,14 @@
 'use strict';
-const {driverName}=require('./driver-identity');
+const {driverName,isAcknowledgement}=require('./driver-identity');
 const introduction=/^(?:(?:hello|hi|hey)[,!]?\s+)?(?:this\s+is|my\s+name\s+is|i\s+am|i['’]m|it['’]s)\s+/i;
 function repairedName(value){
  const original=String(value||'').trim(),name=driverName(original);
+ if(isAcknowledgement(original))return '';
  // Only repair unmistakable introductions, never infer a name from a sentence.
  return introduction.test(original)&&name!==original&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(name)&&!/\b(?:with|from|for|pickup|release|dropping|loading)\b/i.test(name)?name:null;
 }
 function createRepair(db){
- const health={version:'driver-name-introductions-v1',state:'pending',updated:0,verified:0,error:null};
+ const health={version:'driver-name-acknowledgements-v2',state:'pending',updated:0,verified:0,error:null};
  async function run(){
   if(!db){health.state='unavailable';return;}
   health.state='running';
@@ -17,7 +18,7 @@ function createRepair(db){
     for(let offset=0;;offset+=500){
      const {data,error}=await db.from(table).select(`${key},${column}`).order(key).range(offset,offset+499);
      if(error)throw error;
-     for(const row of data||[]){const name=repairedName(row[column]);if(name)candidates.push({row,name});}
+     for(const row of data||[]){const name=repairedName(row[column]);if(name!==null)candidates.push({row,name});}
      if((data||[]).length<500)break;
     }
     for(const {row,name} of candidates){
