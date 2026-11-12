@@ -5,8 +5,26 @@ const companyPattern=/\b(trucking|transport(?:ation)?|logistics|carriers?|freigh
 const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|dock|where|when|how|wrong|sorry|please|arrived|here|need|have|can|will|ready|morning|afternoon)\b/i;
 function parseDetails(text, existing={}) {
  const found={},rest=[];
+ // Separate a driver's natural introduction from delivery/customer commentary.
+ // Only explicit with/from introductions establish a carrier boundary.
+ let input=clean(text).replace(/([.!?])(?=my\s+release\b)/gi,'$1 ');
+ const intro=input.match(/^(?:(?:this\s+is|is\s+this|my\s+name\s+is|i\s+am|i['’]m)\s+)?([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(?:with|from|driving for)\s+(.+?)(?=\s+(?:here\b|to\b|for\b|my\s+release\b|release\b|\d{4,}\b)|[.!?](?:\s|$)|$)/iu);
+ if(intro&&!chatPattern.test(intro[1])&&!companyPattern.test(intro[1])){
+  found.full_name=driverName(intro[1]).slice(0,120);
+  found.driver_company=cleanIdentity(intro[2]).slice(0,160);
+  input=clean(input.slice(intro[0].length));
+ }
+ // A labeled release can be anywhere in the sentence. Do not confuse a
+ // weight, phone, trailer or customer number with a release.
+ const labeled=input.match(/\b(?:my\s+)?release(?:\s+(?:number|no\.?))?\s*(?:is|[:=#])?\s*([a-z0-9][a-z0-9./_-]{2,39})/i);
+ if(labeled&&/\d/.test(labeled[1])){
+  found.last_release_number=labeled[1].replace(/[.!]+$/,'');
+  input=input.replace(labeled[0],'');
+ }
+ input=input.replace(/[.!?]\s*(?=\d{4,12}\b)/g,'; ');
+
  // Labels are accepted in any order, even when separated only by spaces.
- const marked=clean(text).replace(/\.{2,}|\.\s+(?=(?:release|load|name|driver|carrier|company)\b)/gi, ', ').replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
+ const marked=input.replace(/\.{2,}|\.\s+(?=(?:release|load|name|driver|carrier|company)\b)/gi, ', ').replace(/\b((?:full\s+)?name|driver(?:\s+name)?|(?:release|pickup|pick-up|load)(?:\s*(?:number|no\.?|#))?|(?:trucking\s+)?company|carrier(?:\s+name)?)\s*[:=]\s*/gi,'\n$1: ');
  // Slashes inside a release (CB7201P1-2/7, 968751/510) are part of
  // the reference. Keep ordinary slash-separated names/carriers as separate fields.
  const protectedText=marked.replace(/\b(?=[a-z0-9._-]*\d)[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9._-]+)+/gi,token=>token.replace(/\//g,'\uE000'));
@@ -38,7 +56,7 @@ function parseDetails(text, existing={}) {
   const part=driverName(rawPart);
   if(!part)continue;
   const split=part.match(/^(.+?)\s+(?:with|from|driving for)\s+(.+)$/i);
-  if(split&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=driverName(split[1]).slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
+  if(split&&!found.full_name&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=driverName(split[1]).slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
   // A known multiword carrier can follow a driver's name without punctuation.
   // Keep standalone carrier names intact; do not guess a boundary for unknown carriers.
   const carrierIntroduction=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(Center\s+Express[.]?)$/iu);
@@ -46,13 +64,14 @@ function parseDetails(text, existing={}) {
    found.full_name=clean(carrierIntroduction[1]);found.driver_company=clean(carrierIntroduction[2]);continue;
   }
   if(companyPattern.test(part)&&!chatPattern.test(part)){
-   if(!existing.driver_company)found.driver_company=part.slice(0,160);
+   if(!found.driver_company&&!existing.driver_company)found.driver_company=part.slice(0,160);
    continue;
   }
   if(chatPattern.test(part)||/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(part))continue;
   if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(part))found.full_name=part.slice(0,120);
   else if(!found.driver_company&&!existing.driver_company&&(found.full_name||existing.full_name)&&/^[\p{L}\d .&'’-]{2,160}$/u.test(part))found.driver_company=part;
  }
+ if(found.last_release_number)found.last_release_number=found.last_release_number.replace(/[.!]+$/,'');
  if('full_name' in found)found.full_name=driverName(found.full_name);
  if('driver_company' in found)found.driver_company=cleanIdentity(found.driver_company);
  return found;

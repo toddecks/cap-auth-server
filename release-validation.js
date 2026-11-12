@@ -10,7 +10,7 @@ const ASSIST_MS = 5 * 60 * 1000;
 const CHECKIN_FOLLOWUP_MS = 60 * 1000;
 const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
 const SOON = 'Our shipping team will be with you shortly.';
-const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
+const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 and select option 5 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
 const REMAIN = 'Please remain in your truck. A shipping team member will be with you shortly.';
 const COIL_REMAIN = 'Please remain in your truck. A shipping team member will assist you shortly.';
 const officeClosed = timestamp => {
@@ -21,7 +21,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v21-no-clerk-hold',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v22-retained-details-option5',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -96,7 +96,8 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||Math.min(session.start(c),nativeInitial?Date.parse(nativeInitial.sent_at):Infinity));
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
-    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt,send,now});
+    const verificationAt=c.channel==='sms'&&c.visit_type==='pickup'?session.start(c):pickupAt;
+    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt:verificationAt,send,now});
     if(c.channel==='app'&&verification.state==='matched') {
       const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
       const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);
@@ -111,7 +112,15 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
-    if(!initial) return officeClosed(pickupAt) ? send(c,'closed',CLOSED) : send(c,'verify',VERIFY);
+    if(!initial){
+      if(officeClosed(pickupAt))return send(c,'closed',CLOSED);
+      let prompt=VERIFY;
+      if(c.channel==='sms'){
+        const contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
+        prompt=require('./pickup-detail-prompt').missingPrompt(contact)||VERIFY;
+      }
+      return send(c,'verify',prompt);
+    }
     if(['failed','undelivered'].includes(initial.delivery_status)) return;
     if(now() - Date.parse(initial.sent_at) >= ASSIST_MS && !messages.some(m => m.client_message_id === `release-wait:assist:${session.key(c)}`)) {
       await send(c,'assist',ASSIST);

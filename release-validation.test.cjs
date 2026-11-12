@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const {createWorker,VERIFY,ASSIST,SOON,CLOSED,REMAIN,officeClosed}=require('./release-validation');
 function fixture(channel='sms') {
  let clock=Date.parse('2026-10-01T17:00:00Z');
- const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
+ const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],driver_sms_contacts:[],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
   const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
@@ -261,4 +261,19 @@ for(const choice of ['Pick Up','Drop Off','Both'])test(`SMS waits for explicit $
  else if(choice==='Both'){assert.equal(selected.reply,'Please call 419-269-9706 and select option 5 for further instructions.');assert.equal(f.sends.length,0);}
  else {assert.match(selected.reply,/unchain your load/);assert.equal(f.sends.length,0);}
  assert.equal(f.worker.health.error,null);
+});
+
+test('natural SMS details supplied before Pick Up are validated without another generic prompt',async()=>{
+ const {ACCEPTED}=require('./release-attempts');
+ for(const [body,name,carrier,release] of [['This is John with JLS here to pick up for Midwest metals. 255489.','John','JLS','255489'],['Is this Sean with center express?My release number is 968463','Sean','center express','968463'],['Bob with center 969425','Bob','center','969425']]){
+  const f=fixture();f.advance(Date.parse('2026-11-12T14:00:00Z')-Date.parse('2026-10-01T17:00:00Z'));const c=f.tables.driver_conversations[0];c.created_at='2026-11-12T14:00:00Z';c.facility_id='csp-toledo-main';c.release_number=release;
+  f.tables.driver_messages.push({id:20,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:c.created_at});
+  f.tables.driver_sms_contacts.push({phone_e164:c.sms_phone_e164,full_name:name,driver_company:carrier,last_release_number:release});
+  if(name!=='John'){f.advance(10000);f.tables.driver_messages.push({id:21,conversation_id:c.id,direction:'driver_to_shipping',body:'Pick Up',sent_at:'2026-11-12T14:00:10Z'});}
+  f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:release,scheduleDate:'2026-11-12',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+  const worker=createWorker(f.options);await worker.tick();await worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[ACCEPTED],name);assert.equal(worker.health.error,null);
+ }
+});
+test('SMS with known name and carrier asks only for release number',async()=>{
+ const f=fixture();f.tables.driver_sms_contacts.push({phone_e164:'+15555550100',full_name:'John',driver_company:'JLS',last_release_number:null});await f.worker.tick();assert.equal(f.sends[0].body,'Please send your release number for verification and further instructions.');
 });
