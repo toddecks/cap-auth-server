@@ -7353,6 +7353,7 @@ const releaseValidationWorker=require('./release-validation').createWorker({db:d
 const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
 
 const psDepartureWorker=require('./ps-departures').createWorker({db:driverSupabase,chart:chartSupabase});
+require('./public-arrivals').register({app,visits:()=>psDepartureWorker.activeVisits(),chart:chartSupabase});
 const driverNameRepair=require('./repair-driver-names').createRepair(driverSupabase);
 
 // Start server

@@ -90,6 +90,6 @@ function createWorker({db,chart,now=()=>Date.now(),candidates=require('./release
   }catch(error){health.state='error';health.error=String(error.message||error);console.error('PS departure sync:',health.error);}
   finally{health.lastChecked=new Date(now()).toISOString();running=false;}
  }
- return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),60000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
+ return {health,tick,activeVisits,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),60000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
 module.exports={confirmedDeparture,easternTimestamp,createWorker};
