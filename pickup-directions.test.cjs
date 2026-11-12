@@ -14,3 +14,6 @@ test('missing door never defaults to LEFT',async()=>assert.rejects(pickupInstruc
 test('explicit clerk COIL routing works for unmatched release and unavailable catalog',async()=>{for(const chart of [db([]),null])assert.equal(await pickupInstructions(chart,{...c,release_number:'001288'},new Date(),'COIL'),COIL_CHECKIN)});
 test('explicit other-door routing uses LEFT and invalid choices are rejected',async()=>{assert.equal(await pickupInstructions(null,c,new Date(),'OTHER'),PICKUP_CHECKIN);await assert.rejects(pickupInstructions(null,c,new Date(),'anything'),/Choose COIL/)});
 test('COIL first message exactly includes the full requested PPE wording',()=>assert.equal(COIL_CHECKIN,'Please pull around back and stay to the RIGHT. Please have all required PPE ready before entering the facility, including a hard hat, safety glasses, and fully enclosed shoes.'));
+
+test('confirmed PS COIL cannot be overridden by manual OTHER choice',async()=>assert.equal(await pickupInstructions(db([row]),c,new Date(),'OTHER'),COIL_CHECKIN));
+test('confirmed PS BD retains standard directions despite manual COIL choice',async()=>assert.equal(await pickupInstructions(db([{...row,unloadingDoor:'BD'}]),c,new Date(),'COIL'),PICKUP_CHECKIN));

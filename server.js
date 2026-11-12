@@ -86,6 +86,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "targeted-release-lookup-v4-combo-loads",
     shippingDropoffMapMode: "first-visit-map-v1",
+    shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
     shippingPermanentDelete: permanentConversations.health,
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,

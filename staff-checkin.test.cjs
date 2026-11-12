@@ -47,3 +47,9 @@ for(const channel of ['sms','app'])test(`${channel}: unmatched door cannot recor
  const h=harness('shipping',channel,'pickup',[]);const before=await h.call();assert.equal(before.status,409);assert.equal(before.payload.code,'LOADING_DOOR_REQUIRED');assert.equal(h.checks.length,0);assert.equal(h.arrivals.length,0);assert.equal(h.messages.length,0);
  const after=await h.call(true,false,'COIL');assert.equal(after.status,200);assert.equal(after.payload.warning,null);assert.equal(h.checks.length,1);assert.equal(h.messages[0].body,require('./pickup-directions').COIL_CHECKIN);assert(!h.messages.some(m=>m.body.includes('LEFT')));
 });
+for(const channel of ['sms','app'])test(`${channel}: PS COIL overrides an incorrect manual OTHER choice`,async()=>{
+ const h=harness('shipping',channel,'pickup',[{poRel:'12345',scheduleDate:'2026-11-12',location:'PROSPY',unloadingDoor:'Coil'}]);
+ assert.equal((await h.call(true,false,'OTHER')).status,200);
+ assert.equal(h.messages[0].body,require('./pickup-directions').COIL_CHECKIN);
+ assert(!h.messages.some(m=>m.body.includes('LEFT')));
+});

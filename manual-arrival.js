@@ -41,7 +41,7 @@ function createHandler(deps) {
     console.error('Manual arrival release lookup:',error.message);
     return res.status(503).json({error:'The release lookup is unavailable. No arrival was added. Please try again.'});
    }
-   const routing=input.loadingDoor||(appointment?.door&&appointment.status!=='ambiguous'?(String(appointment.door).toUpperCase()==='COIL'?'COIL':'OTHER'):'');
+   const routing=appointment?.door&&appointment.status!=='ambiguous'?(String(appointment.door).trim().toUpperCase()==='COIL'?'COIL':'OTHER'):input.loadingDoor;
    if(!routing)return res.status(409).json({code:'LOADING_DOOR_REQUIRED',error:'Select COIL (RIGHT) or Other loading door (LEFT) so the driver receives the correct check-in instructions.'});
    const preparedInstructions=await require('./pickup-directions').pickupInstructions(null,{},new Date(timestamp),routing);
    const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at,entered_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).order('entered_at',{ascending:false}).limit(50);

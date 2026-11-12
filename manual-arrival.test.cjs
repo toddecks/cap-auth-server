@@ -79,3 +79,6 @@ test('known COIL manual pickup retains RIGHT-side instructions',async()=>{
 test('message failure keeps the official check-in and reports a warning',async()=>{
  const f=setup({messageFailure:true}),r=await f.call();assert.equal(r.code,200);assert.match(r.body.warning,/automatic instructions/);assert.equal(f.tables.shipping_staff_checkins.length,1);
 });
+test('manual arrival uses confirmed COIL even when the submitted routing says OTHER',async()=>{
+ const f=setup();const r=await f.call({...body,loadingDoor:'OTHER'});assert.equal(r.code,200);assert.equal(f.notifications[0].preparedInstructions,require('./pickup-directions').COIL_CHECKIN);
+});
