@@ -86,6 +86,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "targeted-release-lookup-v4-combo-loads",
     shippingDropoffMapMode: "first-visit-map-v1",
+    shippingPermanentDelete: permanentConversations.health,
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,
     shippingTranslation: driverTranslationWorker.health,
@@ -1667,6 +1668,8 @@ app.post(
     return res.status(204).send();
   }
 );
+
+const permanentConversations=require('./permanent-conversations').register({app,db:driverSupabase});
 
 const shippingOwnership = require('./shipping-ownership').register({app,db:driverSupabase,auth:supabase,findUser:findAuthUserByEmail,issueSession:issueDriverShippingSession,getBearerToken});
 
