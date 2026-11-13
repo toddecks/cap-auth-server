@@ -10,6 +10,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
+const { employeeConfirmationUrl } = require("./employee-confirmation");
 const fs = require("fs");
 const OpenAI = require("openai");
 const twilio = require("twilio");
@@ -156,9 +157,13 @@ const chartSupabase = CHART_SUPABASE_URL && CHART_SERVICE_ROLE_KEY
   : null;
 const ROLE_DEFINITIONS = [
   { id: 1, name: "admin" },
+  { id: 2, name: "shipping" },
   { id: 3, name: "receiving" },
   { id: 4, name: "production" },
+  { id: 5, name: "live" },
+  { id: 6, name: "finance" },
   { id: 7, name: "inventory" },
+  { id: 8, name: "maintenance" },
   { id: 9, name: "bonus_report" },
   { id: 10, name: "ai_assistant" },
   { id: 11, name: "shipping_overview" },
@@ -172,7 +177,9 @@ const ROLE_DEFINITIONS = [
   { id: 20, name: "employee" },
   { id: 21, name: "shift_reports" },
   { id: 22, name: "todd_requests" },
-  { id: 23, name: "hr_admin" }
+  { id: 23, name: "hr_admin" },
+  { id: 24, name: "pickem" },
+  { id: 25, name: "shipping_app" }
 ];
 const ROLE_BY_ID = new Map(ROLE_DEFINITIONS.map((role) => [role.id, role]));
 const ROLE_BY_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.name, role]));
@@ -457,13 +464,13 @@ const sendHrAccountConfirmation = async (email, confirmationUrl) => {
   const html = `
     <!DOCTYPE html>
     <html lang="en">
-    <head><meta charset="UTF-8"><title>Confirm Your CSP Benefits Account</title></head>
+    <head><meta charset="UTF-8"><title>Confirm Your CSP Employee Account</title></head>
     <body style="margin:0;background:#f3f6fb;font-family:Arial,sans-serif;color:#233658;">
       <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
         <div style="background:#ffffff;border:1px solid #d5deec;border-radius:8px;padding:28px;">
-          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Confirm Your Employee Benefits Account</h1>
-          <p style="margin:0 0 18px;line-height:1.55;">Your Coil Steel Processing employee benefits account has been created. Confirm your email address to finish setup.</p>
-          <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Confirm Email and Sign In</a>
+          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Confirm Your Employee Account</h1>
+          <p style="margin:0 0 18px;line-height:1.55;">Your Coil Steel Processing employee account has been created. Confirm your email address to finish setup.</p>
+          <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Confirm Email</a>
           <p style="margin:22px 0 0;color:#5b6a87;font-size:13px;line-height:1.5;">If you did not create this account, ignore this email or contact HR.</p>
         </div>
       </div>
@@ -480,7 +487,7 @@ const sendHrAccountConfirmation = async (email, confirmationUrl) => {
     body: JSON.stringify({
       from: HR_INVITE_FROM_EMAIL,
       to: [email],
-      subject: "Confirm your CSP employee benefits account",
+      subject: "Confirm your CSP employee account",
       html
     })
   });
@@ -3648,7 +3655,7 @@ app.post("/api/hr/register", async (req, res) => {
       email: cleanEmail,
       password: cleanPassword,
       options: {
-        redirectTo: `${HR_PORTAL_BASE_URL}/login.html?confirmed=1`
+        redirectTo: `${HR_PORTAL_BASE_URL}/confirm.html`
       }
     });
 
@@ -3656,7 +3663,7 @@ app.post("/api/hr/register", async (req, res) => {
       const alreadyExists = /already|registered|exists/i.test(String(authError?.message || ""));
       return res.status(400).json({
         message: alreadyExists
-          ? "An account already exists for this email. Sign in or ask an administrator to add HR access."
+          ? "An account already exists for this email. Sign in or ask an administrator to update account access."
           : authError?.message || "Unable to create the account."
       });
     }
@@ -3689,11 +3696,7 @@ app.post("/api/hr/register", async (req, res) => {
 
     await acceptHrInvitation(invitationId, createdUserId);
 
-    const confirmationUrl =
-      authData?.properties?.action_link ||
-      authData?.properties?.actionLink ||
-      authData?.action_link ||
-      "";
+    const confirmationUrl = employeeConfirmationUrl(authData, HR_PORTAL_BASE_URL);
 
     await sendHrAccountConfirmation(cleanEmail, confirmationUrl);
 
@@ -3754,8 +3757,8 @@ const sendHrInvitation = async (email, code, expiresAt) => {
     <body style="margin:0;background:#f3f6fb;font-family:Arial,sans-serif;color:#233658;">
       <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
         <div style="background:#ffffff;border:1px solid #d5deec;border-radius:8px;padding:28px;">
-          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Employee Benefits Account</h1>
-          <p style="margin:0 0 18px;line-height:1.55;">You have been invited to create a Coil Steel Processing employee benefits account.</p>
+          <h1 style="margin:0 0 14px;font-size:26px;color:#233658;">Employee Account</h1>
+          <p style="margin:0 0 18px;line-height:1.55;">You have been invited to create a Coil Steel Processing employee account.</p>
           <p style="margin:0 0 6px;font-size:13px;font-weight:bold;text-transform:uppercase;color:#5b6a87;">One-Time Invitation Code</p>
           <div style="margin:0 0 22px;padding:12px 14px;border:1px solid #d5deec;border-radius:6px;background:#f3f6fb;font-size:22px;font-weight:bold;letter-spacing:.04em;">${safeCode}</div>
           <a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:6px;background:#f1a91e;color:#ffffff;font-weight:bold;text-decoration:none;">Create Employee Account</a>
@@ -3775,7 +3778,7 @@ const sendHrInvitation = async (email, code, expiresAt) => {
     body: JSON.stringify({
       from: HR_INVITE_FROM_EMAIL,
       to: [email],
-      subject: "Create your CSP employee benefits account",
+      subject: "Create your CSP employee account",
       html
     })
   });
@@ -3802,7 +3805,7 @@ app.post("/api/hr/admin/invitations", requireHrAdminAccess, async (req, res) => 
     );
     if (existingUser) {
       return res.status(409).json({
-        error: "An account already exists for this email. Grant HR access from the employee list instead."
+        error: "An account already exists for this email. Update access from the employee list instead."
       });
     }
 
