@@ -20,6 +20,8 @@ function releaseFromMessage(body){
 }
 async function lookupRelease(chart,release,c,at){
  if(!chart)throw Error('Release database is unavailable.');
+ const releases=require('./release-list').split(release);
+ if(releases.length>1){const results=await Promise.all(releases.map(r=>lookupRelease(chart,r,c,at)));return results.includes('invalid')?'invalid':results.includes('ambiguous')?'ambiguous':'matched';}
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
  const rows=await require('./release-catalog').releaseCandidates(chart,release);
  const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[c.facility_id];

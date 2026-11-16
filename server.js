@@ -86,7 +86,7 @@ app.get("/api/deploy-status", (_req, res) => {
     townHallFormMode: "anonymous-kim-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "release-date-suffix-v5",
+    shippingArrivalLogMode: "multiload-lines-v6",
     shippingDropoffMapMode: "first-visit-map-v1",
     shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
     shippingPermanentDelete: permanentConversations.health,
@@ -2116,7 +2116,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
 
   const date = String(req.body?.date || "").trim();
   const releases = Array.isArray(req.body?.releases)
-    ? req.body.releases.map(normalizeShippingRelease).filter(Boolean).slice(0, 500)
+    ? req.body.releases.flatMap(r=>require('./release-list').split(r)).map(normalizeShippingRelease).filter(Boolean).slice(0, 500)
     : [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Choose a valid log date." });
   if (!releases.length) return res.json({ matches: {} });

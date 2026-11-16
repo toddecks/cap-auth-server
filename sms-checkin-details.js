@@ -5,9 +5,12 @@ const companyPattern=/\b(trucking|transport(?:ation)?|logistics|carriers?|freigh
 const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|dock|where|when|how|wrong|sorry|please|arrived|here|need|have|can|will|ready|morning|afternoon)\b/i;
 function parseDetails(text, existing={}) {
  const found={},rest=[];
+ const multiple=require('./release-list').extract(text);
+ const multiRelease=multiple.releases.length>1?multiple.releases.join(' & '):'';
  // Separate a driver's natural introduction from delivery/customer commentary.
  // Only explicit with/from introductions establish a carrier boundary.
  let input=clean(text).replace(/([.!?])(?=my\s+release\b)/gi,'$1 ');
+ if(multiRelease)for(const segment of multiple.segments)input=input.replace(segment,'');
  const intro=input.match(/^(?:(?:this\s+is|is\s+this|my\s+name\s+is|i\s+am|i['’]m)\s+)?([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(?:with|from|driving for)\s+(.+?)(?=\s+(?:here\b|to\b|for\b|my\s+release\b|release\b|\d{4,}\b)|[.!?](?:\s|$)|$)/iu);
  if(intro&&!chatPattern.test(intro[1])&&!companyPattern.test(intro[1])){
   found.full_name=driverName(intro[1]).slice(0,120);
@@ -50,7 +53,7 @@ function parseDetails(text, existing={}) {
   if(m?.length===1 && !chatPattern.test(part) && !/\b(phone|tel|mobile|call me|truck|trailer|pounds|lbs|weight|zip|address)\b/i.test(part)){
    found.last_release_number=m[0];part=clean(part.replace(m[0],'').replace(/\b(?:release|number|pickup|load)\b\s*[:#]?/gi,''));
   }
-  if(part)rest.push(part);
+  if(part&&!/^(?:truck|trailer|tractor|unit)\s*(?:number|no\.?|#)?\s*[:#-]?\s*\d+$/i.test(part))rest.push(part);
  }
  for(const rawPart of rest){
   const part=driverName(rawPart);
@@ -71,6 +74,7 @@ function parseDetails(text, existing={}) {
   if(!found.full_name&&!existing.full_name&&/^[\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3}$/u.test(part))found.full_name=part.slice(0,120);
   else if(!found.driver_company&&!existing.driver_company&&(found.full_name||existing.full_name)&&/^[\p{L}\d .&'’-]{2,160}$/u.test(part))found.driver_company=part;
  }
+ if(multiRelease)found.last_release_number=multiRelease;
  if(found.last_release_number)found.last_release_number=found.last_release_number.replace(/[.!]+$/,'');
  if('full_name' in found)found.full_name=driverName(found.full_name);
  if('driver_company' in found)found.driver_company=cleanIdentity(found.driver_company);

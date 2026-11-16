@@ -5,11 +5,11 @@ const day=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',ye
 const normalize=value=>String(value||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
 function displayRows(visits,loads,now=Date.now()){
  const today=day(now);
- const active=visits.filter(v=>v.checked_in_at&&!v.departed_at&&['pickup','both'].includes(v.visit_type)&&day(v.entered_at)===today);
+ const active=require('./release-list').expand(visits).filter(v=>v.checked_in_at&&!v.departed_at&&['pickup','both'].includes(v.visit_type)&&day(v.entered_at)===today);
  const matches=doorMatches(loads,active.map(v=>v.release_number),today);
  const seen=new Set();
  return active.sort((a,b)=>Date.parse(b.entered_at)-Date.parse(a.entered_at)).filter(v=>{
-  const key=v.conversation_id||`${v.source}:${v.arrival_id}`;if(seen.has(key))return false;seen.add(key);return true;
+  const key=(v.conversation_id||`${v.source}:${v.arrival_id}`)+':'+normalize(v.release_number);if(seen.has(key))return false;seen.add(key);return true;
  }).reverse().map(v=>{
   const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[v.facility_id];
   const m=matches[normalize(v.release_number)+':'+location];

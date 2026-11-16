@@ -277,3 +277,13 @@ test('natural SMS details supplied before Pick Up are validated without another 
 test('SMS with known name and carrier asks only for release number',async()=>{
  const f=fixture();f.tables.driver_sms_contacts.push({phone_e164:'+15555550100',full_name:'John',driver_company:'JLS',last_release_number:null});await f.worker.tick();assert.equal(f.sends[0].body,'Please send your release number for verification and further instructions.');
 });
+
+test('multiline two-load details ask only for missing name after verification, once',async()=>{
+ const f=fixture();f.advance(46*86400000);const c=f.tables.driver_conversations[0];c.created_at='2026-11-16T17:00:00Z';c.release_number='32381 & 32382';
+ const contact={phone_e164:c.sms_phone_e164,full_name:'',driver_company:'Chase freight',last_release_number:c.release_number};f.tables.driver_sms_contacts.push(contact);
+ f.tables.driver_messages.push({id:51,conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up\n#32381 & 32382\nChase freight\nTruck 122',sent_at:c.created_at});
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:['32381','32382'].map(poRel=>({poRel,scheduleDate:'2026-11-16',scheduleTime:'16:00:00',location:'PROSPY',unloadingDoor:'BD'}))})};return q}};
+ c.facility_id='csp-toledo-main';const worker=createWorker(f.options);await worker.tick();await worker.tick();
+ assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED,'Please send your name for verification and further instructions.']);
+ contact.full_name='Shane';await worker.tick();assert.equal(f.sends.length,2);
+});

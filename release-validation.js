@@ -108,6 +108,15 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       }
     }
     if(verification.state==='invalid'||verification.state==='ambiguous')return;
+    if(c.channel==='sms'&&verification.state==='matched'){
+      const contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
+      const missing=contact&&require('./pickup-detail-prompt').missingPrompt(contact);
+      if(missing){
+        const kind='details-'+require('crypto').createHash('sha256').update(missing).digest('hex').slice(0,12);
+        if(!messages.some(m=>m.client_message_id===`release-wait:${kind}:${session.key(c)}`))await send(c,kind,missing);
+        return;
+      }
+    }
     if(messages.some(m => m.direction === 'shipping_to_driver' && m.sender_user_id && (c.visit_type!=='both'||Date.parse(m.sent_at)>=pickupAt) && !['failed','undelivered'].includes(m.delivery_status))) return;
     const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);

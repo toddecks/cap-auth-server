@@ -15,6 +15,8 @@ function easternTimestamp(date,time){
  return asWall(format(ms))===wall?ms:NaN;
 }
 function confirmedDeparture(visit,rows,now=Date.now()){
+ const releases=require('./release-list').split(visit.release_number);
+ if(releases.length>1){const departures=releases.map(r=>confirmedDeparture({...visit,release_number:r},rows,now));if(departures.some(d=>!d))return null;return {departedAt:new Date(Math.max(...departures.map(d=>Date.parse(d.departedAt)))).toISOString(),bolNumber:departures[0].bolNumber};}
  if(visit.departed_at||!['pickup','both'].includes(visit.visit_type))return null;
  const entered=Date.parse(visit.entered_at),checked=Date.parse(visit.checked_in_at);
  if(!Number.isFinite(entered)||!Number.isFinite(checked)||checked<entered||checked>now)return null;
