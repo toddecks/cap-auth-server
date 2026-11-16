@@ -105,11 +105,10 @@ test('Both sends no pickup reminders until check-in; then one follow-up at sixty
  f.tables.driver_conversations[0].status='closed';f.advance(3600000);await f.worker.tick();assert.equal(f.sends.length,1);assert.equal(f.checkouts.length,0);
 });
 
-test('Both explicit PICK UP starts standard timers; unloading messages and old staff replies do not',async()=>{
+test('Both explicit PICK UP starts standard timers without staff takeover',async()=>{
  const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type='both';
  const inbound=(body)=>f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
  inbound('Both');await f.worker.tick();assert.equal(f.sends.length,0);
- f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'staff',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent'});
  f.advance(600000);inbound('PICK UP');await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[VERIFY]);
  f.advance(179999);await f.worker.tick();assert.equal(f.sends.length,1);
  f.advance(1);await createWorker(f.options).tick();assert.equal(f.sends[1].body,SOON);
@@ -286,4 +285,31 @@ test('multiline two-load details ask only for missing name after verification, o
  c.facility_id='csp-toledo-main';const worker=createWorker(f.options);await worker.tick();await worker.tick();
  assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED,'Please send your name for verification and further instructions.']);
  contact.full_name='Shane';await worker.tick();assert.equal(f.sends.length,2);
+});
+
+for(const channel of ['sms','app'])test(channel+' clerk takeover blocks verification, invalid-release replies, details, timers and media before Check In',async()=>{
+ const f=fixture(channel);const c=f.tables.driver_conversations[0];
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent',body:'I will help you.'});
+ f.tables.driver_messages.push({id:'bad-release',conversation_id:c.id,direction:'driver_to_shipping',sent_at:new Date(f.options.now()).toISOString(),body:'99999'});
+ let lookups=0;f.options.chart={from(){lookups++;throw Error('Verification must stay paused');}};
+ await createWorker(f.options).tick();f.advance(360000);await createWorker(f.options).tick();
+ assert.equal(lookups,0);assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.length,2);
+});
+test('Both pickup command cannot override a clerk pause from its drop-off leg',async()=>{
+ const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type='both';
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent'});
+ f.advance(60000);f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.equal(f.sends.length,0);
+});
+for(const coil of [false,true])test('Check In resumes the '+(coil?'COIL':'standard')+' reminder despite earlier clerk activity and a draft hold',async()=>{
+ const f=checkedFixture();const c=f.tables.driver_conversations[0];require('./manual-reply-pause').begin(c);
+ f.tables.driver_messages[0].body=coil?'Please stay to the RIGHT.':'Please stay to the LEFT.';
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent',body:'Checking this for you.'});
+ f.advance(60000);await f.worker.tick();await createWorker(f.options).tick();
+ assert.deepEqual(f.sends.map(m=>m.body),[coil?'Please remain in your truck. A shipping team member will assist you shortly.':REMAIN]);require('./manual-reply-pause').clear(c);
+});
+test('typing holds an unclassified visit before any automated media or pickup flow',async()=>{
+ const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type=null;require('./manual-reply-pause').begin(c);
+ assert.equal(await require('./manual-reply-pause').load(f.options.db,c.id),true);
+ await f.worker.tick();assert.equal(f.sends.length,0);require('./manual-reply-pause').clear(c);
 });

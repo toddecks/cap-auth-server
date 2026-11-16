@@ -87,6 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "multiload-lines-v6",
+    shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",
     shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
     shippingPermanentDelete: permanentConversations.health,
@@ -1403,6 +1404,7 @@ const rememberSmsDriver = async (input) => {
 
 const sendAutomatedSmsReply = async ({ phone, conversationId, body, attachment = null, clientMessageId = null }) => {
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
+  if(await require('./manual-reply-pause').load(driverSupabase,conversationId))return;
   const sent = await twilioClient.messages.create({
     to: phone,
     body,
@@ -1682,6 +1684,8 @@ const permanentConversations=require('./permanent-conversations').register({app,
 
 const shippingOwnership = require('./shipping-ownership').register({app,db:driverSupabase,auth:supabase,findUser:findAuthUserByEmail,issueSession:issueDriverShippingSession,getBearerToken});
 
+app.post("/api/shipping/manual-reply", require('./manual-reply-pause').handler(driverSupabase));
+
 app.post("/api/shipping/send-message", async (req, res) => {
   res.set("Cache-Control", "no-store");
   if (!driverSupabase) {
@@ -1715,7 +1719,7 @@ app.post("/api/shipping/send-message", async (req, res) => {
 
     const { data: conversation, error: conversationError } = await driverSupabase
       .from("driver_conversations")
-      .select("id,status,channel,sms_phone_e164")
+      .select("id,status,channel,sms_phone_e164,session_started_at,created_at,session_ended_at")
       .eq("id", conversationId)
       .maybeSingle();
     if (conversationError) throw conversationError;
@@ -1723,6 +1727,7 @@ app.post("/api/shipping/send-message", async (req, res) => {
       return res.status(404).json({ error: "This conversation is no longer open." });
     }
 
+    if(!reviewRequest)require('./manual-reply-pause').begin(conversation);
     const clientMessageId = reviewRequest ? `manual-review:${conversationId}` : /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
       ? requestedClientMessageId
       : crypto.randomUUID();
@@ -1835,7 +1840,7 @@ app.post("/api/shipping/send-photo", async (req, res) => {
 
     const { data: conversation, error: conversationError } = await driverSupabase
       .from("driver_conversations")
-      .select("id,user_id,status,channel,sms_phone_e164")
+      .select("id,user_id,status,channel,sms_phone_e164,session_started_at,created_at,session_ended_at")
       .eq("id", conversationId)
       .maybeSingle();
     if (conversationError) throw conversationError;
@@ -1848,6 +1853,7 @@ app.post("/api/shipping/send-photo", async (req, res) => {
       return res.status(400).json({ error: "Photo must be 10 MB or smaller." });
     }
 
+    require('./manual-reply-pause').begin(conversation);
     const isSms = conversation.channel === "sms";
     if (isSms && (bytes.length > 5 * 1024 * 1024 || mimeType === "image/webp")) {
       return res.status(400).json({ error: "Text-message photos must be JPG, PNG, or HEIC and 5 MB or smaller." });

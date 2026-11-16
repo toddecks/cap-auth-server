@@ -42,6 +42,7 @@ function createHandler(deps) {
    if(writeError)throw writeError;
    const {data:verified,error:ve}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).single();
    if(ve)throw ve;
+   require('./manual-reply-pause').clear(c);
    if(c.channel==='sms'){const {error:e}=await db.from('driver_sms_arrivals').update({checked_in_at:verified.checked_in_at}).eq('id',arrivalId);if(e)throw e;}
    let warning=null;
    try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type,preparedInstructions});}
