@@ -86,7 +86,7 @@ app.get("/api/deploy-status", (_req, res) => {
     townHallFormMode: "anonymous-kim-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "targeted-release-lookup-v4-combo-loads",
+    shippingArrivalLogMode: "release-date-suffix-v5",
     shippingDropoffMapMode: "first-visit-map-v1",
     shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
     shippingPermanentDelete: permanentConversations.health,
@@ -2132,34 +2132,14 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
 
     const data = await require('./release-catalog').releaseCandidatesForMany(chartSupabase,releases);
 
-    const requested = new Set(releases);
     const matches = {};
-    (data || []).forEach((row) => {
-      if (row.cancelLoad === true || String(row.cancelLoad || "").toLowerCase() === "true") return;
-      const keys = [...psReleaseCandidates(row.poRel)].filter((key) => requested.has(key));
-      keys.forEach((key) => {
-        const appointmentAt = row.scheduleDate && row.scheduleTime
-          ? `${row.scheduleDate}T${String(row.scheduleTime).slice(0, 8)}`
-          : null;
-        if (!appointmentAt) return;
-        const candidate = {
-          appointment_at: appointmentAt,
-          release_reference: row.poRel,
-          carrier_name: row.carrierName || null,
-          location: row.location || null,
-          bol_number: row.bolNumber || row.masterBolNumber || null
-        };
-        const existingDate = matches[key] ? matches[key].appointment_at.slice(0, 10) : '';
-        // Reused release numbers use the newest scheduled date in the appointment window.
-        if (row.scheduleDate > existingDate) matches[key] = candidate;
-      });
-    });
     const doors=require("./release-doors").doorMatches(data || [], releases, date);
-    // Log and card lookups must resolve combo bases to the same first BOL.
+    // Cards, log, SMS and manual arrivals use the same date-aware decision.
     for(const [key,match] of Object.entries(doors)){
-      if(!match.combo_load)continue;
-      const split=key.lastIndexOf(':');
-      matches[key.slice(0,split)]={appointment_at:match.appointment_at,release_reference:match.release_reference,carrier_name:match.carrier_name,location:key.slice(split+1),bol_number:match.bol_number,combo_load:true,master_bol_number:match.master_bol_number};
+      if(match.status==='ambiguous'||!match.appointment_at)continue;
+      const split=key.lastIndexOf(':'),release=key.slice(0,split),location=key.slice(split+1);
+      if(matches[release]?.location==='PROSPY'&&location!=='PROSPY')continue;
+      matches[release]={appointment_at:match.appointment_at,release_reference:match.release_reference,carrier_name:match.carrier_name,location,bol_number:match.bol_number,...(match.combo_load?{combo_load:true,master_bol_number:match.master_bol_number}:{})};
     }
     return res.json({matches,doors});
   } catch (error) {

@@ -1,6 +1,5 @@
 'use strict';
-const {references}=require('./release-doors');
-const {resolveCombo}=require('./combo-loads');
+const {doorMatches}=require('./release-doors');
 const normalize=v=>String(v||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
 const localDay=ms=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms));
 // PS timestamps are facility wall time, not UTC. Resolve the Eastern offset,
@@ -23,9 +22,11 @@ function confirmedDeparture(visit,rows,now=Date.now()){
  const release=normalize(visit.release_number),digits=release.replace(/[A-Z]/g,'');
  if(!location||!digits)return null;
  const currentRows=rows.filter(r=>normalize(r.location)===location&&r.cancelLoad!==true&&String(r.cancelLoad).toLowerCase()!=='true'&&r.arrivalDate===localDay(entered));
- const exact=currentRows.filter(r=>normalize(r.poRel)===release||references(r.poRel).includes(digits));
- const combo=exact.length?null:resolveCombo(currentRows,release);
- const candidates=combo?combo.rows:exact;
+ const match=doorMatches(currentRows.map(r=>({...r,scheduleDate:r.scheduleDate||r.arrivalDate})),[visit.release_number],localDay(entered))[release+':'+location];
+ if(!match||match.status==='ambiguous'||!match.bol_number)return null;
+ const combo=match.combo_load?{primary:{bolNumber:match.bol_number}}:null;
+ const selectedBols=new Set(combo?match.combo_bol_numbers:[match.bol_number]);
+ const candidates=currentRows.filter(r=>selectedBols.has(String(r.bolNumber||'').trim()));
  if(!candidates.length)return null;
  // Multiple BOLs could represent different trucks using the same release.
  const bols=new Set(candidates.map(r=>String(r.bolNumber||'').trim()));

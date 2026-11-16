@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {doorMatches}=require('./release-doors');
 const row={poRel:'880740',unloadingDoor:'BD',location:'PROSPY',scheduleDate:'2026-10-06',scheduleTime:null};
 const lookup=rows=>doorMatches(rows,['880740'],'2026-10-06')['880740:PROSPY'];
-test('matches release without appointment time',()=>assert.deepEqual(lookup([row]),{bol_number:null,bol_ambiguous:false,door:'BD',status:'matched',appointment_at:null,match_type:'exact',release_reference:'880740',customer:''}));
+test('matches release without appointment time',()=>assert.deepEqual(lookup([row]),{bol_number:null,bol_ambiguous:false,door:'BD',status:'matched',appointment_at:null,match_type:'exact',release_reference:'880740',customer:'',carrier_name:null}));
 test('matches explicit release in list',()=>assert.equal(lookup([{...row,poRel:'123456/880740'}]).door,'BD'));
 test('supports shorthand suffixes in explicit release lists',()=>assert.equal(lookup([{...row,poRel:'880739/740'}]).door,'BD'));
 test('conflicting doors require confirmation',()=>assert.equal(lookup([row,{...row,unloadingDoor:'MB'}]).status,'ambiguous'));
@@ -20,26 +20,26 @@ test('ambiguous partial numbers never assign a door',()=>{const m=doorMatches([r
 test('exact reference wins over partial candidates',()=>assert.equal(lookup([row,{...row,poRel:'1880740',unloadingDoor:'MB'}]).door,'BD'));
 test('short fragments do not guess',()=>assert.equal(doorMatches([row],['740'],'2026-10-06')['740:PROSPY'],undefined));
 
-test('newest annual release wins regardless of input order or arrival proximity',()=>{
+test('reused annual release uses the requested appointment date',()=>{
  const old={...row,scheduleDate:'2025-10-06',unloadingDoor:'OLD',customerNo:'OLD'};
  const recent={...row,scheduleDate:'2026-10-07',scheduleTime:'13:00:00',unloadingDoor:'NEW',customerNo:'CENTER'};
  for(const rows of [[old,recent],[recent,old]]){
   const m=doorMatches(rows,['880740'],'2025-10-06')['880740:PROSPY'];
-  assert.equal(m.door,'NEW');assert.equal(m.appointment_at,'2026-10-07T13:00:00');assert.equal(m.customer,'Center Steel Sales, Inc.');
+  assert.equal(m.door,'OLD');assert.equal(m.appointment_at,null);assert.equal(m.customer,'OLD');
  }
 });
 test('annual duplicates do not validate partial references',()=>assert.equal(doorMatches([row,{...row,scheduleDate:'2025-10-06'}],['0740'],'2026-10-06')['0740:PROSPY'],undefined));
 test('newer unrelated full reference cannot resolve an ambiguous fragment',()=>{
  const m=doorMatches([row,{...row,poRel:'990740',scheduleDate:'2026-10-07'}],['0740'],'2026-10-06')['0740:PROSPY'];assert.equal(m.status,'ambiguous');
 });
-test('newest missing door does not reuse older door',()=>assert.equal(lookup([row,{...row,scheduleDate:'2026-10-07',unloadingDoor:''}]).status,'unassigned'));
+test('newest missing door does not reuse older door',()=>assert.equal(doorMatches([row,{...row,scheduleDate:'2026-10-07',unloadingDoor:''}],['880740'],'2026-10-07')['880740:PROSPY'].status,'unassigned'));
 test('invalid dated records do not override valid records',()=>assert.equal(lookup([row,{...row,scheduleDate:null,unloadingDoor:'OLD'}]).door,'BD'));
 test('cancelled newest record does not override active record',()=>assert.equal(lookup([row,{...row,scheduleDate:'2026-10-07',cancelLoad:true,unloadingDoor:'OLD'}]).door,'BD'));
 test('COIL suffix allows complete numeric base only',()=>{
  const rows=[{...row,poRel:'232662-coil',unloadingDoor:'Coil'}];
  for(const release of ['232662','232662-coil'])assert.equal(doorMatches(rows,[release],'2026-10-13')[release.toUpperCase().replace(/[^A-Z0-9]/g,'')+':PROSPY'].door,'Coil');
  for(const release of ['232622','32662','23266'])assert.notEqual(doorMatches(rows,[release],'2026-10-13')[release+':PROSPY']?.status,'matched');
- assert.equal(doorMatches([{...row,poRel:'232662-1'}],['232662'],'2026-10-13')['232662:PROSPY'],undefined);
+ assert.equal(doorMatches([{...row,poRel:'232662-1'}],['232662'],'2026-10-13')['232662:PROSPY'].status,'matched');
 });
 test('letters and punctuation ignored, all digits still required',()=>{
  for(const poRel of ['ABC-232662','232662-coil','23-26-62 LOAD']){
@@ -50,7 +50,7 @@ test('letters and punctuation ignored, all digits still required',()=>{
 });
 test('BOL comes from the same newest release/facility match',()=>{
  const newer={...row,scheduleDate:'2026-11-11',bolNumber:'94978'};
- const m=lookup([{...row,bolNumber:'11111'},newer,{...newer,location:'ENTPRS',bolNumber:'99999'}]);
+ const m=doorMatches([{...row,bolNumber:'11111'},newer,{...newer,location:'ENTPRS',bolNumber:'99999'}],['880740'],'2026-11-11')['880740:PROSPY'];
  assert.equal(m.bol_number,'94978');assert.equal(m.bol_ambiguous,false);
 });
 test('conflicting or incomplete BOLs do not silently choose one',()=>{
