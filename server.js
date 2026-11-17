@@ -87,6 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "multiload-lines-v6",
+    shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",
     shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
@@ -1957,6 +1958,7 @@ app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
 
+app.post('/api/shipping/driver-lookup', require('./manual-driver-lookup').createHandler({db:driverSupabase}));
 app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({db:driverSupabase,chartDb:chartSupabase,findOrCreateConversation:findOrCreateSmsConversation,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync}));
 
 app.post("/api/shipping/edit-arrival", async (req, res) => {

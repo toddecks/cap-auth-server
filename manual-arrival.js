@@ -4,10 +4,9 @@ function parseInput(body = {}) {
  const driverName=normalizeName(body.driverName);
  const driverCompany=cleanIdentity(body.driverCompany);
  const releaseNumber=String(body.releaseNumber||'').trim();
- const digits=String(body.phone||'').replace(/\D/g,'');
  const loadingDoor=String(body.loadingDoor||'').trim().toUpperCase();
  if(loadingDoor&&!['COIL','OTHER'].includes(loadingDoor))throw Error('Choose COIL or Other loading door.');
- const phone=digits.length===10?`+1${digits}`:digits.length===11&&digits[0]==='1'?`+${digits}`:/^\+[1-9]\d{7,14}$/.test(String(body.phone||'').trim())?String(body.phone).trim():'';
+ const phone=require('./manual-driver-lookup').normalizePhone(body.phone);
  if(!driverName||driverName.length>120||!driverCompany||driverCompany.length>160||!releaseNumber||releaseNumber.length>100||!phone)throw new Error('Enter a driver name, company, valid phone number, and release number.');
  return {driverName,driverCompany,releaseNumber,phone,loadingDoor};
 }
