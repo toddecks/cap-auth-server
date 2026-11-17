@@ -21,12 +21,12 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v23-clerk-pause',state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v24-after-hours-conversation',state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
-  async function send(c, kind, body) {
-    if(await require('./manual-reply-pause').load(db,c.id))return;
+  async function send(c, kind, body, afterHours=false) {
+    if(!afterHours&&await require('./manual-reply-pause').load(db,c.id))return;
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
     const r = await db.from('driver_messages').insert({
       client_message_id:`release-wait:${kind}:${session.key(c)}`, conversation_id:c.id,
@@ -57,6 +57,11 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
     ]);
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
+    const afterHours=require('./after-hours-reply').plan(c,messages,now());
+    if(afterHours){
+      if(afterHours.send)await send(c,afterHours.kind,afterHours.body,true);
+      if(!session.currentCheckin(c,checked))return;
+    }
     if(require('./manual-reply-pause').paused(c,messages,checked))return;
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
       const mediaKey=session.key(c);
@@ -139,6 +144,15 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       await send(c,'soon',SOON);
     }
   }
+  async function respondAfterHours(id){
+    const c=await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
+    if(!c||c.status!=='open'||c.session_ended_at)return false;
+    const messages=await result(db.from('driver_messages').select('client_message_id,direction,sent_at,body').eq('conversation_id',id));
+    const reply=require('./after-hours-reply').plan(c,messages,now());
+    if(!reply)return false;
+    if(reply.send)await send(c,reply.kind,reply.body,true);
+    return true;
+  }
   async function tick() {
     if(running || !db) return;
     running = true;
@@ -161,6 +175,6 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     } catch(error) {health.state='error';health.error=String(error.message || error);console.error('Release wait worker failed:',health.error);}
     finally {health.lastChecked=new Date(now()).toISOString();running=false;}
   }
-  return {health,tick,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),1000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
+  return {health,tick,respondAfterHours,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),1000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
 module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,COIL_REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};

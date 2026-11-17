@@ -126,7 +126,7 @@ test('staff reply during Both pickup phase cancels reminders',async()=>{
 test('Both pickup hours use return time, not earlier unloading arrival time',async()=>{
  const f=fixture();f.tables.driver_conversations[0].visit_type='both';f.advance(5*3600000);
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'PICK UP',sent_at:new Date(f.options.now()).toISOString()});
- await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
+ await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY]);
 });
 for(const type of ['pickup','both'])test(type+' command immediately requests missing release and starts 3/5 minute timers',async()=>{
  const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type=type;c.release_number='';
@@ -201,7 +201,7 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   const worker=createWorker(f.options);
   const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
   const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver'&&!m.sender_user_id).map(m=>m.body);
-  if(type==='both'){add('Both');await worker.tick();assert.deepEqual(replies(),[]);f.advance(60000);}
+  if(type==='both'){add('Both');await worker.tick();assert.deepEqual(replies(),scenario==='closed-hours'?[require('./after-hours-reply').BODY]:[]);f.advance(60000);}
   add('PICK UP');await worker.tick();
   if(scenario==='invalid-correction'){
    for(const release of ['11111','22222','33333','72037']){f.advance(1000);add(release);await worker.tick();await worker.tick();}
@@ -312,4 +312,21 @@ test('typing holds an unclassified visit before any automated media or pickup fl
  const f=fixture();const c=f.tables.driver_conversations[0];c.visit_type=null;require('./manual-reply-pause').begin(c);
  assert.equal(await require('./manual-reply-pause').load(f.options.db,c.id),true);
  await f.worker.tick();assert.equal(f.sends.length,0);require('./manual-reply-pause').clear(c);
+});
+test('after-hours driver follow-up gets a closed notice despite manual takeover, once across worker restarts',async()=>{
+ const f=fixture();const c=f.tables.driver_conversations[0];f.advance(5*3600000+24*60000);
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',body:'He will be out shortly',delivery_status:'sent',sent_at:'2026-10-01T22:01:00Z'});
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Are they still coming out?',sent_at:new Date(f.options.now()).toISOString()});
+ assert.equal(await f.worker.respondAfterHours(c.id),true);assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY]);
+ f.advance(60000);await createWorker(f.options).respondAfterHours(c.id);await f.worker.tick();assert.equal(f.sends.length,1);
+ f.advance(10*60000);await createWorker(f.options).tick();assert.equal(f.sends.length,1);
+});
+test('app after-hours follow-up records the same notice without sending an SMS',async()=>{
+ const f=fixture('app');f.advance(6*3600000);f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Hello?',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).body,require('./after-hours-reply').BODY);
+});
+test('after-hours notice does not cancel the official Check In one-minute reminder',async()=>{
+ const f=checkedFixture();f.advance(6*3600000);f.tables.shipping_staff_checkins[0].checked_in_at=new Date(f.options.now()-60000).toISOString();
+ f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Still waiting',sent_at:new Date(f.options.now()).toISOString()});
+ await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY,REMAIN]);
 });

@@ -87,6 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "multiload-lines-v6",
+    shippingAfterHoursReplyMode: "open-conversation-v1",
     shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",
@@ -1627,6 +1628,10 @@ app.post(
           if(simulatedAt)remembered.reply=require('./driver-visit-flow').dropoffReply(simulatedAt);
         } catch(testError) { console.error('Drop-off test lookup failed:',testError.message); }
       }
+
+      // Driver details stay saved, but a closed-office notice replaces further
+      // intake prompts when a driver follows up outside Shipping hours.
+      if(await releaseValidationWorker.respondAfterHours(conversationId))return res.status(200).send('<Response></Response>');
 
       if (remembered.reply) {
         try {
