@@ -311,6 +311,7 @@ require("./sad-v2").register(app, {db:chartSupabase, getOpenAIClient, requireAcc
 app.get('/api/order-entry-performance',
   requireRoleAccess(['admin','shipping_performance','shipping'],'Shipping Performance access is required.','Order-entry report'),
   require('./order-entry-performance').handler(chartSupabase));
+app.post('/api/internal/order-entry-sync',require('./order-entry-cloud-sync').handler({url:CHART_SUPABASE_URL,key:CHART_SERVICE_ROLE_KEY}));
 
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 

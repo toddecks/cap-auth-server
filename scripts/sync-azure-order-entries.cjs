@@ -59,6 +59,7 @@ async function sync(env=process.env) {
     for(let i=0;i<snapshot.rows.length;i+=500)await database('psdata_order_entries','POST',snapshot.rows.slice(i,i+500).map(row=>({...row,sync_run_id:id})));
     await database('rpc/finalize_psdata_order_entry_sync','POST',{run_id:id,expected_rows:snapshot.rows.length});
     console.log(`Order-entry sync complete: ${snapshot.rows.length} orders; source through ${max}.`);
+    return {rows:snapshot.rows.length,sourceThrough:max};
   }catch(error){
     await database(`psdata_order_entry_sync_runs?id=eq.${id}`,'PATCH',{status:'failed',finished_at:new Date().toISOString(),error_code:error.code||'SYNC_FAILED'}).catch(()=>{});
     throw error;

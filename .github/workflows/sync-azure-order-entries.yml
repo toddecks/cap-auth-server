@@ -19,12 +19,22 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - run: npm ci --ignore-scripts
-      - run: node scripts/sync-azure-order-entries.cjs
+      # The web server has fixed outbound addresses; hosted runners do not.
+      - name: Refresh through the CSP cloud server
+        run: |
+          node --input-type=module <<'JS'
+          import {createHash} from 'node:crypto';
+          const token=createHash('sha256').update('csp-order-entry-sync-v1:'+process.env.SUPABASE_SERVICE_ROLE_KEY).digest('hex');
+          const response=await fetch('https://cap-auth-server.onrender.com/api/internal/order-entry-sync',{
+            method:'POST',headers:{'Content-Type':'application/json','x-csp-sync-key':token},
+            body:JSON.stringify({sqlUser:process.env.PSDATA_SQL_USER,sqlPassword:process.env.PSDATA_SQL_PASSWORD}),
+            signal:AbortSignal.timeout(600000)
+          });
+          const result=await response.json();
+          if(!response.ok){console.error(result);process.exit(1);}
+          console.log(`Refreshed ${result.rows} orders; source through ${result.sourceThrough}.`);
+          JS
         env:
-          PSDATA_SQL_SERVER: psdata-azure.database.windows.net
-          PSDATA_SQL_DATABASE: psdata-azure
           PSDATA_SQL_USER: ${{ secrets.PSDATA_SQL_USER }}
           PSDATA_SQL_PASSWORD: ${{ secrets.PSDATA_SQL_PASSWORD }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
