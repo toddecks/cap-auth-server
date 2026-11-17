@@ -2,7 +2,7 @@
 const session=require('./visit-session');
 const LANGUAGES=['English','Spanish','French','Russian','Ukrainian','Portuguese','Polish','Arabic','Romanian','German','Italian','Turkish','Hindi','Punjabi','Chinese','Vietnamese'];
 let getClient=null;
-const health={mode:'sms-translation-v2-clerk-guard',translated:0,unchanged:0,error:null};
+const health={mode:'sms-translation-v3-visit-language',translated:0,unchanged:0,error:null};
 const known=new Map(),cache=new Map(),pending=new Map();
 function configure(provider){getClient=provider;}
 function protect(text){const tokens=[];return{text:text.replace(/https?:\/\/\S+|[\p{L}\d][\p{L}\d._/+\-]*\d[\p{L}\d._/+\-]*|\d+/gu,value=>{const key=`CSPTOKEN${tokens.length}X`;tokens.push({key,value});return key;}),restore(value){for(const token of tokens){if(!value.includes(token.key))throw Error('Translation omitted a protected reference.');value=value.replaceAll(token.key,token.value);}if(/CSPTOKEN\d+X/.test(value))throw Error('Invalid translated reference.');return value;}};}
@@ -21,7 +21,7 @@ async function detectIncoming(body,client){
  if(result.language==='English')health.unchanged++;else health.translated++;
  return{shipping_body:translated,original_language:result.language,translated_language:'English'};
 }
-function remember(c,patch,sentAt){if(known.size>5000)known.clear();const key=session.key(c),seen=Date.parse(sentAt)||Date.now();if(LANGUAGES.includes(patch.original_language)&&seen>=(known.get(key)?.seen||0))known.set(key,{language:patch.original_language,at:Date.now(),seen});}
+function remember(c,patch,sentAt){if(known.size>5000)known.clear();const key=session.key(c),seen=Date.parse(sentAt)||Date.now();if(c.session_started_at&&seen<session.start(c))return;if(LANGUAGES.includes(patch.original_language)&&seen>=(known.get(key)?.seen||0))known.set(key,{language:patch.original_language,at:Date.now(),seen});}
 async function languageFor(db,c){
  const key=session.key(c),saved=known.get(key);
  if(saved&&Date.now()-saved.at<600000)return saved.language;
