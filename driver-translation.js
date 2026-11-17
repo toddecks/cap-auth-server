@@ -17,7 +17,7 @@ async function translateMessage(message,language,client){
  return incoming?{shipping_body:text}:{shipping_body:source,translated_body:text,translated_language:language || 'English'};
 }
 function createWorker({db,getClient,now=()=>Date.now()}){
- const health={mode:'driver-translation-v3-sms-recent-history',state:'idle',lastChecked:null,error:null,translated:0};
+ const health={mode:'driver-translation-v4-sms-processing-status',state:'idle',lastChecked:null,error:null,translated:0};
  let busy=false,timer;const retryAt=new Map();
  async function result(query){const r=await query;if(r.error)throw r.error;return r.data;}
  async function tick(){
@@ -29,11 +29,13 @@ function createWorker({db,getClient,now=()=>Date.now()}){
    // Four history records per cycle keep new incoming translations first.
    const history=await result(db.from('driver_messages').select(columns).eq('direction','driver_to_shipping').is('translated_language',null).gte('sent_at',new Date(now()-86400000).toISOString()).order('sent_at',{ascending:false}).limit(4));
    const messages=[...new Map([...pendingMessages,...history].map(m=>[m.id,m])).values()];
+   health.lastBatch={pending:pendingMessages.length,history:history.length,sms:0,app:0,other:0};
    let next=0;
    await Promise.all(Array.from({length:Math.min(4,messages.length)},async()=>{while(next<messages.length){const m=messages[next++];
     if(retryAt.get(m.id)>now())continue;
     try{
      const c=await result(db.from('driver_conversations').select('id,channel,user_id,session_started_at').eq('id',m.conversation_id).maybeSingle());
+     health.lastBatch[c?.channel==='sms'?'sms':c?.channel==='app'?'app':'other']++;
      if(c?.channel==='sms'){
       // Incoming SMS language must be detected; its old English default is not evidence.
       if(m.direction==='driver_to_shipping'){
