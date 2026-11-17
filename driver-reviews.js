@@ -29,9 +29,10 @@ function createReviewWorker({ db, twilio, messagingServiceSid, publicBaseUrl, sc
           await checked(db.from('driver_review_requests').update({ status: 'pending', claimed_at: null }).eq('arrival_id',job.arrival_id));
           throw error;
         }
-        let sent;
+        let sent,delivery;
         try {
-          sent = await twilio.messages.create({ to: job.phone, body: REVIEW_BODY,
+          delivery=await require('./sms-translation').forConversation(db,job.conversation_id,REVIEW_BODY);
+          sent = await twilio.messages.create({ to: job.phone, body: delivery.body,
             messagingServiceSid, statusCallback: `${publicBaseUrl}/api/twilio/message-status` });
         } catch (error) {
           const rejected = error.status >= 400 && error.status < 500;
@@ -48,7 +49,7 @@ function createReviewWorker({ db, twilio, messagingServiceSid, publicBaseUrl, sc
           provider_message_id:sent.sid }).eq('arrival_id',job.arrival_id));
         await checked(db.from('driver_messages').update({ provider_message_id:sent.sid,
           provider_status:sent.status, delivery_status: ['delivered','sent'].includes(sent.status) ? sent.status : 'queued',
-          provider_status_updated_at:new Date().toISOString()
+          provider_status_updated_at:new Date().toISOString(),...delivery.patch
         }).eq('client_message_id',clientId));
         scheduleStatusSync(sent.sid);
       }

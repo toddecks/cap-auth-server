@@ -31,7 +31,7 @@ test('the live inbound SMS reply path checks the same hold before calling Twilio
  const fs=require('node:fs'),vm=require('node:vm');const source=fs.readFileSync(require.resolve('./server.js'),'utf8');
  const a=source.indexOf('const sendAutomatedSmsReply = async'),b=source.indexOf('\nconst MMS_MAX_BYTES',a);
  let paused=true;const sends=[],stored=[];
- const ctx={require:name=>{assert.equal(name,'./manual-reply-pause');return{load:async()=>paused}},driverSupabase:{from:()=>({insert:async row=>{stored.push(row);return{}}})},twilioClient:{messages:{create:async row=>{sends.push(row);return{sid:'SM-test',status:'sent'}}}},TWILIO_MESSAGING_SERVICE_SID:'test',TWILIO_PUBLIC_BASE_URL:'https://test.invalid',mapTwilioDeliveryStatus:s=>s,scheduleTwilioStatusSync:()=>{}};
+ const ctx={require:name=>{if(name==='./sms-translation')return{forConversation:async(_db,_id,body)=>({body,patch:{}})};assert.equal(name,'./manual-reply-pause');return{load:async()=>paused}},driverSupabase:{from:()=>({insert:async row=>{stored.push(row);return{}}})},twilioClient:{messages:{create:async row=>{sends.push(row);return{sid:'SM-test',status:'sent'}}}},TWILIO_MESSAGING_SERVICE_SID:'test',TWILIO_PUBLIC_BASE_URL:'https://test.invalid',mapTwilioDeliveryStatus:s=>s,scheduleTwilioStatusSync:()=>{}};
  vm.createContext(ctx);vm.runInContext(source.slice(a,b)+';globalThis.reply=sendAutomatedSmsReply;',ctx);
  await ctx.reply({phone:'+15555550100',conversationId:c.id,body:'Please TEXT: Drop Off, Pick Up, or Both'});
  assert.equal(sends.length,0);assert.equal(stored.length,0);

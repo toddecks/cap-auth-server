@@ -95,6 +95,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingPermanentDelete: permanentConversations.health,
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,
+    shippingSmsTranslation: {...require('./sms-translation').health,configured:Boolean(getOpenAIClient())},
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "ray-ppe-and-map-v2",
     shippingStaffCheckinMode: "coil-routing-v2",
@@ -1407,9 +1408,10 @@ const rememberSmsDriver = async (input) => {
 const sendAutomatedSmsReply = async ({ phone, conversationId, body, attachment = null, clientMessageId = null }) => {
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
   if(await require('./manual-reply-pause').load(driverSupabase,conversationId))return;
+  const delivery=await require('./sms-translation').forConversation(driverSupabase,conversationId,body);
   const sent = await twilioClient.messages.create({
     to: phone,
-    body,
+    body:delivery.body,
     ...(attachment?.mediaUrl ? {mediaUrl:[attachment.mediaUrl]} : {}),
     messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
     statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
@@ -1430,7 +1432,8 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body, attachment =
     provider_status: sent.status || null,
     provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
     provider_error_message: sent.errorMessage || null,
-    provider_status_updated_at: new Date().toISOString()
+    provider_status_updated_at: new Date().toISOString(),
+    ...delivery.patch
   });
   if (error) throw error;
   scheduleTwilioStatusSync(sent.sid);
@@ -1775,9 +1778,10 @@ app.post("/api/shipping/send-message", async (req, res) => {
     }
 
     try {
+      const delivery=await require('./sms-translation').prepareOutgoing(driverSupabase,conversation,body);
       const sent = await twilioClient.messages.create({
         to: conversation.sms_phone_e164,
-        body,
+        body:delivery.body,
         messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
         statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
       });
@@ -1790,7 +1794,8 @@ app.post("/api/shipping/send-message", async (req, res) => {
           provider_status: sent.status || null,
           provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
           provider_error_message: sent.errorMessage || null,
-          provider_status_updated_at: new Date().toISOString()
+          provider_status_updated_at: new Date().toISOString(),
+          ...delivery.patch
         })
         .eq("id", storedMessage.id);
       if (updateError) throw updateError;
@@ -1926,9 +1931,10 @@ app.post("/api/shipping/send-photo", async (req, res) => {
         .from("driver-paperwork")
         .createSignedUrl(attachmentPath, 60 * 60);
       if (signedError || !signedMedia?.signedUrl) throw signedError || new Error("Photo link could not be created.");
+      const delivery=await require('./sms-translation').prepareOutgoing(driverSupabase,conversation,body||'CSP Shipping sent a photo.');
       const sent = await twilioClient.messages.create({
         to: conversation.sms_phone_e164,
-        body: body || "CSP Shipping sent a photo.",
+        body:delivery.body,
         mediaUrl: [signedMedia.signedUrl],
         messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID,
         statusCallback: `${TWILIO_PUBLIC_BASE_URL}/api/twilio/message-status`
@@ -1942,7 +1948,8 @@ app.post("/api/shipping/send-photo", async (req, res) => {
           provider_status: sent.status || null,
           provider_error_code: sent.errorCode == null ? null : String(sent.errorCode),
           provider_error_message: sent.errorMessage || null,
-          provider_status_updated_at: new Date().toISOString()
+          provider_status_updated_at: new Date().toISOString(),
+          ...delivery.patch
         })
         .eq("id", storedMessage.id);
       if (updateError) throw updateError;
@@ -7347,6 +7354,7 @@ const driverReviewWorker = require("./driver-reviews").createReviewWorker({
 
 const releaseValidationWorker=require('./release-validation').createWorker({db:driverSupabase,chart:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync: scheduleTwilioStatusSync,normalize:normalizeShippingRelease,candidates:psReleaseCandidates});
 
+require('./sms-translation').configure(getOpenAIClient);
 const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
 
 const psDepartureWorker=require('./ps-departures').createWorker({db:driverSupabase,chart:chartSupabase});

@@ -18,8 +18,9 @@ async function sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,sched
   if(c.channel!=='sms')continue;
   try {
    if(!twilio||!messagingServiceSid)throw Error('Text messaging is not configured.');
-   const sent=await twilio.messages.create({to:c.sms_phone_e164,body,mediaUrl:[attachment.mediaUrl],messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
-   const result=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:['queued','sent','delivered','failed','undelivered'].includes(sent.status)?sent.status:'queued',provider_status_updated_at:new Date().toISOString()}).eq('id',data.id);
+   const delivery=await require('./sms-translation').prepareOutgoing(db,c,body);
+   const sent=await twilio.messages.create({to:c.sms_phone_e164,body:delivery.body,mediaUrl:[attachment.mediaUrl],messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
+   const result=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:['queued','sent','delivered','failed','undelivered'].includes(sent.status)?sent.status:'queued',provider_status_updated_at:new Date().toISOString(),...delivery.patch}).eq('id',data.id);
    if(result.error)throw result.error;
    scheduleStatusSync?.(sent.sid);
   }catch(error){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message||error).slice(0,500)}).eq('id',data.id);throw error;}

@@ -17,24 +17,34 @@ async function translateMessage(message,language,client){
  return incoming?{shipping_body:text}:{shipping_body:source,translated_body:text,translated_language:language || 'English'};
 }
 function createWorker({db,getClient,now=()=>Date.now()}){
- const health={mode:'driver-translation-v1',state:'idle',lastChecked:null,error:null,translated:0};
+ const health={mode:'driver-translation-v2-sms',state:'idle',lastChecked:null,error:null,translated:0};
  let busy=false,timer;const retryAt=new Map();
  async function result(query){const r=await query;if(r.error)throw r.error;return r.data;}
  async function tick(){
   if(busy||!db)return;busy=true;health.error=null;health.state='running';
   try{
    const messages=await result(db.from('driver_messages').select('id,conversation_id,body,original_body,original_language,direction').is('shipping_body',null).gte('sent_at',new Date(now()-7*86400000).toISOString()).order('id').limit(200));
-   for(const m of messages){
+   let next=0;
+   await Promise.all(Array.from({length:Math.min(4,messages.length)},async()=>{while(next<messages.length){const m=messages[next++];
     if(retryAt.get(m.id)>now())continue;
     try{
-     const c=await result(db.from('driver_conversations').select('channel,user_id').eq('id',m.conversation_id).maybeSingle());
+     const c=await result(db.from('driver_conversations').select('id,channel,user_id,session_started_at').eq('id',m.conversation_id).maybeSingle());
+     if(c?.channel==='sms'){
+      // Incoming SMS language must be detected; its old English default is not evidence.
+      if(m.direction==='driver_to_shipping'){
+       const patch=await require('./sms-translation').detectIncoming(m.original_body||m.body,getClient());
+       await result(db.from('driver_messages').update(patch).eq('id',m.id).eq('body',m.body).is('shipping_body',null));
+       require('./sms-translation').remember(c,patch,m.sent_at);retryAt.delete(m.id);health.translated++;
+      }else await result(db.from('driver_messages').update({shipping_body:m.body}).eq('id',m.id).is('shipping_body',null));
+      continue;
+     }
      if(!c || c.channel!=='app'){await result(db.from('driver_messages').update({shipping_body:m.body}).eq('id',m.id).is('shipping_body',null));continue;}
      const p=await result(db.from('driver_profiles').select('preferred_language').eq('user_id',c.user_id).maybeSingle());
      const patch=await translateMessage(m,p?.preferred_language || 'English',getClient());
      await result(db.from('driver_messages').update(patch).eq('id',m.id).eq('body',m.body).is('shipping_body',null));
      retryAt.delete(m.id);health.translated++;
     }catch(e){health.error=String(e.message||e);retryAt.set(m.id,now()+30000);console.error('Driver translation failed for message',m.id,health.error);}
-   }
+   }}));
    health.state=health.error?'error':'idle';
   }catch(e){health.state='error';health.error=String(e.message||e);}
   finally{busy=false;health.lastChecked=new Date(now()).toISOString();}

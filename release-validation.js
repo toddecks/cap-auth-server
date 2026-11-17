@@ -38,10 +38,11 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     if(r.error) throw r.error;
     if(c.channel !== 'sms') return;
     try {
-      const sent = await twilio.messages.create({to:c.sms_phone_e164,body,messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
+      const delivery=await require('./sms-translation').prepareOutgoing(db,c,body);
+      const sent = await twilio.messages.create({to:c.sms_phone_e164,body:delivery.body,messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
       await result(db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,
         delivery_status:sent.status === 'undelivered' ? 'failed' : (['queued','sent','delivered','failed'].includes(sent.status) ? sent.status : 'queued'),
-        provider_status_updated_at:new Date(now()).toISOString()}).eq('id',r.data.id));
+        provider_status_updated_at:new Date(now()).toISOString(),...delivery.patch}).eq('id',r.data.id));
       scheduleStatusSync(sent.sid);
     } catch(error) {
       await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:String(error.message || error).slice(0,500)}).eq('id',r.data.id);

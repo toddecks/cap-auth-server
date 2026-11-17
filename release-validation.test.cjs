@@ -330,3 +330,9 @@ test('after-hours notice does not cancel the official Check In one-minute remind
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Still waiting',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY,REMAIN]);
 });
+test('SMS reminder is translated before delivery while the clerk transcript keeps the English instructions',async()=>{
+ const translator=require('./sms-translation'),f=checkedFixture(),c=f.tables.driver_conversations[0];
+ translator.remember(c,{original_language:'Spanish'});
+ translator.configure(()=>({chat:{completions:{create:async()=>({choices:[{finish_reason:'stop',message:{content:'Permanezca en su camión. Un miembro del equipo de envíos estará con usted en breve.'}}]})}}}));
+ try{f.advance(60000);await f.worker.tick();assert.match(f.sends[0].body,/Permanezca/);const stored=f.tables.driver_messages.at(-1);assert.equal(stored.body,REMAIN);assert.equal(stored.shipping_body,REMAIN);assert.equal(stored.translated_body,f.sends[0].body);assert.equal(stored.translated_language,'Spanish');}finally{translator.configure(null);}
+});
