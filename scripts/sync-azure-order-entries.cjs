@@ -65,4 +65,8 @@ async function sync(env=process.env) {
   }
 }
 module.exports={config,normalize,readAzure,sync};
-if(require.main===module)sync().catch(error=>{console.error('Order-entry sync failed:',error.code||'SYNC_FAILED');process.exitCode=1;});
+if(require.main===module)sync().catch(error=>{
+  let detail=String(error.message||error.name||'Unknown error');
+  for(const key of ['PSDATA_SQL_PASSWORD','SUPABASE_SERVICE_ROLE_KEY'])if(process.env[key])detail=detail.split(process.env[key]).join('[redacted]');
+  console.error('Order-entry sync failed:',error.code||'SYNC_FAILED',detail.slice(0,400));process.exitCode=1;
+});
