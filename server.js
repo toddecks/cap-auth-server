@@ -308,6 +308,9 @@ const requireShiftReportAccess = requireRoleAccess(
 
 require("./sad-v2").register(app, {db:chartSupabase, getOpenAIClient, requireAccess:requireRoleAccess(["admin","alarm_logs"],"Alarm review access is required.","SAD v2")});
 
+app.get('/api/bi-records',
+  requireRoleAccess(['admin','production','shipping_overview','shipping_performance','receiving'],'BI report access is required.','BI Records'),
+  require('./bi-records').handler(chartSupabase));
 app.get('/api/order-entry-performance',
   requireRoleAccess(['admin','shipping_performance','shipping'],'Shipping Performance access is required.','Order-entry report'),
   require('./order-entry-performance').handler(chartSupabase));
