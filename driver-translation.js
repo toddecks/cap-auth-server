@@ -17,7 +17,7 @@ async function translateMessage(message,language,client){
  return incoming?{shipping_body:text}:{shipping_body:source,translated_body:text,translated_language:language || 'English'};
 }
 function createWorker({db,getClient,now=()=>Date.now()}){
- const health={mode:'driver-translation-v4-sms-processing-status',state:'idle',lastChecked:null,error:null,translated:0};
+ const health={mode:'driver-translation-v5-provider-diagnostics',state:'idle',lastChecked:null,error:null,translated:0};
  let busy=false,timer;const retryAt=new Map();
  async function result(query){const r=await query;if(r.error)throw r.error;return r.data;}
  async function tick(){
@@ -52,7 +52,7 @@ function createWorker({db,getClient,now=()=>Date.now()}){
      if(m.direction==='driver_to_shipping')patch.translated_language='English';
      await result(db.from('driver_messages').update(patch).eq('id',m.id).eq('body',m.body).is('shipping_body',null));
      retryAt.delete(m.id);health.translated++;
-    }catch(e){health.error=String(e.message||e);retryAt.set(m.id,now()+30000);console.error('Driver translation failed for message',m.id,health.error);}
+    }catch(e){health.error=String(e.message||e);health.lastFailure={at:new Date(now()).toISOString(),code:e.code||e.status||e.name,message:health.error.replace(/sk-[A-Za-z0-9_-]+/g,'[redacted]').slice(0,300)};retryAt.set(m.id,now()+30000);console.error('Driver translation failed for message',m.id,health.error);}
    }}));
    health.state=health.error?'error':'idle';
   }catch(e){health.state='error';health.error=String(e.message||e);}
