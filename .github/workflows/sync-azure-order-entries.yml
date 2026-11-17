@@ -1,0 +1,30 @@
+name: Sync Azure Order Entries
+on:
+  schedule:
+    # Daily at 5:20 AM EST / 6:20 AM EDT, before the morning reports.
+    - cron: '20 10 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync-azure-order-entries
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/sync-azure-order-entries.cjs
+        env:
+          PSDATA_SQL_SERVER: psdata-azure.database.windows.net
+          PSDATA_SQL_DATABASE: psdata-azure
+          PSDATA_SQL_USER: ${{ secrets.PSDATA_SQL_USER }}
+          PSDATA_SQL_PASSWORD: ${{ secrets.PSDATA_SQL_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

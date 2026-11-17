@@ -308,6 +308,10 @@ const requireShiftReportAccess = requireRoleAccess(
 
 require("./sad-v2").register(app, {db:chartSupabase, getOpenAIClient, requireAccess:requireRoleAccess(["admin","alarm_logs"],"Alarm review access is required.","SAD v2")});
 
+app.get('/api/order-entry-performance',
+  requireRoleAccess(['admin','shipping_performance','shipping'],'Shipping Performance access is required.','Order-entry report'),
+  require('./order-entry-performance').handler(chartSupabase));
+
 const HR_INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 const normalizeInvitationCode = (value) =>
