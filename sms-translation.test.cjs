@@ -39,3 +39,11 @@ test('outgoing provider failure sends English with an explicit truthful fallback
  const c={id:'outgoing-failure'};translation.remember(c,{original_language:'French'});translation.configure(()=>null);
  try{const result=await translation.prepareOutgoing({},c,'Please stay RIGHT.');assert.equal(result.body,'Please stay RIGHT.');assert.equal(result.patch.translated_language,'English');assert.match(result.patch.provider_error_message,/sent in English/);}finally{translation.configure(null);}
 });
+test('recent SMS copied verbatim by the old translator is translated once without changing the original or resending messages',async()=>{
+ const now=Date.parse('2026-11-17T17:00:00Z');let calls=0;
+ const tables={driver_messages:[{id:'history-1',conversation_id:'history-c',direction:'driver_to_shipping',body:'Necesito ayuda',original_body:'Necesito ayuda',original_language:'English',shipping_body:'Necesito ayuda',translated_language:null,sent_at:'2026-11-17T16:59:00Z'}],driver_conversations:[{id:'history-c',channel:'sms',session_started_at:'2026-11-17T12:00:00Z'}]};
+ const db={from(table){assert(['driver_messages','driver_conversations'].includes(table));let filters=[],patch=null,one=false,limit=Infinity;const q={select(){return q},is(k,v){filters.push(r=>(r[k]??null)===v);return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},limit(n){limit=n;return q},maybeSingle(){one=true;return q},update(value){patch=value;return q},then(resolve){const rows=tables[table].filter(r=>filters.every(f=>f(r))).slice(0,limit);if(patch)rows.forEach(r=>Object.assign(r,patch));return Promise.resolve({data:one?rows[0]:rows}).then(resolve)}};return q;}};
+ const client=provider(()=>{calls++;return JSON.stringify({language:'Spanish',confidence:'high',translation:'I need help'});});
+ const worker=require('./driver-translation').createWorker({db,getClient:()=>client,now:()=>now});
+ await worker.tick();await worker.tick();assert.equal(worker.health.error,null);assert.equal(calls,1);assert.equal(tables.driver_messages[0].body,'Necesito ayuda');assert.equal(tables.driver_messages[0].shipping_body,'I need help');assert.equal(tables.driver_messages[0].original_language,'Spanish');assert.equal(tables.driver_messages.length,1);
+});
