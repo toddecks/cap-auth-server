@@ -1,0 +1,3 @@
+[functions.order-entry-ingest]
+verify_jwt = false
+# Function authenticates x-csp-ingest-key against a SHA-256 digest before parsing data.
