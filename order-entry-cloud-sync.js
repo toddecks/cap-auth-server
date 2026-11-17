@@ -6,7 +6,7 @@ function handler({url,key,run=sync}){
  let busy=false;
  return async(req,res)=>{
   const supplied=String(req.get('x-csp-sync-key')||'');
-  if(!key||supplied.length!==64||!timingSafeEqual(Buffer.from(supplied),Buffer.from(jobKey(key))))return res.status(401).json({error:'Sync authentication required.'});
+  if(!key||!/^[0-9a-f]{64}$/.test(supplied)||!timingSafeEqual(Buffer.from(supplied),Buffer.from(jobKey(key))))return res.status(401).json({error:'Sync authentication required.'});
   if(busy)return res.status(409).json({error:'An order-entry refresh is already running.'});
   const user=req.body?.sqlUser,password=req.body?.sqlPassword;
   if(typeof user!=='string'||!user||user.length>128||typeof password!=='string'||!password||password.length>1024)return res.status(400).json({error:'SQL credentials are required.'});

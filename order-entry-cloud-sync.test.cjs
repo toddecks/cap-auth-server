@@ -3,7 +3,7 @@ const {handler,jobKey}=require('./order-entry-cloud-sync');
 const response=()=>({statusCode:200,status(n){this.statusCode=n;return this;},json(v){this.body=v;return this;}});
 const request=(token,body={sqlUser:'test-user',sqlPassword:'test-password'})=>({get:()=>token,body});
 test('rejects unauthorized refreshes before opening a database connection',async()=>{
- let called=false;const res=response();await handler({url:'https://test',key:'secret',run:async()=>{called=true;}})(request('bad'),res);
+ let called=false;const res=response();await handler({url:'https://test',key:'secret',run:async()=>{called=true;}})(request('é'.repeat(64)),res);
  assert.equal(res.statusCode,401);assert.equal(called,false);
 });
 test('scheduled refresh uses the fixed Azure destination and returns counts only',async()=>{
