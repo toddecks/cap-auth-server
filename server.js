@@ -1409,6 +1409,7 @@ const sendAutomatedSmsReply = async ({ phone, conversationId, body, attachment =
   if (!body || !twilioClient || !TWILIO_MESSAGING_SERVICE_SID) return;
   if(await require('./manual-reply-pause').load(driverSupabase,conversationId))return;
   const delivery=await require('./sms-translation').forConversation(driverSupabase,conversationId,body);
+  if(await require('./manual-reply-pause').load(driverSupabase,conversationId))return;
   const sent = await twilioClient.messages.create({
     to: phone,
     body:delivery.body,

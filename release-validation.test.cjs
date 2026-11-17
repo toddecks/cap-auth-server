@@ -336,3 +336,8 @@ test('SMS reminder is translated before delivery while the clerk transcript keep
  translator.configure(()=>({chat:{completions:{create:async()=>({choices:[{finish_reason:'stop',message:{content:'Permanezca en su camión. Un miembro del equipo de envíos estará con usted en breve.'}}]})}}}));
  try{f.advance(60000);await f.worker.tick();assert.match(f.sends[0].body,/Permanezca/);const stored=f.tables.driver_messages.at(-1);assert.equal(stored.body,REMAIN);assert.equal(stored.shipping_body,REMAIN);assert.equal(stored.translated_body,f.sends[0].body);assert.equal(stored.translated_language,'Spanish');}finally{translator.configure(null);}
 });
+test('a clerk starting a reply while translation is pending prevents the queued automated SMS from being sent',async()=>{
+ const translator=require('./sms-translation'),original=translator.prepareOutgoing,f=fixture();
+ translator.prepareOutgoing=async(_db,c,body)=>{f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent',body:'I will help you.'});return{body,patch:{}};};
+ try{await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.find(m=>m.client_message_id==='release-wait:verify:visit-1').delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
+});
