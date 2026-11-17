@@ -55,6 +55,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
+    biRecordsAccessMode: "any-bi-dashboard-all-records-v1",
     progressUpdatesMode: "confirmed-segment-v1",
     fallFestivalMode: "signup-v2",
     formsHubMode: "recipient-access-v2",
