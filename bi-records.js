@@ -1,6 +1,7 @@
 'use strict';
-const permissions={shipping:['shipping_overview','shipping_performance'],production:['production'],appointments:['shipping_performance','receiving'],orders:['shipping_performance'],receiving:['receiving']};
-function allowedMetrics(roles){return Object.entries(permissions).filter(([,required])=>roles.includes('admin')||required.some(role=>roles.includes(role))).map(([metric])=>metric);}
+const dashboardRoles=['admin','production','shipping_overview','shipping_performance','receiving','inventory','customer_summary','bonus_report','iso','alarm_logs','website_leads','quote_calculator','work_order_pricing','todd_requests'];
+const metrics=['shipping','production','appointments','orders','receiving'];
+function allowedMetrics(roles){return dashboardRoles.some(role=>roles.includes(role))?[...metrics]:[];}
 function handler(db){return async(req,res)=>{
  const period=req.query.period||'day',scope=req.query.scope||'company',rawYear=req.query.year;
  const year=rawYear==null||rawYear==='all'?null:Number(rawYear);
@@ -12,4 +13,4 @@ function handler(db){return async(req,res)=>{
   res.set('Cache-Control','private, no-store');return res.json({...data,allowedMetrics:metrics});
  }catch(e){console.error('BI records failed:',e.code||'REPORT_FAILED');return res.status(503).json({error:'Unable to load records. Please try again.'});}
 };}
-module.exports={handler,allowedMetrics};
+module.exports={handler,allowedMetrics,dashboardRoles};
