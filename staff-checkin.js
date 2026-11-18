@@ -9,7 +9,7 @@ function createHandler(deps) {
   const id=String(req.body?.conversationId||'');
   if(!db)return res.status(503).json({error:'Check-in is unavailable.'});
   if(!token)return res.status(401).json({error:'Sign in to Shipping.'});
-  if(!/^[0-9a-f-]{36}$/i.test(id)||req.body?.releaseVerified!==true)return res.status(400).json({error:'Verify the release number before selecting Check In.'});
+  if(!/^[0-9a-f-]{36}$/i.test(id))return res.status(400).json({error:'Choose a valid conversation before selecting Check In.'});
   try {
    const {data:auth,error:authError}=await db.auth.getUser(token);
    const staff=auth?.user;
@@ -21,7 +21,7 @@ function createHandler(deps) {
    if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
    let preparedInstructions;
-   try {preparedInstructions=await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor);}
+   try {preparedInstructions=await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor,deps.routingEnabled===true);}
    catch(error){return res.status(409).json({error:error.message,code:'LOADING_DOOR_REQUIRED'});}
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){

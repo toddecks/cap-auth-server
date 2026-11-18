@@ -92,7 +92,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",
-    shippingCoilRoutingMode: "ps-confirmed-door-first-v2",
+    shippingCoilRoutingMode: "paused-generic-checkin-v3",
     shippingPermanentDelete: permanentConversations.health,
     shippingReleaseValidation: releaseValidationWorker.health,
     shippingPsDepartures: psDepartureWorker.health,

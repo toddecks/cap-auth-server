@@ -1,5 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {pickupInstructions,COIL_CHECKIN}=require('./pickup-directions');
+const {pickupInstructions:routeInstructions,COIL_CHECKIN}=require('./pickup-directions');
+const pickupInstructions=(db,c,now,door)=>routeInstructions(db,c,now,door,true);
 const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const c={release_number:'968751',facility_id:'csp-toledo-main'};
 const row={poRel:'968751/510',scheduleDate:'2026-10-09',scheduleTime:'11:00:00',location:'PROSPY',unloadingDoor:'Coil'};
@@ -17,3 +18,5 @@ test('COIL first message exactly includes the full requested PPE wording',()=>as
 
 test('confirmed PS COIL cannot be overridden by manual OTHER choice',async()=>assert.equal(await pickupInstructions(db([row]),c,new Date(),'OTHER'),COIL_CHECKIN));
 test('confirmed PS BD retains standard directions despite manual COIL choice',async()=>assert.equal(await pickupInstructions(db([{...row,unloadingDoor:'BD'}]),c,new Date(),'COIL'),PICKUP_CHECKIN));
+
+test('outage default never looks up or requires a loading door',async()=>{const text=await routeInstructions({from(){throw Error('must not query PS')}},c);assert.match(text,/successfully checked in/);assert.doesNotMatch(text,/LEFT|RIGHT/);});
