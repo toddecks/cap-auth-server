@@ -1,6 +1,6 @@
 'use strict';
-const dashboardRoles=['admin','production','shipping_overview','shipping_performance','receiving','inventory','customer_summary','bonus_report','iso','alarm_logs','website_leads','quote_calculator','work_order_pricing','todd_requests'];
-const metrics=['shipping','production','appointments','orders','receiving'];
+const dashboardRoles=['admin','production','shipping_overview','shipping_performance','receiving'];
+const metrics=['shipping','production','shift_reports','appointments','orders','receiving'];
 function allowedMetrics(roles){return dashboardRoles.some(role=>roles.includes(role))?[...metrics]:[];}
 function handler(db){return async(req,res)=>{
  const period=req.query.period||'day',scope=req.query.scope||'company',rawYear=req.query.year;

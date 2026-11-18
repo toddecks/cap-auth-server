@@ -1,9 +1,9 @@
 const test=require('node:test');const assert=require('node:assert/strict');
 const {handler,allowedMetrics,dashboardRoles}=require('./bi-records');
 const response=()=>({statusCode:200,status(n){this.statusCode=n;return this;},set(){return this;},json(v){this.body=v;return this;}});
-test('every BI dashboard role can see all records',()=>{
- for(const role of dashboardRoles)assert.deepEqual(allowedMetrics([role]),['shipping','production','appointments','orders','receiving']);
- for(const role of ['shipping_app','shipping','employee','pickem'])assert.deepEqual(allowedMetrics([role]),[]);
+test('Production, Shipping, Receiving and Admin can see all records',()=>{
+ for(const role of dashboardRoles)assert.deepEqual(allowedMetrics([role]),['shipping','production','shift_reports','appointments','orders','receiving']);
+ for(const role of ['inventory','customer_summary','bonus_report','iso','alarm_logs','website_leads','quote_calculator','work_order_pricing','todd_requests','shipping_app','shipping','employee','pickem'])assert.deepEqual(allowedMetrics([role]),[]);
 });
 test('rejects bad filters and unauthorized roles before accessing data',async()=>{
  for(const req of [{query:{period:'week'},authRoles:['admin']},{query:{year:'2026.5'},authRoles:['admin']},{query:{},authRoles:[]}]){
