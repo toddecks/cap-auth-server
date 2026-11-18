@@ -12,7 +12,7 @@ function fixture(channel='sms') {
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
    rows=rows.slice(start,end+1);return Promise.resolve({data:q.singleRow?(rows[0]||null):rows,error:null}).then(resolve,reject);
   }catch(e){return Promise.reject(e).then(resolve,reject)}}};return q;}};
- const options={db,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
+ const options={db,releaseValidationEnabled:true,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
  return {tables,sends,checkouts,options,worker:createWorker(options),advance(ms){clock+=ms}};
 }
 test('exact initial reply and three- and five-minute follow-ups, persistent across restart',async()=>{
@@ -340,4 +340,18 @@ test('a clerk starting a reply while translation is pending prevents the queued 
  const translator=require('./sms-translation'),original=translator.prepareOutgoing,f=fixture();
  translator.prepareOutgoing=async(_db,c,body)=>{f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent',body:'I will help you.'});return{body,patch:{}};};
  try{await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.find(m=>m.client_message_id==='release-wait:verify:visit-1').delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
+});
+
+for(const channel of ['sms','app'])test(`PS outage default uses staff review for ${channel} without validating release`,async()=>{
+ const f=fixture(channel);delete f.options.releaseValidationEnabled;
+ f.advance(Date.parse('2026-11-18T15:00:00Z')-f.options.now());
+ const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),release_number:'969737'});
+ f.options.chart={from(){throw Error('stale catalog must not be queried')}};
+ f.tables.driver_messages.push({id:'outage-in',conversation_id:c.id,direction:'driver_to_shipping',body:'969737',sent_at:c.created_at});
+ const worker=createWorker(f.options);await worker.tick();await createWorker(f.options).tick();
+ assert.equal(worker.health.releaseValidationEnabled,false);assert.equal(worker.health.error,null);
+ const replies=f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver');
+ assert.equal(replies.length,1);assert.equal(replies[0].body,require('./release-attempts').ACCEPTED);
+ assert.match(replies[0].client_message_id,/release-wait:manual-/);
+ assert.equal(f.tables.shipping_staff_checkins.length,0,'staff still controls check-in');
 });

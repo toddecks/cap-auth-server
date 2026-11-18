@@ -65,3 +65,12 @@ test('obsolete clerk verification cannot override the catalog or pause correctio
  const run=()=>processAttempts({c,messages,pickupAt:Date.parse('2026-11-06T16:00:00Z'),verifiedThrough:{verified_at:'2026-11-06T16:01:00Z',release_number:'CB7201P1-2/7'},lookup:async()=> 'invalid',send:async(c,kind,body)=>sent.push(body),onUnmatched:async(c,m,r)=>held.push(r)});
  assert.equal((await run()).state,'invalid');assert.deepEqual(sent,[INVALID[0]]);assert.deepEqual(held,[]);
 });
+
+test('PS outage mode acknowledges newest release without catalog lookup or invalid escalation',async()=>{
+ const f=fixture();f.add('969737');await f.run(async()=> 'invalid');
+ const run=()=>processAttempts({c:f.c,messages:f.messages,pickupAt:ENABLED_AT,validationEnabled:false,lookup:async()=>{throw Error('must not query stale feed')},send:async(_,kind,body)=>f.sent.push({kind,body})});
+ assert.equal((await run()).state,'manual');assert.equal(f.sent.at(-1).body,ACCEPTED);assert.match(f.sent.at(-1).kind,/^manual-/);
+ await run();assert.equal(f.sent.length,2,'restart does not duplicate acknowledgement');
+ f.add('969738');assert.equal((await run()).state,'manual');assert.equal(f.sent.at(-1).body,ACCEPTED);
+ assert.equal(f.sent.filter(m=>INVALID.includes(m.body)).length,1,'no additional invalid responses while paused');
+});

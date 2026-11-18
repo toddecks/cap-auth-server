@@ -30,9 +30,22 @@ async function lookupRelease(chart,release,c,at){
  const match=doorMatches(rows,[release],date)[key+':'+location];
  return !match?'invalid':match.status==='ambiguous'?'ambiguous':'matched';
 }
-async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease}){
+async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease,validationEnabled=true}){
  const key=session.key(c);
  const marker=(kind,id)=>`release-wait:${kind}-${id}:${key}`;
+ // Temporary PS outage mode: record receipt for staff review without querying
+ // stale appointments or claiming that the release matched a PS record.
+ if(!validationEnabled){
+  const attempts=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
+  const latest=attempts.at(-1);
+  if(!latest)return {state:null,initial:null};
+  const prior=messages.find(m=>m.client_message_id===marker('manual',latest.id)||m.client_message_id===marker('matched',latest.id));
+  if(prior)return {state:'manual',initial:prior};
+  await send(c,`manual-${latest.id}`,ACCEPTED);
+  const initial={client_message_id:marker('manual',latest.id),direction:'shipping_to_driver',sent_at:new Date(now()).toISOString(),delivery_status:'sent',body:ACCEPTED};
+  messages.push(initial);
+  return {state:'manual',initial};
+ }
  const outcomes=messages.filter(m=>['invalid','matched','ambiguous'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at));
  let count=0,state=null,initial=null;
  for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}

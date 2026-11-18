@@ -2,6 +2,8 @@
 
 // This worker acknowledges receipt only. Release verification belongs to Shipping.
 const session=require('./visit-session');
+// Restore to true after the PS shipping feed is repaired.
+const RELEASE_VALIDATION_ENABLED = false;
 const VERIFY = require('./driver-visit-flow').PICKUP_PROMPT;
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
@@ -20,8 +22,8 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v24-after-hours-conversation',state:'idle',lastChecked:null,lastIngest:null,error:null};
+function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
+  const health = {mode:'pickup-followups-v25-manual-release-review',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -109,10 +111,10 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     const verificationAt=c.channel==='sms'&&c.visit_type==='pickup'?session.start(c):pickupAt;
-    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt:verificationAt,send,now});
-    if(c.channel==='app'&&verification.state==='matched') {
-      const accepted=messages.filter(m=>m.client_message_id?.startsWith('release-wait:matched-')).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
-      const attempt=accepted&&messages.find(m=>accepted.client_message_id===`release-wait:matched-${m.id}:${session.key(c)}`);
+    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt:verificationAt,send,now,validationEnabled:releaseValidationEnabled});
+    if(c.channel==='app'&&['matched','manual'].includes(verification.state)) {
+      const accepted=messages.filter(m=>['matched','manual'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
+      const attempt=accepted&&messages.find(m=>['matched','manual'].some(kind=>accepted.client_message_id===`release-wait:${kind}-${m.id}:${session.key(c)}`));
       const release=attempt&&require('./release-attempts').releaseFromMessage(attempt.body);
       if(release&&c.release_number!==release) {
         await result(db.from('driver_conversations').update({release_number:release}).eq('id',c.id).eq('status','open'));
@@ -120,7 +122,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       }
     }
     if(verification.state==='invalid'||verification.state==='ambiguous')return;
-    if(c.channel==='sms'&&verification.state==='matched'){
+    if(c.channel==='sms'&&['matched','manual'].includes(verification.state)){
       const contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
       const missing=contact&&require('./pickup-detail-prompt').missingPrompt(contact);
       if(missing){
