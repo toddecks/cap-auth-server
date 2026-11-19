@@ -22,7 +22,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v26-first-release-validation',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v27-release-carrier',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -122,7 +122,16 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     }
     if(verification.state==='invalid'||verification.state==='ambiguous')return;
     if(c.channel==='sms'&&['matched','manual'].includes(verification.state)){
-      const contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
+      let contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
+      if(contact&&verification.state==='matched'&&!require('./driver-identity').cleanIdentity(contact.driver_company)){
+        const carrier=await require('./release-carrier').carrierFromRelease(chart,c,contact,now());
+        if(carrier){
+          const updatedAt=new Date(now()).toISOString();
+          await result(db.from('driver_sms_contacts').update({...carrier,updated_at:updatedAt}).eq('phone_e164',c.sms_phone_e164));
+          await result(db.from('driver_sms_arrivals').update({driver_company:carrier.driver_company,...(carrier.full_name?{driver_name:carrier.full_name}:{}),updated_at:updatedAt}).eq('conversation_id',c.id).is('departed_at',null));
+          contact={...contact,...carrier};
+        }
+      }
       const missing=contact&&require('./pickup-detail-prompt').missingPrompt(contact);
       if(missing){
         const kind='details-'+require('crypto').createHash('sha256').update(missing).digest('hex').slice(0,12);

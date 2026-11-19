@@ -3,10 +3,10 @@ const assert=require('node:assert/strict');
 const {createWorker,VERIFY,ASSIST,SOON,CLOSED,REMAIN,officeClosed}=require('./release-validation');
 function fixture(channel='sms') {
  let clock=Date.parse('2026-10-01T17:00:00Z');
- const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],driver_sms_contacts:[],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
+ const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],driver_sms_contacts:[],driver_sms_arrivals:[],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
-  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
+  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},is(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
    if(op==='insert'){if(tables[table].some(r=>r.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve,reject);const row={...value,id:tables[table].length+1};tables[table].push(row);rows=[row];}
    if(op==='upsert'){let existing=tables[table].find(r=>r.conversation_id===value.conversation_id);if(existing)Object.assign(existing,value);else tables[table].push(value);rows=[existing||value];}
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
@@ -359,4 +359,19 @@ for(const channel of ['sms','app'])test(`Explicit PS outage mode uses staff revi
 test('release validation is enabled by default after shipping feed recovery',()=>{
  const f=fixture();delete f.options.releaseValidationEnabled;
  assert.equal(createWorker(f.options).health.releaseValidationEnabled,true);
+});
+
+test('matched release supplies missing API carrier without asking the driver again',async()=>{
+ const f=fixture();f.advance(Date.parse('2026-11-19T13:00:00Z')-f.options.now());
+ const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),release_number:'72967',facility_id:'csp-toledo-main'});
+ f.tables.driver_sms_contacts.push({phone_e164:c.sms_phone_e164,full_name:'Josue ace Doran',driver_company:'',last_release_number:'72967'});
+ f.tables.driver_sms_arrivals.push({conversation_id:c.id,departed_at:null,driver_name:'Josue ace Doran',driver_company:''});
+ f.tables.driver_messages.push({id:'carrier-in',conversation_id:c.id,direction:'driver_to_shipping',body:'Josue 72967 ace Doran',sent_at:c.created_at});
+ f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72967',scheduleDate:'2026-11-19',scheduleTime:'10:00:00',location:'PROSPY',unloadingDoor:'BD',carrierName:'Ace Doran'}]})};return q}};
+ const worker=createWorker(f.options);await worker.tick();
+ assert.equal(worker.health.error,null);
+ assert.equal(f.tables.driver_sms_contacts[0].driver_company,'Ace Doran');assert.equal(f.tables.driver_sms_contacts[0].full_name,'Josue');
+ assert.equal(f.tables.driver_sms_arrivals[0].driver_company,'Ace Doran');
+ assert.equal(f.tables.driver_messages.some(m=>/Please send.*carrier name/.test(m.body)),false);
+ assert.equal(f.tables.shipping_staff_checkins.length,0);
 });
