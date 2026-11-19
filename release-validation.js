@@ -22,7 +22,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v28-office-notice-stops-flow',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v28-office-notice-stops-flow',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -188,7 +188,7 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
         const rows = await result(db.from('driver_conversations').select('id').eq('status','open').order('created_at').range(offset,offset+99));
         // Bounded parallelism keeps one slow driver lookup from delaying others.
         let next=0;
-        await Promise.all(Array.from({length:Math.min(8,rows.length)},async()=>{
+        await Promise.all(Array.from({length:Math.min(4,rows.length)},async()=>{
           while(next<rows.length){const row=rows[next++];
             try {await processConversation(row.id);}
             catch(error){health.error=String(error.message||error);console.error('Release wait reply failed:',health.error);}
@@ -200,6 +200,6 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
     } catch(error) {health.state='error';health.error=String(error.message || error);console.error('Release wait worker failed:',health.error);}
     finally {health.lastChecked=new Date(now()).toISOString();running=false;}
   }
-  return {health,tick,respondAfterHours,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),1000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
+  return {health,tick,respondAfterHours,start(){if(timer)return;void tick();timer=setInterval(()=>void tick(),5000);timer.unref?.();},stop(){clearInterval(timer);timer=null;}};
 }
 module.exports = {createWorker,VERIFY,ASSIST,WAIT_MS,ASSIST_MS,SOON,CLOSED,REMAIN,COIL_REMAIN,officeClosed,AUTOMATION_ENABLED_AT,validPickup};
