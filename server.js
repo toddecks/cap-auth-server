@@ -88,7 +88,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "multiload-lines-v6",
-    shippingAfterHoursReplyMode: "shared-early-close-v2",
+    shippingAfterHoursReplyMode: "shared-early-close-v3-6pm-reset",
     shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",

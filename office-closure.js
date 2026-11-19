@@ -1,7 +1,7 @@
 'use strict';
 const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'});
 function periodDay(now){const p=Object.fromEntries(formatter.formatToParts(new Date(now)).map(x=>[x.type,x.value]));if(Number(p.hour)<6)return periodDay(now-6*3600000);return `${p.year}-${p.month}-${p.day}`;}
-function active(override,now){return Boolean(override?.closed_on===periodDay(now)&&Date.parse(override.activated_at)<=now);}
+function active(override,now){const hour=Number(formatter.formatToParts(new Date(now)).find(p=>p.type==='hour').value);return Boolean(hour>=6&&hour<18&&override?.closed_on===periodDay(now)&&Date.parse(override.activated_at)<=now);}
 function createStore({db,auth,now=Date.now}){
  let cached=null,loadedAt=-Infinity;
  async function load(){if(now()-loadedAt<3000)return cached;const r=await db.from('shipping_office_override').select('closed_on,activated_at').eq('id',1).maybeSingle();if(r.error)throw r.error;cached=r.data;loadedAt=now();return cached;}
