@@ -9,6 +9,10 @@ function closedPeriod(timestamp,override){
  const day=hour<6?parts(timestamp-12*3600000):p;
  return`${day.year}-${day.month}-${day.day}`;
 }
+function hasNotice(c,messages){
+ return messages.some(m=>m.direction==='shipping_to_driver'&&Date.parse(m.sent_at)>=session.start(c)
+  &&(/^release-wait:(?:after-hours-|closed:)/.test(m.client_message_id||'')||/^Our shipping office is (?:currently|now) closed\./.test(m.body||'')));
+}
 function plan(c,messages,now,override){
  const period=closedPeriod(now,override);
  if(!period||c.status!=='open'||c.session_ended_at)return null;
@@ -20,4 +24,4 @@ function plan(c,messages,now,override){
  if(!alreadySent&&now-Date.parse(inbound.sent_at)>5*60000)return null;
  return{kind,body:BODY,send:!alreadySent};
 }
-module.exports={BODY,closedPeriod,plan};
+module.exports={BODY,closedPeriod,plan,hasNotice};

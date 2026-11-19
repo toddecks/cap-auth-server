@@ -22,12 +22,12 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v27-release-carrier',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v28-office-notice-stops-flow',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
   async function send(c, kind, body, afterHours=false) {
-    if(!afterHours&&await require('./manual-reply-pause').load(db,c.id))return;
+    if(!afterHours&&(require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride())||await require('./manual-reply-pause').load(db,c.id)))return;
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
     const r = await db.from('driver_messages').insert({
       client_message_id:`release-wait:${kind}:${session.key(c)}`, conversation_id:c.id,
@@ -40,7 +40,7 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
     if(c.channel !== 'sms') return;
     try {
       const delivery=await require('./sms-translation').prepareOutgoing(db,c,body);
-      if(!afterHours&&await require('./manual-reply-pause').load(db,c.id)){
+      if(!afterHours&&(require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride())||await require('./manual-reply-pause').load(db,c.id))){
         await result(db.from('driver_messages').update({delivery_status:'failed',provider_error_message:'Automatic reply paused because a clerk took over.'}).eq('id',r.data.id));
         return;
       }
@@ -63,10 +63,19 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
       result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
     ]);
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
-    const afterHours=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
+    const override=await getOfficeOverride();
+    const afterHours=require('./after-hours-reply').plan(c,messages,now(),override);
     if(afterHours){
       if(afterHours.send)await send(c,afterHours.kind,afterHours.body,true);
-      if(!session.currentCheckin(c,checked))return;
+      return;
+    }
+    if(require('./after-hours-reply').hasNotice(c,messages))return;
+    if(require('./after-hours-reply').closedPeriod(now(),override)){
+      // Preserve the ordinary initial night-arrival notice; an early override
+      // must not broadcast to visits without a new incoming message.
+      if(!require('./office-closure').active(override,now())&&!messages.length&&validPickup(c)&&!session.currentCheckin(c,checked)&&session.start(c)>=Date.parse(ENABLED_AT)&&now()-session.start(c)<24*3600000)
+        await send(c,'closed',CLOSED,true);
+      return;
     }
     if(require('./manual-reply-pause').paused(c,messages,checked))return;
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
@@ -143,7 +152,7 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
     if(!initial){
-      if(officeClosed(pickupAt))return send(c,'closed',CLOSED);
+      if(officeClosed(pickupAt))return send(c,'closed',CLOSED,true);
       let prompt=VERIFY;
       if(c.channel==='sms'){
         const contact=await result(db.from('driver_sms_contacts').select('full_name,driver_company,last_release_number').eq('phone_e164',c.sms_phone_e164).maybeSingle());
@@ -163,6 +172,7 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
     const c=await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c||c.status!=='open'||c.session_ended_at)return false;
     const messages=await result(db.from('driver_messages').select('client_message_id,direction,sent_at,body').eq('conversation_id',id));
+    if(require('./after-hours-reply').hasNotice(c,messages))return true;
     const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
     if(!reply)return false;
     if(reply.send)await send(c,reply.kind,reply.body,true);

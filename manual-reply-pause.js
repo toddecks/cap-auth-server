@@ -10,6 +10,7 @@ function begin(c,now=Date.now()) {
 function clear(c){drafts.delete(session.key(c));}
 function paused(c,messages=[],checked){
  if(!c||c.status!=='open'||c.session_ended_at)return false;
+ if(require('./after-hours-reply').hasNotice(c,messages))return true;
  if(session.currentCheckin(c,checked))return false;
  return drafts.has(session.key(c))||messages.some(m=>m.direction==='shipping_to_driver'&&m.sender_user_id
   &&(!c.session_started_at||Date.parse(m.sent_at)>=session.start(c))
@@ -22,7 +23,7 @@ async function load(db,id){
  if(!c||c.status!=='open'||c.session_ended_at)return false;
  const [checked,messages]=await Promise.all([
   query(db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle()),
-  query(db.from('driver_messages').select('sender_user_id,direction,sent_at,delivery_status,client_message_id').eq('conversation_id',id))
+  query(db.from('driver_messages').select('sender_user_id,direction,sent_at,delivery_status,client_message_id,body').eq('conversation_id',id))
  ]);
  return paused(c,messages||[],checked);
 }

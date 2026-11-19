@@ -325,10 +325,10 @@ test('app after-hours follow-up records the same notice without sending an SMS',
  const f=fixture('app');f.advance(6*3600000);f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Hello?',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).body,require('./after-hours-reply').BODY);
 });
-test('after-hours notice does not cancel the official Check In one-minute reminder',async()=>{
+test('after-hours notice stops the official Check In one-minute reminder',async()=>{
  const f=checkedFixture();f.advance(6*3600000);f.tables.shipping_staff_checkins[0].checked_in_at=new Date(f.options.now()-60000).toISOString();
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Still waiting',sent_at:new Date(f.options.now()).toISOString()});
- await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY,REMAIN]);
+ await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY]);
 });
 test('SMS reminder is translated before delivery while the clerk transcript keeps the English instructions',async()=>{
  const translator=require('./sms-translation'),f=checkedFixture(),c=f.tables.driver_conversations[0];
@@ -374,4 +374,24 @@ test('matched release supplies missing API carrier without asking the driver aga
  assert.equal(f.tables.driver_sms_arrivals[0].driver_company,'Ace Doran');
  assert.equal(f.tables.driver_messages.some(m=>/Please send.*carrier name/.test(m.body)),false);
  assert.equal(f.tables.shipping_staff_checkins.length,0);
+});
+
+for(const channel of ['sms','app'])test(`closed notice stops all follow-ups after early override is off for ${channel}`,async()=>{
+ const f=fixture(channel);f.advance(Date.parse('2026-11-19T15:01:00Z')-f.options.now());
+ const c=f.tables.driver_conversations[0];c.created_at=new Date(f.options.now()).toISOString();
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',body:VERIFY,sent_at:c.created_at,delivery_status:'sent',client_message_id:'release-wait:verify:visit-1'});
+ f.advance(1000);const at=f.options.now();
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up test',sent_at:new Date(at).toISOString()});
+ f.options.getOfficeOverride=async()=>({closed_on:'2026-11-19',activated_at:new Date(at).toISOString()});
+ await createWorker(f.options).tick();
+ assert.equal(f.tables.driver_messages.filter(m=>m.body===require('./after-hours-reply').BODY).length,1);
+ f.options.getOfficeOverride=async()=>null;f.advance(6*60000);
+ await createWorker(f.options).tick();
+ assert.equal(f.tables.driver_messages.some(m=>m.body===SOON||m.body===ASSIST),false);
+ assert.equal(await createWorker(f.options).respondAfterHours(c.id),true,'inbound handler must not restart the automated flow');
+});
+test('early override pauses pending reminders even without another incoming message',async()=>{
+ const f=fixture();await f.worker.tick();f.advance(3*60000);
+ const at=f.options.now();f.options.getOfficeOverride=async()=>({closed_on:'2026-10-01',activated_at:new Date(at).toISOString()});
+ await createWorker(f.options).tick();assert.equal(f.sends.length,1);
 });
