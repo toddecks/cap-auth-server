@@ -21,7 +21,7 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
+function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
   const health = {mode:'pickup-followups-v27-release-carrier',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
@@ -63,7 +63,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
       result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
     ]);
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
-    const afterHours=require('./after-hours-reply').plan(c,messages,now());
+    const afterHours=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
     if(afterHours){
       if(afterHours.send)await send(c,afterHours.kind,afterHours.body,true);
       if(!session.currentCheckin(c,checked))return;
@@ -163,7 +163,7 @@ function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, sc
     const c=await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c||c.status!=='open'||c.session_ended_at)return false;
     const messages=await result(db.from('driver_messages').select('client_message_id,direction,sent_at,body').eq('conversation_id',id));
-    const reply=require('./after-hours-reply').plan(c,messages,now());
+    const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
     if(!reply)return false;
     if(reply.send)await send(c,reply.kind,reply.body,true);
     return true;

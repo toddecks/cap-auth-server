@@ -88,7 +88,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
     shippingArrivalLogMode: "multiload-lines-v6",
-    shippingAfterHoursReplyMode: "open-conversation-v1",
+    shippingAfterHoursReplyMode: "shared-early-close-v2",
     shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
     shippingDropoffMapMode: "first-visit-map-v1",
@@ -7362,7 +7362,10 @@ const driverReviewWorker = require("./driver-reviews").createReviewWorker({
   publicBaseUrl: TWILIO_PUBLIC_BASE_URL, scheduleStatusSync: scheduleTwilioStatusSync
 });
 
-const releaseValidationWorker=require('./release-validation').createWorker({db:driverSupabase,chart:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync: scheduleTwilioStatusSync,normalize:normalizeShippingRelease,candidates:psReleaseCandidates});
+const shippingOfficeClosure=require('./office-closure').createStore({db:chartSupabase,auth:driverSupabase});
+app.get('/api/shipping/office-closure',shippingOfficeClosure.handler);
+app.post('/api/shipping/office-closure',shippingOfficeClosure.handler);
+const releaseValidationWorker=require('./release-validation').createWorker({getOfficeOverride:shippingOfficeClosure.load,db:driverSupabase,chart:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync: scheduleTwilioStatusSync,normalize:normalizeShippingRelease,candidates:psReleaseCandidates});
 
 require('./sms-translation').configure(getOpenAIClient);
 const driverTranslationWorker = require('./driver-translation').createWorker({db:driverSupabase,getClient:getOpenAIClient});
