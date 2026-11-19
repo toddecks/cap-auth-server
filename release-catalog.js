@@ -32,8 +32,7 @@ module.exports={releaseCatalog};
 // Ordered characters allow punctuation and expanded shorthand (968751/510)
 // while the final matcher still rejects incomplete and unrelated references.
 async function releaseCandidates(db,release){
- const releases=require('./release-list').split(release);
- if(releases.length>1)return (await Promise.all(releases.map(r=>releaseCandidates(db,r)))).flat();
+ release=require('./release-list').primary(release);
  if(!db)throw Error('Release database is unavailable.');
  const key=String(release||'').normalize('NFKC').toUpperCase().replace(/[^0-9]/g,'');
  if(!key)return [];
@@ -51,7 +50,7 @@ async function releaseCandidates(db,release){
 module.exports.releaseCandidates=releaseCandidates;
 
 async function releaseCandidatesForMany(db,releases){
- const keys=[...new Set(releases.flatMap(r=>require('./release-list').split(r)).map(r=>String(r||'').normalize('NFKC').replace(/[^0-9]/g,'')).filter(Boolean))];
+ const keys=[...new Set(releases.map(r=>require('./release-list').primary(r)).map(r=>String(r||'').normalize('NFKC').replace(/[^0-9]/g,'')).filter(Boolean))];
  const results=new Array(keys.length);let next=0;
  await Promise.all(Array.from({length:Math.min(8,keys.length)},async()=>{
   while(next<keys.length){const i=next++;results[i]=await releaseCandidates(db,keys[i]);}

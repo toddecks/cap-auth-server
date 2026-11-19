@@ -2146,7 +2146,7 @@ app.post("/api/shipping/appointment-matches", async (req, res) => {
 
   const date = String(req.body?.date || "").trim();
   const releases = Array.isArray(req.body?.releases)
-    ? req.body.releases.flatMap(r=>require('./release-list').split(r)).map(normalizeShippingRelease).filter(Boolean).slice(0, 500)
+    ? req.body.releases.map(r=>String(r||'').trim()).filter(Boolean).slice(0, 500)
     : [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Choose a valid log date." });
   if (!releases.length) return res.json({ matches: {} });

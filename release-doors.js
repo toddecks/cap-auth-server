@@ -34,13 +34,13 @@ function doorMatches(rows,releases,date){
   if(!facilities.has(location))facilities.set(location,[]);
   facilities.get(location).push({...row,refs:references(row.poRel)});
  }
- for(const input of releases){const release=normalize(input),digits=release.replace(/[A-Z]/g,'');if(!digits)continue;
+ for(const input of releases){const primary=require('./release-list').primary(input),release=normalize(primary),digits=release.replace(/[A-Z]/g,''),inputKey=normalize(input);if(!digits)continue;
   for(const [location,loads] of facilities){
    // Match a complete slash-separated reference as a whole, too.
    const exact=r=>r.refs.includes(digits)||normalize(r.poRel)===release;
    const datedMatches=appointmentDateRows(loads.filter(r=>exact(r)||suffixBase(r.poRel)===digits),date);
    if(new Set(datedMatches.map(r=>r.scheduleDate)).size>1){
-    result[release+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:'date-conflict'};
+    result[inputKey+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:'date-conflict'};
     continue;
    }
    let candidates=datedMatches.filter(exact),matchType='exact';
@@ -50,7 +50,7 @@ function doorMatches(rows,releases,date){
     candidates=datedMatches;matchType='suffix-base';
     // A base is enough only for a single full reference on the selected date.
     if(new Set(candidates.map(r=>normalize(r.poRel))).size>1){
-     result[release+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:matchType};
+     result[inputKey+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:matchType};
      continue;
     }
    }
@@ -58,7 +58,7 @@ function doorMatches(rows,releases,date){
     candidates=loads.filter(r=>r.refs.some(ref=>ref.includes(digits)));matchType='partial';
    }
    if(!candidates.length)continue;
-   const key=release+':'+location;
+   const key=inputKey+':'+location;
    // Resolve a fragment to one full reference before comparing its dated occurrences.
    const matchedReferences=new Set(candidates.flatMap(r=>r.refs.filter(ref=>ref.includes(digits))));
    if(matchType==='partial'){

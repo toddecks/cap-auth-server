@@ -18,6 +18,15 @@
   }
   return {releases:[...new Map(refs.map(v=>[key(v),v])).values()],segments};
  }
- function expand(rows){return rows.flatMap(row=>{const releases=split(row.release_number);return releases.length>1?releases.map(release=>({...row,release_number:release,visit_release_numbers:row.release_number})): [row];});}
- return {split,extract,expand};
+ // Numeric slash lists may contain complete numbers or shorthand tails.
+ // Alphanumeric compound references (CB7201P1-2/7) remain intact.
+ function primary(value){
+  const raw=String(value||'').trim();
+  if(/^\d{4,12}(?:\s*\/\s*\d{1,12})+$/.test(raw))return raw.split('/')[0].trim();
+  return split(raw)[0]||'';
+ }
+ // Multiple releases belong to one driver visit and one appointment.
+ function expand(rows){return rows;}
+
+ return {split,extract,expand,primary};
 });

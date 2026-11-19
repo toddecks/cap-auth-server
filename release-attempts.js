@@ -13,6 +13,8 @@ const ACCEPTED='Thank you. Our Shipping Office is verifying your release number.
 const AMBIGUOUS='More than one appointment matches that number. Please send the complete release number, including any suffix, for verification.';
 function releaseFromMessage(body){
  const value=flow.stripVisitWords(body).trim();
+ const list=require('./release-list').extract(value);
+ if(list.releases.length>1)return list.releases.join(' & ');
  // Keep a punctuated release together before the general details parser splits fields.
  const bare=value.replace(/^(?:release|rel)(?:\s*(?:number|no\.?))?\s*[:#]?\s*/i,'').replace(/^#\s*[:=]?\s*/,'');
  if(/^[A-Za-z0-9][A-Za-z0-9./_-]{2,39}$/.test(bare)&&/\d/.test(bare)&&!/^\+?1?\d{10}$/.test(bare))return bare;
@@ -20,8 +22,7 @@ function releaseFromMessage(body){
 }
 async function lookupRelease(chart,release,c,at){
  if(!chart)throw Error('Release database is unavailable.');
- const releases=require('./release-list').split(release);
- if(releases.length>1){const results=await Promise.all(releases.map(r=>lookupRelease(chart,r,c,at)));return results.includes('invalid')?'invalid':results.includes('ambiguous')?'ambiguous':'matched';}
+ release=require('./release-list').primary(release);
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
  const rows=await require('./release-catalog').releaseCandidates(chart,release);
  const location={'csp-toledo-main':'PROSPY','csp-toledo-enterprise':'ENTPRS'}[c.facility_id];
@@ -46,11 +47,14 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
   messages.push(initial);
   return {state:'manual',initial};
  }
- const outcomes=messages.filter(m=>['invalid','matched','ambiguous'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at));
+ const outcomes=messages.filter(m=>['invalid','matched','ambiguous','manual'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at));
  let count=0,state=null,initial=null;
- for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}
+ for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:manual-')){count=0;state='manual';initial=m;}else if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}
  const attempts=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
  for(const m of attempts){
+  // Do not replay responses already acknowledged during the API outage.
+  const manual=messages.find(x=>x.client_message_id===marker('manual',m.id));
+  if(manual)continue;
   if(messages.some(x=>['invalid','matched','ambiguous'].some(kind=>x.client_message_id===marker(kind,m.id))))continue;
   const result=await lookup(chart,releaseFromMessage(m.body),c,m.sent_at);
   const kind=result==='ambiguous'?'ambiguous':result==='matched'?'matched':'invalid';

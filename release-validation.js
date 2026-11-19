@@ -1,9 +1,8 @@
 'use strict';
 
-// This worker acknowledges receipt only. Release verification belongs to Shipping.
+// Validate pickup releases against the shipping feed; staff still controls check-in.
 const session=require('./visit-session');
-// Restore to true after the PS shipping feed is repaired.
-const RELEASE_VALIDATION_ENABLED = false;
+const RELEASE_VALIDATION_ENABLED = true;
 const VERIFY = require('./driver-visit-flow').PICKUP_PROMPT;
 const ASSIST = 'Please call 419-269-9706 for assistance.';
 const ENABLED_AT = '2026-09-29T16:03:02Z';
@@ -23,7 +22,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v25-manual-release-review',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v26-first-release-validation',releaseValidationEnabled,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }

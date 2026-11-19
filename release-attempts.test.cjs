@@ -74,3 +74,24 @@ test('PS outage mode acknowledges newest release without catalog lookup or inval
  f.add('969738');assert.equal((await run()).state,'manual');assert.equal(f.sent.at(-1).body,ACCEPTED);
  assert.equal(f.sent.filter(m=>INVALID.includes(m.body)).length,1,'no additional invalid responses while paused');
 });
+
+test('multi-release input uses the first provided reference, preserving its order',async()=>{
+ const {releaseFromMessage}=require('./release-attempts');
+ const {parseDetails}=require('./sms-checkin-details');
+ const db=chart([{...row,poRel:'72935',scheduleTime:'08:30:00'},{...row,poRel:'72937',scheduleTime:'14:00:00'},{...row,poRel:'967602/968939/969974',scheduleTime:'10:30:00'}]);
+ for(const text of ['Pickup 72935/72937','72935 & 72937','72935\n72937','72935,72937']){
+  assert.equal(require('./release-list').primary(releaseFromMessage(text)),'72935',text);
+  assert.equal(await lookupRelease(db,releaseFromMessage(text),{facility_id:'csp-toledo-main'},ENABLED_AT),'matched',text);
+ }
+ assert.equal(require('./release-list').primary(parseDetails('969974\n968939\n967602').last_release_number),'969974');
+ assert.equal(await lookupRelease(db,releaseFromMessage('969974\n968939\n967602'),{facility_id:'csp-toledo-main'},ENABLED_AT),'matched');
+ assert.equal(await lookupRelease(db,'11111 & 72935',{facility_id:'csp-toledo-main'},ENABLED_AT),'invalid','never fall back to a later valid release');
+});
+test('resuming validation does not replay responses to outage-acknowledged messages',async()=>{
+ const f=fixture();f.add('969737');
+ await processAttempts({c:f.c,messages:f.messages,pickupAt:ENABLED_AT,validationEnabled:false,now:()=>Date.parse(f.messages.at(-1).sent_at),send:async(_,kind,body)=>f.sent.push({kind,body})});
+ await f.run(async()=>{throw Error('already acknowledged message must not be rechecked')});
+ assert.equal(f.sent.length,1);
+ f.add('11111');assert.equal((await f.run()).state,'invalid');assert.equal(f.sent.at(-1).body,INVALID[0]);
+ assert.equal((await f.run()).state,'invalid','restart retains the latest validation outcome');
+});

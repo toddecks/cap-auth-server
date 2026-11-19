@@ -62,3 +62,15 @@ test('BOL preserves leading zeroes and respects slash references',()=>{
  const m=doorMatches([{...row,poRel:'968638/896',bolNumber:'0094978'}],['968896'],'2026-10-06')['968896:PROSPY'];
  assert.equal(m.bol_number,'0094978');
 });
+
+test('one appointment follows the first listed release, not the earliest appointment',()=>{
+ const rows=[{...row,poRel:'72935',scheduleTime:'14:00:00'},{...row,poRel:'72937',scheduleTime:'08:30:00'}];
+ for(const input of ['72935/72937','72935 & 72937','72935\n72937']){
+  const matches=doorMatches(rows,[input],row.scheduleDate);
+  assert.equal(Object.keys(matches).length,1);
+  assert.equal(Object.values(matches)[0].appointment_at,row.scheduleDate+'T14:00:00');
+ }
+ assert.equal(Object.values(doorMatches(rows,['72937/72935'],row.scheduleDate))[0].appointment_at,row.scheduleDate+'T08:30:00');
+ assert.deepEqual(doorMatches(rows,['11111/72937'],row.scheduleDate),{});
+ assert.equal(require('./release-list').expand([{release_number:'72935 & 72937'}]).length,1);
+});

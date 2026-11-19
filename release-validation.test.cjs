@@ -342,8 +342,8 @@ test('a clerk starting a reply while translation is pending prevents the queued 
  try{await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.find(m=>m.client_message_id==='release-wait:verify:visit-1').delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
 });
 
-for(const channel of ['sms','app'])test(`PS outage default uses staff review for ${channel} without validating release`,async()=>{
- const f=fixture(channel);delete f.options.releaseValidationEnabled;
+for(const channel of ['sms','app'])test(`Explicit PS outage mode uses staff review for ${channel} without validating release`,async()=>{
+ const f=fixture(channel);f.options.releaseValidationEnabled=false;
  f.advance(Date.parse('2026-11-18T15:00:00Z')-f.options.now());
  const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),release_number:'969737'});
  f.options.chart={from(){throw Error('stale catalog must not be queried')}};
@@ -354,4 +354,9 @@ for(const channel of ['sms','app'])test(`PS outage default uses staff review for
  assert.equal(replies.length,1);assert.equal(replies[0].body,require('./release-attempts').ACCEPTED);
  assert.match(replies[0].client_message_id,/release-wait:manual-/);
  assert.equal(f.tables.shipping_staff_checkins.length,0,'staff still controls check-in');
+});
+
+test('release validation is enabled by default after shipping feed recovery',()=>{
+ const f=fixture();delete f.options.releaseValidationEnabled;
+ assert.equal(createWorker(f.options).health.releaseValidationEnabled,true);
 });
