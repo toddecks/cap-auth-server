@@ -74,3 +74,12 @@ test('one appointment follows the first listed release, not the earliest appoint
  assert.deepEqual(doorMatches(rows,['11111/72937'],row.scheduleDate),{});
  assert.equal(require('./release-list').expand([{release_number:'72935 & 72937'}]).length,1);
 });
+
+test('alphanumeric suffixes keep JFB appointments distinct',()=>{
+ const rows=[{...row,poRel:'JFB1119**',scheduleTime:'06:00:00'},{...row,poRel:'JFB1119A',scheduleTime:'07:00:00'},{...row,poRel:'JFB1119B',scheduleTime:'08:00:00'}];
+ for(const [release,time] of [['JFB1119A','07:00:00'],['jfb1119b','08:00:00']]){
+  const match=doorMatches(rows,[release],row.scheduleDate)[release.toUpperCase()+':PROSPY'];assert.equal(match.status,'matched');assert.equal(match.appointment_at,row.scheduleDate+'T'+time);
+ }
+ assert.equal(doorMatches(rows,['JFB119B'],row.scheduleDate)['JFB119B:PROSPY'],undefined);
+ assert.equal(doorMatches([rows[1]],['JFB1119C'],row.scheduleDate)['JFB1119C:PROSPY'],undefined);
+});

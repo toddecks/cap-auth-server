@@ -37,7 +37,11 @@ function doorMatches(rows,releases,date){
  for(const input of releases){const primary=require('./release-list').primary(input),release=normalize(primary),digits=release.replace(/[A-Z]/g,''),inputKey=normalize(input);if(!digits)continue;
   for(const [location,loads] of facilities){
    // Match a complete slash-separated reference as a whole, too.
-   const exact=r=>r.refs.includes(digits)||normalize(r.poRel)===release;
+   const fullReferenceExists=loads.some(r=>normalize(r.poRel)===release);
+   // Letter suffixes distinguish appointments such as JFB1119A and JFB1119B.
+   // Prefer a complete reference before the legacy numeric/label fallback.
+   const letterSuffix=/^[A-Z]+\d+[A-Z]+$/.test(release);
+   const exact=r=>fullReferenceExists||letterSuffix?normalize(r.poRel)===release:r.refs.includes(digits)||normalize(r.poRel)===release;
    const datedMatches=appointmentDateRows(loads.filter(r=>exact(r)||suffixBase(r.poRel)===digits),date);
    if(new Set(datedMatches.map(r=>r.scheduleDate)).size>1){
     result[inputKey+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:'date-conflict'};

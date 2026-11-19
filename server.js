@@ -87,7 +87,7 @@ app.get("/api/deploy-status", (_req, res) => {
     townHallFormMode: "anonymous-kim-v1",
     shippingReviewWorker: driverReviewWorker.health,
     shippingCheckoutMode: "preserve-thread-v2",
-    shippingArrivalLogMode: "multiload-lines-v6",
+    shippingArrivalLogMode: "first-release-letter-suffix-v7",
     shippingAfterHoursReplyMode: "shared-early-close-v3-6pm-reset",
     shippingManualDriverLookupMode: "phone-first-v1",
     shippingManualReplyMode: "pause-until-checkin-v1",
