@@ -78,3 +78,21 @@ test('PU release lists keep a complete primary release',()=>{
  const result=nextCheckin({existing:{full_name:'Sergii Iaromenko',driver_company:'SVB express',visit_type:'pickup',last_release_number:'968'},body:'PU # 968638 968896'});
  assert.equal(result.releaseNumber,'968638');assert.equal(result.contact.full_name,'Sergii Iaromenko');
 });
+
+test('release between driver and carrier keeps Ace Doran separate',()=>{
+ for(const body of ['Josue 72967 ace Doran','Josue 72967 Ace Doran','Josue Ace Doran 72967']){
+  const parsed=parseDetails(body);
+  assert.equal(parsed.full_name,'Josue');assert.equal(parsed.driver_company.toLowerCase(),'ace doran');assert.equal(parsed.last_release_number,'72967');
+  const next=nextCheckin({existing:{full_name:'Josue ace Doran',driver_company:'',last_release_number:'72967',visit_type:'pickup'},body});
+  assert.equal(next.contact.full_name,'Josue');assert.equal(next.contact.driver_company.toLowerCase(),'ace doran');assert.equal(next.contact.onboarding_step,'ready');
+  assert.equal(require('./pickup-detail-prompt').missingPrompt(next.contact),null);
+ }
+});
+test('Ace Doran supplied alone is a carrier, not a driver name',()=>{
+ assert.equal(parseDetails('Ace Doran').driver_company,'Ace Doran');assert.equal(parseDetails('Ace Doran').full_name,undefined);
+ const next=nextCheckin({existing:{full_name:'Josue',last_release_number:'72967',visit_type:'pickup'},body:'Ace Doran'});
+ assert.equal(next.contact.onboarding_step,'ready');assert.equal(require('./pickup-detail-prompt').missingPrompt(next.contact),null);
+});
+test('ordinary text around a number never becomes a carrier introduction',()=>{
+ for(const body of ['Thanks 72967 Ace Doran','Josue 72967 where do I go','My trailer 72967 needs a door'])assert.equal(parseDetails(body).driver_company,undefined);
+});

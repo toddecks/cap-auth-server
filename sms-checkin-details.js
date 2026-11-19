@@ -14,7 +14,7 @@ function parseDetails(text, existing={}) {
  const intro=input.match(/^(?:(?:this\s+is|is\s+this|my\s+name\s+is|i\s+am|i['’]m)\s+)?([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(?:with|from|driving for)\s+(.+?)(?=\s+(?:here\b|to\b|for\b|my\s+release\b|release\b|\d{4,}\b)|[.!?](?:\s|$)|$)/iu);
  if(intro&&!chatPattern.test(intro[1])&&!companyPattern.test(intro[1])){
   found.full_name=driverName(intro[1]).slice(0,120);
-  found.driver_company=cleanIdentity(intro[2]).slice(0,160);
+  found.driver_company=cleanIdentity(intro[2].replace(/[,;]+$/, '')).slice(0,160);
   input=clean(input.slice(intro[0].length));
  }
  // A labeled release can be anywhere in the sentence. Do not confuse a
@@ -48,6 +48,15 @@ function parseDetails(text, existing={}) {
   if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
   m=part.match(/^(?:(?:sorry|correction|correct number|actually|it's|its|it is)\s*[:=]?\s*)?(?:#\s*[:=]?\s*)?([a-z0-9][a-z0-9./_-]{0,39})[.!]?$/i);
   if(m&&/\d/.test(m[1])){found.last_release_number=m[1];continue;}
+  // A release between a driver name and a carrier is an explicit field boundary.
+  // Do this before removing the number, which would merge both identity fields.
+  const separated=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(\d{4,10})\s+([\p{L}][\p{L}\d .&'’-]{1,159})$/u);
+  if(separated&&!chatPattern.test(separated[1])&&!companyPattern.test(separated[1])&&!chatPattern.test(separated[3])){
+   found.full_name=driverName(separated[1]).slice(0,120);
+   found.last_release_number=separated[2];
+   found.driver_company=cleanIdentity(separated[3]).slice(0,160);
+   continue;
+  }
   // Extract an unmistakable release number embedded in a complete text.
   m=part.match(/\b\d{5,10}\b/g);
   if(m?.length===1 && !chatPattern.test(part) && !/\b(phone|tel|mobile|call me|truck|trailer|pounds|lbs|weight|zip|address)\b/i.test(part)){
@@ -62,10 +71,11 @@ function parseDetails(text, existing={}) {
   if(split&&!found.full_name&&!chatPattern.test(split[1])&&!existing.full_name){found.full_name=driverName(split[1]).slice(0,120);found.driver_company=clean(split[2]).slice(0,160);continue;}
   // A known multiword carrier can follow a driver's name without punctuation.
   // Keep standalone carrier names intact; do not guess a boundary for unknown carriers.
-  const carrierIntroduction=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+(Center\s+Express[.]?)$/iu);
+  const carrierIntroduction=part.match(/^([\p{L}.'’-]+(?:\s+[\p{L}.'’-]+){0,3})\s+((?:Center\s+Express|Ace\s+Doran)[.]?)$/iu);
   if(carrierIntroduction&&!chatPattern.test(carrierIntroduction[1])&&!companyPattern.test(carrierIntroduction[1])&&!/^(?:pick(?:[ -]?up)?|release(?: number)?)$/i.test(carrierIntroduction[1])){
    found.full_name=clean(carrierIntroduction[1]);found.driver_company=clean(carrierIntroduction[2]);continue;
   }
+  if(/^Ace\s+Doran[.]?$/i.test(part)){found.driver_company=part.slice(0,160);continue;}
   if(companyPattern.test(part)&&!chatPattern.test(part)){
    if(!found.driver_company&&!existing.driver_company)found.driver_company=part.slice(0,160);
    continue;
