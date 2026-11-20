@@ -6,13 +6,13 @@ function fixture(channel='sms') {
  const tables={driver_conversations:[{id:'visit-1',status:'open',visit_type:'pickup',release_number:'12345',channel,sms_phone_e164:'+15555550100',created_at:new Date(clock).toISOString()}],driver_sms_contacts:[],driver_sms_arrivals:[],shipping_release_verifications:[],shipping_staff_checkins:[],driver_messages:[],driver_arrivals:[]};
  const sends=[];const checkouts=[];
  const db={async rpc(name,args){checkouts.push({name,args});tables.driver_conversations[0].status='closed';return {data:true,error:null}},from(table){let filters=[],op='select',value,start=0,end=Infinity;
-  const q={select(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},is(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
+  const q={select(){return q},or(){return q},ilike(){return q},eq(k,v){filters.push(r=>r[k]===v);return q},is(k,v){filters.push(r=>r[k]===v);return q},gte(k,v){filters.push(r=>r[k]>=v);return q},order(){return q},range(a,b){start=a;end=b;return q},maybeSingle(){q.singleRow=true;return q},single(){q.singleRow=true;return q},upsert(v){op='upsert';value=v;return q},insert(v){op='insert';value=v;return q},update(v){op='update';value=v;return q},then(resolve,reject){try{let rows=tables[table].filter(r=>filters.every(f=>f(r)));
    if(op==='insert'){if(tables[table].some(r=>r.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve,reject);const row={...value,id:tables[table].length+1};tables[table].push(row);rows=[row];}
    if(op==='upsert'){let existing=tables[table].find(r=>r.conversation_id===value.conversation_id);if(existing)Object.assign(existing,value);else tables[table].push(value);rows=[existing||value];}
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
    rows=rows.slice(start,end+1);return Promise.resolve({data:q.singleRow?(rows[0]||null):rows,error:null}).then(resolve,reject);
   }catch(e){return Promise.reject(e).then(resolve,reject)}}};return q;}};
- const options={db,releaseValidationEnabled:true,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
+ const options={db,isReturningDriver:async()=>false,releaseValidationEnabled:true,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
  return {tables,sends,checkouts,options,worker:createWorker(options),advance(ms){clock+=ms}};
 }
 test('exact initial reply and three- and five-minute follow-ups, persistent across restart',async()=>{
@@ -56,7 +56,7 @@ test('premature acknowledgement cannot schedule assistance for an SMS placeholde
 });
 
 test('office hours use Eastern time at exact boundaries and in winter',()=>{
- for(const [at,closed] of [['2026-10-01T09:59:59Z',true],['2026-10-01T10:00:00Z',false],['2026-10-01T21:59:59Z',false],['2026-10-01T22:00:00Z',true],['2026-12-01T10:59:59Z',true],['2026-12-01T11:00:00Z',false],['2026-10-04T22:00:00Z',true]])assert.equal(officeClosed(at),closed,at);
+ for(const [at,closed] of [['2026-10-01T09:29:59Z',true],['2026-10-01T09:30:00Z',false],['2026-10-01T21:59:59Z',false],['2026-10-01T22:00:00Z',true],['2026-12-01T10:29:59Z',true],['2026-12-01T10:30:00Z',false],['2026-10-04T22:00:00Z',true]])assert.equal(officeClosed(at),closed,at);
 });
 test('after-hours pickup gets one closed reply and no daytime reminders',async()=>{
  const f=fixture();f.advance(5*60*60*1000);f.tables.driver_conversations[0].created_at='2026-10-01T22:00:00Z';await f.worker.tick();f.advance(301000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
@@ -85,7 +85,7 @@ test('new visit in an existing thread gets exactly one verification despite old 
  f.advance(180000);await f.worker.tick();assert.equal(f.sends[1].body,SOON);
 });
 
-test('delayed processing uses actual arrival time for the initial reply',async()=>{const f=fixture();f.tables.driver_conversations[0].session_started_at='2026-10-01T09:57:00Z';f.advance(-7*60*60*1000+10*60*1000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);});
+test('delayed processing uses actual arrival time for the initial reply',async()=>{const f=fixture();f.tables.driver_conversations[0].session_started_at='2026-10-01T09:27:00Z';f.advance(-7*60*60*1000+10*60*1000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);});
 
 for(const type of ['pickup','dropoff',null])test('unverified '+type+' visit remains open after thirty minutes',async()=>{
  const f=fixture();f.tables.driver_conversations[0].visit_type=type;
@@ -145,7 +145,7 @@ test('Both details without PICK UP do not start pickup reminders',async()=>{
 for(const channel of ['sms','app'])test(`${channel} old clerk hold cannot block rejection or valid correction`,async()=>{
  const f=fixture(channel);f.advance(Date.parse('2026-11-06T15:00:00Z')-f.options.now());const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',release_number:'1111'});
  f.tables.shipping_release_verifications.push({conversation_id:c.id,session_key:c.id,verified_at:null,attempt_id:'old',release_number:'1111'});
- f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'968751',scheduleDate:'2026-11-06',location:'PROSPY',unloadingDoor:'MB'}]})};return q}};
+ f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'968751',scheduleDate:'2026-11-06',location:'PROSPY',unloadingDoor:'MB'}]})};return q}};
  const worker=createWorker(f.options);const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,body,sent_at:new Date(f.options.now()).toISOString(),direction:'driver_to_shipping'});
  const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
  add('1111');await worker.tick();await worker.tick();assert.deepEqual(replies(),[require('./release-attempts').INVALID[0]]);
@@ -158,7 +158,7 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
  const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),facility_id:'csp-toledo-main',visit_type:type,release_number:type==='both'?'Drop-off':'72039',arrival_id:480});
  f.tables.driver_arrivals.push({id:480,release_number:c.release_number});
  f.options.sendBothImages=async()=>{};
- f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+ f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
  const worker=createWorker(f.options);
  const add=(body,id,at=f.options.now())=>f.tables.driver_messages.push({id,client_message_id:id,conversation_id:c.id,body,sent_at:new Date(at).toISOString(),direction:'driver_to_shipping'});
  const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
@@ -197,7 +197,7 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   if(scenario==='closed-hours')f.advance(7*3600000);
   const c=f.tables.driver_conversations[0];Object.assign(c,{created_at:new Date(f.options.now()).toISOString(),visit_type:type,release_number:'Drop-off',facility_id:'csp-toledo-main'});
   f.options.sendBothImages=async()=>{};
-  f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+  f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
   const worker=createWorker(f.options);
   const add=body=>f.tables.driver_messages.push({id:'in-'+f.tables.driver_messages.length,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
   const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver'&&!m.sender_user_id).map(m=>m.body);
@@ -258,7 +258,7 @@ for(const choice of ['Pick Up','Drop Off','Both'])test(`SMS waits for explicit $
  await f.worker.tick();
  if(choice==='Pick Up')assert.equal(f.sends.at(-1).body,VERIFY);
  else if(choice==='Both'){assert.equal(selected.reply,'Please call 419-269-9706 and select option 5 for further instructions.');assert.equal(f.sends.length,0);}
- else {assert.match(selected.reply,/unchain your load/);assert.equal(f.sends.length,0);}
+ else {assert.match(selected.reply,/Dropping off coils or sheets/);assert.equal(f.sends.length,0);}
  assert.equal(f.worker.health.error,null);
 });
 
@@ -269,7 +269,7 @@ test('natural SMS details supplied before Pick Up are validated without another 
   f.tables.driver_messages.push({id:20,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:c.created_at});
   f.tables.driver_sms_contacts.push({phone_e164:c.sms_phone_e164,full_name:name,driver_company:carrier,last_release_number:release});
   if(name!=='John'){f.advance(10000);f.tables.driver_messages.push({id:21,conversation_id:c.id,direction:'driver_to_shipping',body:'Pick Up',sent_at:'2026-11-12T14:00:10Z'});}
-  f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:release,scheduleDate:'2026-11-12',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
+  f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:release,scheduleDate:'2026-11-12',location:'PROSPY',unloadingDoor:'BD'}]})};return q}};
   const worker=createWorker(f.options);await worker.tick();await worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[ACCEPTED],name);assert.equal(worker.health.error,null);
  }
 });
@@ -281,7 +281,7 @@ test('multiline two-load details ask only for missing name after verification, o
  const f=fixture();f.advance(46*86400000);const c=f.tables.driver_conversations[0];c.created_at='2026-11-16T17:00:00Z';c.release_number='32381 & 32382';
  const contact={phone_e164:c.sms_phone_e164,full_name:'',driver_company:'Chase freight',last_release_number:c.release_number};f.tables.driver_sms_contacts.push(contact);
  f.tables.driver_messages.push({id:51,conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up\n#32381 & 32382\nChase freight\nTruck 122',sent_at:c.created_at});
- f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:['32381','32382'].map(poRel=>({poRel,scheduleDate:'2026-11-16',scheduleTime:'16:00:00',location:'PROSPY',unloadingDoor:'BD'}))})};return q}};
+ f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:['32381','32382'].map(poRel=>({poRel,scheduleDate:'2026-11-16',scheduleTime:'16:00:00',location:'PROSPY',unloadingDoor:'BD'}))})};return q}};
  c.facility_id='csp-toledo-main';const worker=createWorker(f.options);await worker.tick();await worker.tick();
  assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED,'Please send your name for verification and further instructions.']);
  contact.full_name='Shane';await worker.tick();assert.equal(f.sends.length,2);
@@ -367,7 +367,7 @@ test('matched release supplies missing API carrier without asking the driver aga
  f.tables.driver_sms_contacts.push({phone_e164:c.sms_phone_e164,full_name:'Josue ace Doran',driver_company:'',last_release_number:'72967'});
  f.tables.driver_sms_arrivals.push({conversation_id:c.id,departed_at:null,driver_name:'Josue ace Doran',driver_company:''});
  f.tables.driver_messages.push({id:'carrier-in',conversation_id:c.id,direction:'driver_to_shipping',body:'Josue 72967 ace Doran',sent_at:c.created_at});
- f.options.chart={from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72967',scheduleDate:'2026-11-19',scheduleTime:'10:00:00',location:'PROSPY',unloadingDoor:'BD',carrierName:'Ace Doran'}]})};return q}};
+ f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:[{poRel:'72967',scheduleDate:'2026-11-19',scheduleTime:'10:00:00',location:'PROSPY',unloadingDoor:'BD',carrierName:'Ace Doran'}]})};return q}};
  const worker=createWorker(f.options);await worker.tick();
  assert.equal(worker.health.error,null);
  assert.equal(f.tables.driver_sms_contacts[0].driver_company,'Ace Doran');assert.equal(f.tables.driver_sms_contacts[0].full_name,'Josue');
@@ -384,7 +384,7 @@ for(const channel of ['sms','app'])test(`closed notice stops all follow-ups afte
  f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up test',sent_at:new Date(at).toISOString()});
  f.options.getOfficeOverride=async()=>({closed_on:'2026-11-19',activated_at:new Date(at).toISOString()});
  await createWorker(f.options).tick();
- assert.equal(f.tables.driver_messages.filter(m=>m.body===require('./after-hours-reply').BODY).length,1);
+ assert.equal(f.tables.driver_messages.filter(m=>m.body===require('./after-hours-reply').CALL_OFFICE).length,1);
  f.options.getOfficeOverride=async()=>null;f.advance(6*60000);
  await createWorker(f.options).tick();
  assert.equal(f.tables.driver_messages.some(m=>m.body===SOON||m.body===ASSIST),false);

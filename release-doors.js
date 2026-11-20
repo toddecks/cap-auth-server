@@ -42,12 +42,15 @@ function doorMatches(rows,releases,date){
    // Prefer a complete reference before the legacy numeric/label fallback.
    const letterSuffix=/^[A-Z]+\d+[A-Z]+$/.test(release);
    const exact=r=>fullReferenceExists||letterSuffix?normalize(r.poRel)===release:r.refs.includes(digits)||normalize(r.poRel)===release;
-   const datedMatches=appointmentDateRows(loads.filter(r=>exact(r)||suffixBase(r.poRel)===digits),date);
+   const abbreviated=r=>/^\d{6,12}$/.test(release)&&String(r.poRel||'').split(/[\/,;|\n]+/).slice(1).some(part=>{const tail=part.trim();return /^\d{3,4}$/.test(tail)&&digits.endsWith(tail)});
+   const exactLoads=loads.filter(exact);
+   const datedMatches=appointmentDateRows(loads.filter(r=>exact(r)||suffixBase(r.poRel)===digits||(!exactLoads.length&&abbreviated(r))),date);
    if(new Set(datedMatches.map(r=>r.scheduleDate)).size>1){
     result[inputKey+':'+location]={door:null,status:'ambiguous',appointment_at:null,match_type:'date-conflict'};
     continue;
    }
    let candidates=datedMatches.filter(exact),matchType='exact';
+   if(!candidates.length){candidates=datedMatches.filter(abbreviated);if(candidates.length)matchType='abbreviated';}
    const combo=!candidates.length?resolveCombo(datedMatches,digits):null;
    if(combo)candidates=[combo.primary];
    else if(!candidates.length&&datedMatches.length){

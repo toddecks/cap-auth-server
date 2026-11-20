@@ -3,7 +3,7 @@ const {doorMatches}=require('./release-doors');
 const {PICKUP_CHECKIN,PICKUP_PPE}=require('./driver-visit-flow');
 const COIL_CHECKIN='Please pull around back and stay to the RIGHT. '+PICKUP_PPE;
 async function pickupInstructions(chartDb,conversation,now=new Date(),loadingDoor='',routingEnabled=false){
- if(!routingEnabled)return 'You have been successfully checked in. Please remain in your truck. A shipping team member will assist you shortly.';
+ if(!routingEnabled)return PICKUP_CHECKIN;
  const releases=require('./release-list').split(conversation.release_number);
  if(releases.length>1){const instructions=await Promise.all(releases.map(r=>pickupInstructions(chartDb,{...conversation,release_number:r},now,loadingDoor,routingEnabled)));if(new Set(instructions).size>1)throw Error('These loads use different loading-door routes. Confirm the route with Shipping before check-in.');return instructions[0];}
  const routing=String(loadingDoor||'').trim().toUpperCase();

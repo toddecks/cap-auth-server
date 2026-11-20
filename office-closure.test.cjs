@@ -6,7 +6,7 @@ const c={id:'visit',status:'open',created_at:'2026-11-19T12:00:00Z'};
 const incoming=at=>({direction:'driver_to_shipping',sent_at:new Date(at).toISOString(),body:'Pickup 72967'});
 test('early override uses existing notice, expires 6pm, keeps normal schedule',()=>{
  assert.equal(closedPeriod(now),null);assert.equal(closedPeriod(now,override),'2026-11-19');
- assert.equal(plan(c,[incoming(now+1000)],now+2000,override).body,BODY);
+ assert.equal(plan(c,[incoming(now+1000)],now+2000,override).body,require('./after-hours-reply').CALL_OFFICE);
  assert.equal(active(override,Date.parse('2026-11-19T17:59:59-05:00')),true);
  assert.equal(active(override,Date.parse('2026-11-19T18:00:00-05:00')),false);
  assert.equal(active(override,Date.parse('2026-11-20T05:59:00-05:00')),false);

@@ -12,9 +12,9 @@ async function carrierFromRelease(chart,conversation,contact,at){
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
  const rows=await require('./release-catalog').releaseCandidates(chart,release);
  const match=doorMatches(rows,[release],date)[normalize(release)+':'+location];
- if(!match||match.status==='ambiguous'||match.match_type!=='exact'||!match.appointment_at)return null;
+ if(!match||match.status==='ambiguous'||!['exact','abbreviated'].includes(match.match_type)||!match.appointment_at)return null;
  const [scheduleDate,scheduleTime]=match.appointment_at.split('T');
- const eligible=rows.filter(row=>String(row.location||'').trim().toUpperCase()===location&&row.cancelLoad!==true&&String(row.cancelLoad).toLowerCase()!=='true'&&String(row.scheduleDate)===scheduleDate&&String(row.scheduleTime).slice(0,8)===scheduleTime&&(references(row.poRel).includes(normalize(release).replace(/[A-Z]/g,''))||normalize(row.poRel)===normalize(release)));
+ const eligible=rows.filter(row=>String(row.location||'').trim().toUpperCase()===location&&row.cancelLoad!==true&&String(row.cancelLoad).toLowerCase()!=='true'&&String(row.scheduleDate)===scheduleDate&&String(row.scheduleTime).slice(0,8)===scheduleTime&&(match.match_type==='abbreviated'?normalize(row.poRel)===normalize(match.release_reference):(references(row.poRel).includes(normalize(release).replace(/[A-Z]/g,''))||normalize(row.poRel)===normalize(release))));
  const names=eligible.map(row=>cleanIdentity(row.carrierName));
  const unique=new Set(names.map(normalize));
  if(!names.length||names.some(name=>!name)||unique.size!==1)return null;

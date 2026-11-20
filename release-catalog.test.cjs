@@ -5,7 +5,7 @@ test('future valid release and yearly duplicates use newest record without a one
  let calls=0;
  const rows=[{poRel:'72037',scheduleDate:'2025-10-13',location:'PROSPY',unloadingDoor:'MB'},
  {poRel:'72037',scheduleDate:'2026-10-16',location:'PROSPY',unloadingDoor:'BD'}];
- const db={from(){const q={select(){return q},ilike(){return q},order(){return q},async range(){calls++;return {data:rows}}};return q}};
+ const db={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},async range(){calls++;return {data:rows}}};return q}};
  assert.equal(await lookupRelease(db,'72037',{facility_id:'csp-toledo-main'},'2026-10-13T15:06:21Z'),'matched');
  assert.equal(await lookupRelease(db,'72039',{facility_id:'csp-toledo-main'},'2026-10-13T15:05:26Z'),'invalid');
  assert.equal(calls,2);
@@ -14,7 +14,7 @@ test('future valid release and yearly duplicates use newest record without a one
 });
 test('catalog pages load concurrently and preserve complete ordered results',async()=>{
  let active=0,peak=0,calls=0;
- const db={from(){const q={select(){return q},ilike(){return q},order(){return q},async range(start,end){
+ const db={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},async range(start,end){
   calls++;active++;peak=Math.max(peak,active);
   await new Promise(resolve=>setImmediate(resolve));active--;
   return {data:Array.from({length:Math.max(0,Math.min(end+1,30822)-start)},(_,i)=>({bolNumber:start+i}))};
@@ -26,7 +26,7 @@ test('catalog pages load concurrently and preserve complete ordered results',asy
 });
 test('slow in-flight refresh is reused even past TTL and failures are retried',async()=>{
  let resolve,calls=0,fail=true;
- const db={from(){const q={select(){return q},ilike(){return q},order(){return q},range(){calls++;return new Promise(r=>{resolve=r})}};return q}};
+ const db={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range(){calls++;return new Promise(r=>{resolve=r})}};return q}};
  const a=releaseCatalog(db,0),b=releaseCatalog(db,61000);
  assert.equal(calls,1);resolve({error:Error('lookup unavailable')});
  const errors=await Promise.allSettled([a,b]);assert(errors.every(r=>r.status==='rejected'));
@@ -36,7 +36,7 @@ test('slow in-flight refresh is reused even past TTL and failures are retried',a
 test('targeted lookup filters on server and preserves shorthand candidates for exact validation',async()=>{
  const rows=[{poRel:'968751/510',location:'PROSPY',scheduleDate:'2026-10-13',unloadingDoor:'COIL'},{poRel:'945678',location:'PROSPY',scheduleDate:'2024-04-08'}];
  let pattern;
- const db={from(){const q={select(){return q},ilike(column,value){assert.equal(column,'poRel');pattern=value;return q},order(){return q},range:async()=>({data:rows.filter(r=>new RegExp('^'+pattern.replaceAll('%','.*')+'$','i').test(r.poRel))})};return q}};
+ const db={from(){const q={select(){return q},or(expression){pattern=expression.split(',')[0].replace('poRel.ilike.','');return q},ilike(column,value){assert.equal(column,'poRel');pattern=value;return q},order(){return q},range:async()=>({data:rows.filter(r=>new RegExp('^'+pattern.replaceAll('%','.*')+'$','i').test(r.poRel))})};return q}};
  const {releaseCandidates}=require('./release-catalog');
  const matches=await releaseCandidates(db,'968510');assert.equal(matches.length,1);
  assert.equal(require('./release-doors').doorMatches(matches,['968510'],'2026-10-13')['968510:PROSPY'].door,'COIL');
@@ -44,7 +44,7 @@ test('targeted lookup filters on server and preserves shorthand candidates for e
 });
 test('shipping screen queries only unique requested numbers and merges overlapping candidates',async()=>{
  const patterns=[];const row={poRel:'232662-coil'};
- const db={from(){const q={select(){return q},ilike(_,p){patterns.push(p);return q},order(){return q},range:async()=>({data:[row]})};return q}};
+ const db={from(){const q={select(){return q},or(p){patterns.push(p);return q},ilike(_,p){patterns.push(p);return q},order(){return q},range:async()=>({data:[row]})};return q}};
  const rows=await require('./release-catalog').releaseCandidatesForMany(db,['232662','232662-coil','967833']);
  assert.equal(patterns.length,2);assert.deepEqual(rows,[row]);
  assert.deepEqual(await require('./release-catalog').releaseCandidatesForMany(db,[]),[]);

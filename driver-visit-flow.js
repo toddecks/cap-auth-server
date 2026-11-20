@@ -32,13 +32,12 @@ function visitType(text){
 function stripVisitWords(text){
  return translatedCommands(text).replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\s*(?:and|&|\+|then|y|et|и|і|й)\s*(?:${PICKUP_WORDS}|${DROPOFF_WORDS})\b`,'gi'),'').replace(new RegExp(String.raw`\b(?:${PICKUP_WORDS}|${DROPOFF_WORDS}|both)\b`,'gi'),'').replace(/^\s*(?:and|&)\s*$/i,'');
 }
-function dropoffReply(at=new Date()){
- const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(p=>[p.type,p.value]));
- const minutes=Number(parts.hour)*60+Number(parts.minute);
- if(['Sat','Sun'].includes(parts.weekday)||minutes<360||minutes>=1080)return 'Receiving is closed. Hours are Monday–Friday, 6:00 AM–6:00 PM. Please return during those hours. No overnight parking. Thank you.';
- if(minutes>=1050)return 'We are approaching the cut-off time for drop-offs. Please call the office at 419-269-9706 for further instructions.';
- return 'Please pull around back and stay to the right. Once stopped in the drop-off line, unchain your load and open the trailer for unloading.';
+function dropoffReply(at=new Date(),text=''){
+ const closed=require('./after-hours-reply').closedPeriod(new Date(at).getTime());
+ if(closed)return require('./after-hours-reply').BODY;
+ return require('./dropoff-material').reply(text);
 }
+
 function bothReply(){
  return 'Please call 419-269-9706 and select option 5 for further instructions.';
 }

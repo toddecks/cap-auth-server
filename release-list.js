@@ -11,7 +11,7 @@
   const refs=[],segments=[];
   for(const raw of String(text||'').split(/[\n,;]+/)){
    const part=raw.trim().replace(/^(?:release|rel|pu|pick[ -]?up|load|wo)(?:\s*(?:numbers?|no\.?))?\s*[:#]?\s*/i,'').replace(/^#\s*/, '');
-   const values=split(part);
+   const values=/^\d{4,12}(?:\s+\d{4,12})+$/.test(part)?part.split(/\s+/):split(part);
    if(values.length>1&&values.every(valid)||values.length===1&&valid(part)&&/^\d{4,12}(?:[-_.]\d+)?$/.test(part)){
     refs.push(...values);segments.push(raw);
    }
@@ -22,7 +22,7 @@
  // Alphanumeric compound references (CB7201P1-2/7) remain intact.
  function primary(value){
   const raw=String(value||'').trim();
-  if(/^\d{4,12}(?:\s*\/\s*\d{1,12})+$/.test(raw))return raw.split('/')[0].trim();
+  if(/^\d{4,12}(?:(?:\s*\/\s*|\s+)\d{1,12})+$/.test(raw))return raw.match(/^\d+/)[0];
   return split(raw)[0]||'';
  }
  // Multiple releases belong to one driver visit and one appointment.

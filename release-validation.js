@@ -11,18 +11,19 @@ const ASSIST_MS = 5 * 60 * 1000;
 const CHECKIN_FOLLOWUP_MS = 60 * 1000;
 const AUTOMATION_ENABLED_AT = '2026-09-30T18:05:07Z';
 const SOON = 'Our shipping team will be with you shortly.';
-const CLOSED = 'Our shipping office is currently closed. Please call 419-269-9706 and select option 5 for assistance, or wait in your truck and a member of our shipping/receiving team will be with you shortly.';
+const CLOSED = require('./after-hours-reply').BODY;
 const REMAIN = 'Please remain in your truck. A shipping team member will be with you shortly.';
 const COIL_REMAIN = 'Please remain in your truck. A shipping team member will assist you shortly.';
 const officeClosed = timestamp => {
   const hour = Number(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',hour:'2-digit',hourCycle:'h23'}).format(new Date(timestamp)));
-  return hour >= 18 || hour < 6;
+  const minute=Number(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',minute:'2-digit'}).format(new Date(timestamp)));
+  return hour >= 18 || hour*60+minute < 330;
 };
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v28-office-notice-stops-flow',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
+function createWorker({isReturningDriver=require('./returning-driver').held,getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
+  const health = {mode:'pickup-followups-v30-returning-and-dedupe',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -62,6 +63,7 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
       result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle()),
       result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
     ]);
+    if(await isReturningDriver(db,c,checked))return;
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
     const override=await getOfficeOverride();
     const afterHours=require('./after-hours-reply').plan(c,messages,now(),override);
@@ -95,6 +97,12 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
           .finally(()=>mediaJobs.delete(mediaKey));
         mediaJobs.set(mediaKey,job);
       }
+    }
+    if(c.channel==='app'&&c.visit_type==='dropoff'&&!session.currentCheckin(c,checked)){
+      const incoming=messages.filter(m=>m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=session.start(c)).sort((a,b)=>Date.parse(b.sent_at)-Date.parse(a.sent_at))[0];
+      const kind=incoming&&require('./dropoff-material').material(incoming.body);
+      if(kind&&!messages.some(m=>m.client_message_id===`release-wait:dropoff-material-${incoming.id}:${session.key(c)}`))await send(c,`dropoff-material-${incoming.id}`,require('./dropoff-material').directions(kind));
+      return;
     }
     const requestedAt=require('./both-pickup-phase').pickupRequestedAt(messages);
     if(!['pickup','both'].includes(c.visit_type)||(!validPickup(c)&&!requestedAt))return;
@@ -172,6 +180,9 @@ function createWorker({getOfficeOverride=async()=>null, db, chart, twilio, messa
     const c=await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c||c.status!=='open'||c.session_ended_at)return false;
     const messages=await result(db.from('driver_messages').select('client_message_id,direction,sent_at,body').eq('conversation_id',id));
+    const {data:checked,error:checkError}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle();
+    if(checkError)throw checkError;
+    if(await isReturningDriver(db,c,checked))return true;
     if(require('./after-hours-reply').hasNotice(c,messages))return true;
     const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
     if(!reply)return false;

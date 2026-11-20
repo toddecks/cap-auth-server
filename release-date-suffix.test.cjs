@@ -26,7 +26,7 @@ test('same-day unlinked suffixes or equal-distance dates still require clarifica
  assert.equal(lookup([row,{...tomorrow,scheduleDate:'2026-11-16'}]).status,'ambiguous');
  assert.equal(lookup([row,{...tomorrow,scheduleDate:'2026-11-18'}],'72934','2026-11-17').status,'ambiguous');
 });
-function chart(rows){return{from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:rows})};return q}}}
+function chart(rows){return{from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:rows})};return q}}}
 test('base release sends the requested verification acknowledgement through SMS',async()=>{
  const sent=[],at='2026-11-16T15:42:00Z',c={id:'suffix-test',visit_type:'pickup',facility_id:'csp-toledo-main'};
  assert.equal(await lookupRelease(chart([row,tomorrow]),'72934',c,at),'matched');

@@ -43,7 +43,7 @@ async function releaseCandidates(db,release){
  for(let offset=0;;offset+=PAGE_SIZE){
   const {data,error}=await db.from('psdata_loads_api')
    .select('scheduleDate,scheduleTime,poRel,carrierName,location,bolNumber,masterBolNumber,cancelLoad,unloadingDoor,customerNo,arrivalDate,arrivalTime,shipDate,shipTime')
-   .ilike('poRel',pattern).order('scheduleDate').order('bolNumber').range(offset,offset+PAGE_SIZE-1);
+   .or('poRel.ilike.'+pattern+(/^\d{6,12}$/.test(String(release))?',poRel.ilike.%'+String(release).slice(-3)+'%':'')).order('scheduleDate').order('bolNumber').range(offset,offset+PAGE_SIZE-1);
   if(error)throw error;rows.push(...(data||[]));if(!data||data.length<PAGE_SIZE)return rows;
  }
 }

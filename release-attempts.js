@@ -9,7 +9,7 @@ const INVALID=[
  'The release number provided is still not valid. Please contact your dispatch to confirm the correct release number before trying again.',
  'Please call 419-269-9706 for assistance.'
 ];
-const ACCEPTED='Thank you. Our Shipping Office is verifying your release number. We’ll send you further instructions shortly.';
+const ACCEPTED='Thank you! We’re verifying your release number and will send instructions shortly.';
 const AMBIGUOUS='More than one appointment matches that number. Please send the complete release number, including any suffix, for verification.';
 function releaseFromMessage(body){
  const value=flow.stripVisitWords(body).trim();
@@ -59,6 +59,8 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
   const result=await lookup(chart,releaseFromMessage(m.body),c,m.sent_at);
   const kind=result==='ambiguous'?'ambiguous':result==='matched'?'matched':'invalid';
   const body=result==='ambiguous'?AMBIGUOUS:result==='matched'?ACCEPTED:INVALID[Math.min(count,2)];
+  const sameAccepted=kind==='matched'&&messages.find(x=>x.client_message_id?.startsWith('release-wait:matched-')&&messages.some(prior=>prior.id&&x.client_message_id===marker('matched',prior.id)&&require('./release-list').primary(releaseFromMessage(prior.body))===require('./release-list').primary(releaseFromMessage(m.body))));
+  if(sameAccepted){state='matched';initial=sameAccepted;continue;}
   await send(c,`${kind}-${m.id}`,body);
   const outcome={client_message_id:marker(kind,m.id),direction:'shipping_to_driver',sent_at:new Date(now()).toISOString(),delivery_status:'sent',body};
   messages.push(outcome);

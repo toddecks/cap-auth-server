@@ -1,10 +1,10 @@
 'use strict';
 const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
-const {prepareMap,preparePpe}=require('./checkin-map');
-async function sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages,prepare=[prepareMap,preparePpe]}) {
+const {prepareMap}=require('./checkin-map');
+async function sendBothImages({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,conversation:c,messages,prepare=[prepareMap]}) {
  if(!messages.some(m=>m.direction==='shipping_to_driver'&&m.body?.startsWith('STEP 1')&&!['failed','undelivered'].includes(m.delivery_status)))return;
- const ids=['map','ppe'].map(kind=>`staff-pickup-both-${kind}:${session.key(c)}`);
+ const ids=['map'].map(kind=>`staff-pickup-both-${kind}:${session.key(c)}`);
  if(ids.every(id=>messages.some(m=>m.client_message_id===id)))return;
  if(!await needsImages(db,c,ids))return;
  for(let i=0;i<ids.length;i++){

@@ -3,7 +3,7 @@ const {carrierFromRelease}=require('./release-carrier');
 const row={poRel:'72967',scheduleDate:'2026-11-19',scheduleTime:'10:00:00',location:'PROSPY',unloadingDoor:'BD',carrierName:'Ace Doran'};
 const c={release_number:'72967',facility_id:'csp-toledo-main'};
 const at='2026-11-19T13:00:00Z';
-function chart(rows){return {from(){const q={select(){return q},ilike(){return q},order(){return q},range:async()=>({data:rows})};return q}};}
+function chart(rows){return {from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:rows})};return q}};}
 test('missing carrier filled from confirmed release and merged driver name repaired',async()=>{
  assert.deepEqual(await carrierFromRelease(chart([row]),c,{full_name:'Josue ace Doran'},at),{driver_company:'Ace Doran',full_name:'Josue'});
  assert.deepEqual(await carrierFromRelease(chart([row]),c,{full_name:'Josue'},at),{driver_company:'Ace Doran'});

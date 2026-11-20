@@ -98,7 +98,7 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingPsDepartures: psDepartureWorker.health,
     shippingSmsTranslation: {...require('./sms-translation').health,configured:Boolean(getOpenAIClient())},
     shippingTranslation: driverTranslationWorker.health,
-    shippingCheckinMediaMode: "ray-ppe-and-map-v2",
+    shippingCheckinMediaMode: "map-only-no-ppe-v3",
     shippingStaffCheckinMode: "coil-routing-v2",
     shippingManualArrivalMode: "checked-in-returning-drivers-v5-auto-instructions",
     shippingArrivalEditMode: "name-company-release-v1",
@@ -1392,7 +1392,7 @@ const findOrCreateSmsConversation = async (phone, body) => {
 const rememberSmsDriverUnlocked = async ({ phone, body, conversationCreated, matchedProfile }) => {
   const { data: existing, error: contactError } = await driverSupabase
     .from("driver_sms_contacts")
-    .select("phone_e164,full_name,driver_company,last_release_number,onboarding_step,visit_type,visit_started_at")
+    .select("phone_e164,full_name,driver_company,last_release_number,customer_name,onboarding_step,visit_type,visit_started_at")
     .eq("phone_e164", phone)
     .maybeSingle();
   if (contactError) throw contactError;
@@ -1638,19 +1638,20 @@ app.post(
         try {
           const {data:simulatedAt,error:testError}=await driverSupabase.rpc('shipping_consume_dropoff_test',{target_phone:from,message_id:messageSid});
           if(testError)throw testError;
-          if(simulatedAt)remembered.reply=require('./driver-visit-flow').dropoffReply(simulatedAt);
+          if(simulatedAt)remembered.reply=require('./driver-visit-flow').dropoffReply(simulatedAt,textBody);
         } catch(testError) { console.error('Drop-off test lookup failed:',testError.message); }
       }
 
       // Driver details stay saved, but a closed-office notice replaces further
       // intake prompts when a driver follows up outside Shipping hours.
+      if(await require('./returning-driver').holdIncoming(driverSupabase,conversationId))return res.status(200).send('<Response></Response>');
       if(await releaseValidationWorker.respondAfterHours(conversationId))return res.status(200).send('<Response></Response>');
 
       if (remembered.reply) {
         try {
           let attachment=null,clientMessageId=null;
           const dropoffMap=require('./dropoff-map');
-          if(remembered.reply===dropoffMap.BODY){
+          if(['coils','sheets'].some(kind=>remembered.reply===require('./dropoff-material').directions(kind))){
             const {data:current,error}=await driverSupabase.from('driver_conversations').select('*').eq('id',conversationId).single();
             if(error)throw error;
             attachment=await dropoffMap.attachmentForReply({db:driverSupabase,conversation:current,body:remembered.reply});
