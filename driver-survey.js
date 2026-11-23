@@ -8,7 +8,7 @@ const QUESTIONS=[
  {key:'clear_instructions',text:'Did the text messages clearly explain what you needed to do?',options:['Yes','No']},
  {key:'preferred_method',text:'Which check-in method do you prefer?',options:['Text message','Phone call','No preference']}
 ];
-const INVITATION="Coil Steel Processing Driver Check-In Survey.\n\nComplete our 3-question survey to be entered to win a $50 Visa gift card. [personal survey link]";
+const INVITATION="Coil Steel Processing Driver Check-In Survey.\n\nBe entered to win a $50 Visa gift card by completing our 3-question survey.\n\nClick link below to submit survey. PLEASE DO NOT reply to this message.\n\n[personal survey link]";
 const hash=token=>createHash('sha256').update(String(token)).digest('hex');
 const owner=user=>Boolean(user?.email_confirmed_at&&String(user.email||'').toLowerCase()===OWNER);
 function validate(input){const out={};for(const q of QUESTIONS){if(!q.options.includes(input?.[q.key]))throw Error('Please answer all three questions.');out[q.key]=input[q.key];}if(input?.notes!=null&&(typeof input.notes!=='string'||input.notes.length>2000))throw Error('Please keep notes to 2,000 characters or fewer.');if(input?.notes!=null)out.notes=input.notes.trim();return out;}
