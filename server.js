@@ -55,7 +55,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
-    driverSurveyMode: "public-survey-approved-initial-campaign-v12",
+    driverSurveyMode: "public-survey-initial-delivery-recovery-v13",
     biRecordsAccessMode: "production-shipping-receiving-admin-records-v2",
     progressUpdatesMode: "confirmed-segment-v1",
     fallFestivalMode: "signup-v2",
