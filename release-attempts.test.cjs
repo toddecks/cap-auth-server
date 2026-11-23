@@ -9,7 +9,7 @@ test('three invalid replies, repeat webhook safety, correct release recovery, an
 });
 test('same wrong number in a new message counts as another attempt',async()=>{const f=fixture();f.add('1111');await f.run();f.add('1111');await f.run();assert.deepEqual(f.sent.map(m=>m.body),INVALID.slice(0,2));});
 test('fourth invalid stays at assistance and a subsequent valid number remains accepted',async()=>{const f=fixture();for(let i=0;i<4;i++){f.add('1111');await f.run();}assert.equal(f.sent[3].body,INVALID[2]);f.add('968751');assert.equal((await f.run()).state,'matched')});
-test('database outage and ambiguous partial matches never count as invalid',async()=>{const f=fixture();f.add('9687');await assert.rejects(f.run(async()=>{throw Error('offline')}));assert.equal(f.sent.length,0);assert.equal((await f.run(async()=> 'ambiguous')).state,'ambiguous');assert.deepEqual(f.sent.map(m=>m.body),[AMBIGUOUS]);await f.run();assert.equal(f.sent.length,1);f.add("1111");await f.run();assert.equal(f.sent[1].body,INVALID[0]);});
+test('database outage and ambiguous partial matches never count as invalid',async()=>{const f=fixture();f.add('9687');await assert.rejects(f.run(async()=>{throw Error('offline')}));assert.equal(f.sent.length,0);assert.equal((await f.run(async()=> 'ambiguous')).state,'ambiguous');assert.deepEqual(f.sent.map(m=>m.body),[]);await f.run();assert.equal(f.sent.length,0);f.add("1111");await f.run();assert.equal(f.sent[0].body,INVALID[0]);});
 test('ordinary text and release details before Both pickup phase do not trigger invalid responses',async()=>{const f=fixture();f.add('Thank you');f.add('PICK UP');await f.run();assert.equal(f.sent.length,0);});
 function chart(rows,fail=false){let calls=0;return {get calls(){return calls},from(){let a=0,b=999;const q={select(){return q},or(){return q},ilike(){return q},gte(){return q},lte(){return q},order(){return q},range(x,y){a=x;b=y;calls++;return q},then(f){return Promise.resolve(fail?{error:Error('unavailable')}:{data:rows.slice(a,b+1)}).then(f)}};return q}}}
 const row={scheduleDate:'2026-10-12',scheduleTime:'12:30:00',poRel:'968751/510',location:'PROSPY',unloadingDoor:'MB'};
@@ -29,14 +29,14 @@ test('ambiguous MJ 72147 cannot block later PLS 72207, including retries and res
  ]);
  const lookup=(_,release,c,at)=>lookupRelease(db,release,c,at);
  f.add('MJ 72147');assert.equal((await f.run(lookup)).state,'ambiguous');await f.run(lookup);
- assert.deepEqual(f.sent.map(m=>m.body),[AMBIGUOUS]);
+ assert.deepEqual(f.sent.map(m=>m.body),[]);
  f.add('PLS 72207');assert.equal((await f.run(lookup)).state,'matched');await f.run(lookup);
- assert.deepEqual(f.sent.map(m=>m.body),[AMBIGUOUS,ACCEPTED]);
+ assert.deepEqual(f.sent.map(m=>m.body),[ACCEPTED]);
 });
 test('both ambiguous and corrected messages already queued are processed in one pass',async()=>{
  const f=fixture();f.add('72147');f.add('72207');
  assert.equal((await f.run(async(_,r)=>r==='72147'?'ambiguous':'matched')).state,'matched');
- assert.deepEqual(f.sent.map(m=>m.body),[AMBIGUOUS,ACCEPTED]);
+ assert.deepEqual(f.sent.map(m=>m.body),[ACCEPTED]);
 });
 test('made-up 45678 cannot validate against old 945678; complete reference still matches',async()=>{
  const db=chart([{...row,poRel:'945678',scheduleDate:'2024-04-08'}]);
@@ -94,4 +94,21 @@ test('resuming validation does not replay responses to outage-acknowledged messa
  assert.equal(f.sent.length,1);
  f.add('11111');assert.equal((await f.run()).state,'invalid');assert.equal(f.sent.at(-1).body,INVALID[0]);
  assert.equal((await f.run()).state,'invalid','restart retains the latest validation outcome');
+});
+
+test('silent review survives restart without a transcript entry and later correction remains matched',async()=>{
+ const f=fixture(),saved=[];
+ const silentStore={load:async()=>saved,save:async(_,row)=>saved.push({...row})};
+ f.add('72147');
+ const run=lookup=>processAttempts({c:f.c,messages:f.messages,pickupAt:ENABLED_AT,now:()=>ENABLED_AT+999999,lookup,silentStore,send:async(_,kind,body)=>f.sent.push({kind,body})});
+ assert.equal((await run(async()=> 'ambiguous')).state,'ambiguous');
+ assert.equal(saved.length,1);assert.equal(f.sent.length,0);
+ // Reload only real transcript rows, as a fresh worker does after restart.
+ f.messages.splice(0,f.messages.length,...f.messages.filter(m=>m.id));
+ assert.equal((await run(async()=>{throw Error('must not revalidate a held attempt')})).state,'ambiguous');
+ f.add('968751');assert.equal((await run(async()=> 'matched')).state,'matched');
+ assert.deepEqual(f.sent.map(m=>m.body),[ACCEPTED]);
+ f.messages.splice(0,f.messages.length,...f.messages.filter(m=>m.id||m.body===ACCEPTED));
+ assert.equal((await run(async()=>{throw Error('already handled')})).state,'matched');
+ assert.equal(f.sent.length,1);
 });

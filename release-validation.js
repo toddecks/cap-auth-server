@@ -22,8 +22,8 @@ const officeClosed = timestamp => {
 const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.visit_type) &&
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
-function createWorker({isReturningDriver=require('./returning-driver').held,getOfficeOverride=async()=>null, db, chart, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v30-returning-and-dedupe',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
+function createWorker({isReturningDriver=require('./returning-driver').held,getOfficeOverride=async()=>null, db, chart, silentStore=chart?require('./release-review-store').createStore(chart):undefined, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
+  const health = {mode:'pickup-followups-v31-silent-ambiguous',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -127,7 +127,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     if(!pickupAt)return;
     if(pickupAt < Math.max(Date.parse(ENABLED_AT),now()-24*60*60*1000)) return;
     const verificationAt=c.channel==='sms'&&c.visit_type==='pickup'?session.start(c):pickupAt;
-    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt:verificationAt,send,now,validationEnabled:releaseValidationEnabled});
+    const verification=await require('./release-attempts').processAttempts({chart,c,messages,pickupAt:verificationAt,send,now,validationEnabled:releaseValidationEnabled,silentStore});
     if(c.channel==='app'&&['matched','manual'].includes(verification.state)) {
       const accepted=messages.filter(m=>['matched','manual'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)).at(-1);
       const attempt=accepted&&messages.find(m=>['matched','manual'].some(kind=>accepted.client_message_id===`release-wait:${kind}-${m.id}:${session.key(c)}`));

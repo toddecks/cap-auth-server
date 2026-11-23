@@ -31,7 +31,7 @@ async function lookupRelease(chart,release,c,at){
  const match=doorMatches(rows,[release],date)[key+':'+location];
  return !match?'invalid':match.status==='ambiguous'?'ambiguous':'matched';
 }
-async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease,validationEnabled=true}){
+async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease,validationEnabled=true,silentStore}){
  const key=session.key(c);
  const marker=(kind,id)=>`release-wait:${kind}-${id}:${key}`;
  // Temporary PS outage mode: record receipt for staff review without querying
@@ -47,7 +47,15 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
   messages.push(initial);
   return {state:'manual',initial};
  }
- const outcomes=messages.filter(m=>['invalid','matched','ambiguous','manual'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at));
+ // Private outcomes preserve manual-review state without creating a chat message.
+ if(silentStore){
+  const saved=await silentStore.load(c.id);
+  for(const outcome of saved)if(outcome.client_message_id.endsWith(':'+key)&&!messages.some(m=>m.client_message_id===outcome.client_message_id))messages.push(outcome);
+ }
+ const outcomes=messages.filter(m=>['invalid','matched','ambiguous','manual'].some(kind=>m.client_message_id?.startsWith(`release-wait:${kind}-`))).sort((a,b)=>{
+  const attemptedAt=outcome=>{const attempt=messages.find(m=>m.id&&['invalid','matched','ambiguous','manual'].some(kind=>outcome.client_message_id===marker(kind,m.id)));return Date.parse(attempt?.sent_at||outcome.sent_at);};
+  return attemptedAt(a)-attemptedAt(b);
+ });
  let count=0,state=null,initial=null;
  for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:manual-')){count=0;state='manual';initial=m;}else if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}
  const attempts=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
@@ -61,8 +69,12 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
   const body=result==='ambiguous'?AMBIGUOUS:result==='matched'?ACCEPTED:INVALID[Math.min(count,2)];
   const sameAccepted=kind==='matched'&&messages.find(x=>x.client_message_id?.startsWith('release-wait:matched-')&&messages.some(prior=>prior.id&&x.client_message_id===marker('matched',prior.id)&&require('./release-list').primary(releaseFromMessage(prior.body))===require('./release-list').primary(releaseFromMessage(m.body))));
   if(sameAccepted){state='matched';initial=sameAccepted;continue;}
-  await send(c,`${kind}-${m.id}`,body);
+  if(kind!=='ambiguous')await send(c,`${kind}-${m.id}`,body);
   const outcome={client_message_id:marker(kind,m.id),direction:'shipping_to_driver',sent_at:new Date(now()).toISOString(),delivery_status:'sent',body};
+  if(kind==='ambiguous'){
+   outcome.body='';
+   if(silentStore)await silentStore.save(c.id,outcome);
+  }
   messages.push(outcome);
   if(result==='matched'){count=0;state='matched';initial=outcome;}else if(result==='ambiguous'){state='ambiguous';}else{count++;state='invalid';}
  }

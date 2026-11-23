@@ -12,7 +12,8 @@ function fixture(channel='sms') {
    if(op==='update')rows.forEach(r=>Object.assign(r,value));
    rows=rows.slice(start,end+1);return Promise.resolve({data:q.singleRow?(rows[0]||null):rows,error:null}).then(resolve,reject);
   }catch(e){return Promise.reject(e).then(resolve,reject)}}};return q;}};
- const options={db,isReturningDriver:async()=>false,releaseValidationEnabled:true,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
+ const reviews=[];
+ const options={db,silentStore:{load:async()=>reviews,save:async(_,row)=>reviews.push(row)},isReturningDriver:async()=>false,releaseValidationEnabled:true,twilio:{messages:{async create(message){sends.push(message);return {sid:'SM'+sends.length,status:'sent'}}}},messagingServiceSid:'test',publicBaseUrl:'https://example.test',now:()=>clock};
  return {tables,sends,checkouts,options,worker:createWorker(options),advance(ms){clock+=ms}};
 }
 test('exact initial reply and three- and five-minute follow-ups, persistent across restart',async()=>{
