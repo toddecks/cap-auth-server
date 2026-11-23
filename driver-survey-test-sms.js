@@ -1,7 +1,7 @@
 'use strict';
 const{randomBytes,createHash}=require('node:crypto');
-const APPROVAL='20261123-survey-test-1',PHONES=['+14199732000','+14193460240'];
-const BODY=url=>'TEST - Coil Steel Processing Driver Check-In Survey. Complete our 3-question survey to be entered to win a $50 Visa gift card. Please respond when safely parked: '+url+' Reply STOP to opt out.';
+const APPROVAL='20261123-survey-test-2',PHONES=['+14199732000','+14193460240'];
+const BODY=url=>'Coil Steel Processing Driver Check-In Survey.\n\nComplete our 3-question survey to be entered to win a $50 Visa gift card. '+url;
 function createSender({db,twilio,messagingServiceSid}){
  async function existing(phone){const r=await db.from('driver_survey_sms_tests').select('phone_e164,status,provider_message_id,error_code').eq('approval_key',APPROVAL).eq('phone_e164',phone).maybeSingle();if(r.error)throw r.error;return r.data;}
  async function send(){
