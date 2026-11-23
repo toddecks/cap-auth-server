@@ -1,6 +1,8 @@
 'use strict';
 const {createHash,randomBytes}=require('node:crypto');
 const CAMPAIGN='driver-checkin-20261123',OWNER='todd@coilsteelprocessing.com';
+const RESULT_READERS=new Set([OWNER,'lindsey@coilsteelprocessing.com']);
+const canReadResults=user=>Boolean(user?.email_confirmed_at&&RESULT_READERS.has(String(user.email||'').toLowerCase()));
 const QUESTIONS=[
  {key:'easy_to_use',text:'Was the text message check-in process easy to use?',options:['Yes','No']},
  {key:'clear_instructions',text:'Did the text messages clearly explain what you needed to do?',options:['Yes','No']},
@@ -40,7 +42,8 @@ function publicIdentity(input={}){
 }
 function register(app,{db,driver,auth,consumeAttempt}){
  const fail=(res)=>res.status(503).json({error:'The survey is temporarily unavailable. Please try again.'});
- async function requireOwner(req,res,next){res.set('Cache-Control','no-store');const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return res.status(401).json({error:'Sign in with your CSP account.'});try{const r=await auth.auth.getUser(token);if(r.error||!r.data?.user)return res.status(401).json({error:'Please sign in again.'});if(!owner(r.data.user))return res.status(403).json({error:'This survey is restricted to its owner.'});return next();}catch{return fail(res);}}
+ const verifyAccess=allowed=>async(req,res,next)=>{res.set('Cache-Control','no-store');const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return res.status(401).json({error:'Sign in with your CSP account.'});try{const r=await auth.auth.getUser(token);if(r.error||!r.data?.user)return res.status(401).json({error:'Please sign in again.'});if(!allowed(r.data.user))return res.status(403).json({error:'You do not have access to these survey results.'});req.surveyUser=r.data.user;return next();}catch{return fail(res);}};
+ const requireOwner=verifyAccess(owner),requireResults=verifyAccess(canReadResults);
  async function invitation(token){if(!/^[A-Za-z0-9_-]{32,64}$/.test(String(token||'')))return null;const r=await db.from('driver_survey_invitations').select('id,expires_at,is_test').eq('campaign',CAMPAIGN).eq('token_hash',hash(token)).maybeSingle();if(r.error)throw r.error;return r.data&&Date.parse(r.data.expires_at)>Date.now()?r.data:null;}
  app.get('/api/driver-survey/config',(_req,res)=>{res.set('Cache-Control','no-store');res.json({title:'Driver Check-In Survey',questions:QUESTIONS,publicSubmissionsEnabled:true,sendingEnabled:false});});
  app.post('/api/driver-survey/check',async(req,res)=>{res.set('Cache-Control','no-store');if(!consumeAttempt(req,'driver-survey-check'))return res.status(429).json({error:'Please wait a few minutes before trying again.'});try{const invite=await invitation(req.body?.token);if(!invite)return res.status(404).json({error:'Please use the personal survey link in your invitation.'});const r=await db.from('driver_survey_responses').select('invitation_id').eq('invitation_id',invite.id).maybeSingle();if(r.error)throw r.error;res.json({valid:true,submitted:Boolean(r.data),isTest:invite.is_test});}catch{return fail(res);}});
@@ -62,8 +65,8 @@ function register(app,{db,driver,auth,consumeAttempt}){
  app.post('/api/driver-survey/owner/test-link',requireOwner,async(req,res)=>{if(!consumeAttempt(req,'driver-survey-test-link'))return res.status(429).json({error:'Please wait a few minutes before creating another test.'});try{const token=randomBytes(24).toString('base64url');const r=await db.from('driver_survey_invitations').insert({campaign:CAMPAIGN,token_hash:hash(token),is_test:true,phone_e164:null,driver_name:'Owner test',driver_company:'Test response',last_checked_in_at:new Date().toISOString(),delivery_status:'test'});if(r.error)throw r.error;res.json({url:'https://coilsteelprocessing.com/driver-survey/#'+token,sendingEnabled:false});}catch{return fail(res);}});
  app.get('/api/driver-survey/owner/recipients',requireOwner,async(_req,res)=>{try{const preview=await recipientPreview(driver);res.json({...preview,count:preview.recipients.length,invitation:INVITATION,sendingEnabled:false});}catch{return fail(res);}});
  async function results(){const invites=await pages(()=>db.from('driver_survey_invitations').select('id,driver_name,driver_company,phone_e164,sent_at,delivery_status,is_test').eq('campaign',CAMPAIGN).order('created_at').order('id'));const responses=await pages(()=>db.from('driver_survey_responses').select('*').order('submitted_at').order('invitation_id'));const map=new Map(invites.map(row=>[row.id,row]));return{invited:invites.filter(row=>row.sent_at).length,rows:responses.filter(row=>map.has(row.invitation_id)).map(row=>({...map.get(row.invitation_id),...row}))};}
- app.get('/api/driver-survey/owner/results',requireOwner,async(_req,res)=>{try{res.json({...await results(),sendingEnabled:false});}catch{return fail(res);}});
- app.get('/api/driver-survey/owner/results.csv',requireOwner,async(_req,res)=>{try{res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="driver-checkin-survey.csv"'});res.send(csv((await results()).rows));}catch{return fail(res);}});
+ app.get('/api/driver-survey/owner/results',requireResults,async(req,res)=>{try{res.json({...await results(),canManage:owner(req.surveyUser),sendingEnabled:false});}catch{return fail(res);}});
+ app.get('/api/driver-survey/owner/results.csv',requireResults,async(_req,res)=>{try{res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="driver-checkin-survey.csv"'});res.send(csv((await results()).rows));}catch{return fail(res);}});
  // Sending is deliberately absent. No scheduler, campaign worker, or send route.
 }
-module.exports={register,owner,validate,publicIdentity,mergeRecipients,QUESTIONS,CAMPAIGN,INVITATION,hash,csv};
+module.exports={register,owner,canReadResults,validate,publicIdentity,mergeRecipients,QUESTIONS,CAMPAIGN,INVITATION,hash,csv};
