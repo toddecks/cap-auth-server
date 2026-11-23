@@ -55,7 +55,7 @@ app.get("/", (req, res) => {
 app.get("/api/deploy-status", (_req, res) => {
   res.json({
     service: "cap-auth-server",
-    driverSurveyMode: "public-survey-todd-lindsey-results-v5",
+    driverSurveyMode: "public-survey-approved-two-number-test-v6",
     biRecordsAccessMode: "production-shipping-receiving-admin-records-v2",
     progressUpdatesMode: "confirmed-segment-v1",
     fallFestivalMode: "signup-v2",
@@ -6608,7 +6608,7 @@ require("./forms-hub").register(app, {auth:supabase,chart:chartSupabase,roleRows
 
 require("./guest").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, recipients:["todd@coilsteelprocessing.com"], resolveRecipients:require("./guest-recipients").createGuestRecipientResolver(listAllAuthUsers)});
 
-require('./driver-survey').register(app,{db:chartSupabase,driver:driverSupabase,auth:supabase,consumeAttempt:consumeShippingAuthAttempt});
+require('./driver-survey').register(app,{db:chartSupabase,driver:driverSupabase,auth:supabase,consumeAttempt:consumeShippingAuthAttempt,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID});
 require("./town-hall").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
 
 require("./veterans-day").register(app, {db:chartSupabase, sendEmail:sendFantasyFootballEmail, escapeHtml, consumeAttempt:consumeShippingAuthAttempt});
