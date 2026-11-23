@@ -5,9 +5,10 @@ create table public.driver_survey_invitations (
  is_test boolean not null default false,
  phone_e164 text check(phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
  driver_name text not null default '', driver_company text not null default '',
- last_checked_in_at timestamptz not null,
+ last_checked_in_at timestamptz,
  created_at timestamptz not null default now(), expires_at timestamptz not null default (now()+interval '90 days'),
  sent_at timestamptz, provider_message_id text, delivery_status text not null default 'prepared',
+ check (last_checked_in_at is not null or delivery_status='public'),
  check (is_test or phone_e164 is not null),
  unique(campaign,phone_e164)
 );
@@ -16,6 +17,7 @@ create table public.driver_survey_responses (
  easy_to_use text not null check(easy_to_use in ('Yes','No')),
  clear_instructions text not null check(clear_instructions in ('Yes','No')),
  preferred_method text not null check(preferred_method in ('Text message','Phone call','No preference')),
+ response_source text not null default 'personal_link' check(response_source in ('personal_link','public')),
  notes text not null default '' check(char_length(notes)<=2000),
  submitted_at timestamptz not null default now()
 );
