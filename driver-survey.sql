@@ -2,11 +2,13 @@ create table public.driver_survey_invitations (
  id uuid primary key default gen_random_uuid(),
  campaign text not null default 'driver-checkin-20261123' check(campaign='driver-checkin-20261123'),
  token_hash text not null unique check(token_hash ~ '^[a-f0-9]{64}$'),
- phone_e164 text not null check(phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
+ is_test boolean not null default false,
+ phone_e164 text check(phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
  driver_name text not null default '', driver_company text not null default '',
  last_checked_in_at timestamptz not null,
  created_at timestamptz not null default now(), expires_at timestamptz not null default (now()+interval '90 days'),
  sent_at timestamptz, provider_message_id text, delivery_status text not null default 'prepared',
+ check (is_test or phone_e164 is not null),
  unique(campaign,phone_e164)
 );
 create table public.driver_survey_responses (
