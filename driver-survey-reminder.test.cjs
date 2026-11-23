@@ -1,0 +1,3 @@
+const{test}=require('node:test'),assert=require('node:assert/strict'),{DRAFT,unanswered}=require('./driver-survey-reminder');
+test('Wednesday reminder remains unarmed and uses November 25 at 10 AM Eastern',()=>{assert.equal(DRAFT.status,'awaiting_approval');assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:DRAFT.timeZone,weekday:'long',hour:'numeric',minute:'2-digit'}).format(new Date(DRAFT.sendAt)),'Wednesday 10:00 AM');});
+test('reminder excludes completed drivers by phone, ignoring test answers',()=>{const eligible=[{phone_e164:'+14195550100'},{phone_e164:'+14195550101'},{phone_e164:'+14195550102'}];assert.deepEqual(unanswered(eligible,[{phone_e164:'+14195550100',is_test:false},{phone_e164:'+14195550101',is_test:true}]),eligible.slice(1));});
