@@ -9,7 +9,7 @@ const QUESTIONS=[
 const INVITATION="Coil Steel Processing: We'd appreciate your feedback on driver check-in. Please take this 3-question survey when safely parked: [personal survey link] Reply STOP to opt out.";
 const hash=token=>createHash('sha256').update(String(token)).digest('hex');
 const owner=user=>Boolean(user?.email_confirmed_at&&String(user.email||'').toLowerCase()===OWNER);
-function validate(input){const out={};for(const q of QUESTIONS){if(!q.options.includes(input?.[q.key]))throw Error('Please answer all three questions.');out[q.key]=input[q.key];}return out;}
+function validate(input){const out={};for(const q of QUESTIONS){if(!q.options.includes(input?.[q.key]))throw Error('Please answer all three questions.');out[q.key]=input[q.key];}if(input?.notes!=null&&(typeof input.notes!=='string'||input.notes.length>2000))throw Error('Please keep notes to 2,000 characters or fewer.');if(input?.notes!=null)out.notes=input.notes.trim();return out;}
 async function rows(query){const r=await query;if(r.error)throw r.error;return r.data||[];}
 async function pages(makeQuery){let all=[];for(let offset=0;;offset+=500){const page=await rows(makeQuery().range(offset,offset+499));all.push(...page);if(page.length<500)return all;}}
 function mergeRecipients(sms,app,profiles){
@@ -28,7 +28,7 @@ async function recipientPreview(driver){
  for(let i=0;i<ids.length;i+=100)profiles.push(...await rows(driver.from('driver_profiles').select('user_id,phone_e164,full_name,driver_company').in('user_id',ids.slice(i,i+100))));
  return mergeRecipients(sms,app,profiles);
 }
-function csv(rows){const keys=['driver_name','driver_company','phone_e164','easy_to_use','clear_instructions','preferred_method','submitted_at'];const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';return '\uFEFF'+[keys.map(cell).join(','),...rows.map(row=>keys.map(key=>cell(row[key])).join(','))].join('\r\n');}
+function csv(rows){const keys=['driver_name','driver_company','phone_e164','easy_to_use','clear_instructions','preferred_method','notes','submitted_at'];const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';return '\uFEFF'+[keys.map(cell).join(','),...rows.map(row=>keys.map(key=>cell(row[key])).join(','))].join('\r\n');}
 function register(app,{db,driver,auth,consumeAttempt}){
  const fail=(res)=>res.status(503).json({error:'The survey is temporarily unavailable. Please try again.'});
  async function requireOwner(req,res,next){res.set('Cache-Control','no-store');const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token)return res.status(401).json({error:'Sign in with your CSP account.'});try{const r=await auth.auth.getUser(token);if(r.error||!r.data?.user)return res.status(401).json({error:'Please sign in again.'});if(!owner(r.data.user))return res.status(403).json({error:'This survey is restricted to its owner.'});next();}catch{return fail(res);}}

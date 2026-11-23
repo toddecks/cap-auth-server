@@ -14,6 +14,7 @@ create table public.driver_survey_responses (
  easy_to_use text not null check(easy_to_use in ('Yes','No')),
  clear_instructions text not null check(clear_instructions in ('Yes','No')),
  preferred_method text not null check(preferred_method in ('Text message','Phone call','No preference')),
+ notes text not null default '' check(char_length(notes)<=2000),
  submitted_at timestamptz not null default now()
 );
 alter table public.driver_survey_invitations enable row level security;
