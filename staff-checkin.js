@@ -21,33 +21,37 @@ function createHandler(deps) {
    if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
    let preparedInstructions;
-   try {preparedInstructions=deps.routingEnabled===true?await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor,true):deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:await require('./pickup-directions').automaticPickupInstructions(deps.chartDb,c);}
+   const deferred=typeof deps.enqueueInstructions==='function';
+   try {preparedInstructions=deps.routingEnabled===true?await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor,true):deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:deferred?undefined:await require('./pickup-directions').automaticPickupInstructions(deps.chartDb,c);}
    catch(error){return res.status(409).json({error:error.message,code:'LOADING_DOOR_REQUIRED'});}
+   const [priorResult,contactResult,arrivalResult]=await Promise.all([
+    db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle(),
+    c.channel==='sms'?db.from('driver_sms_contacts').select('full_name,driver_company').eq('phone_e164',c.sms_phone_e164).single():Promise.resolve({data:null}),
+    c.channel==='sms'?db.from('driver_sms_arrivals').select('id').eq('conversation_id',id).is('departed_at',null).maybeSingle():Promise.resolve({data:null})
+   ]);
+   const {data:priorCheckin,error:priorError}=priorResult;
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){
-    const {data:contact,error:e}=await db.from('driver_sms_contacts').select('*').eq('phone_e164',c.sms_phone_e164).single();
+    const {data:contact,error:e}=contactResult;
     if(e||!driverName(contact?.full_name)||!cleanIdentity(contact?.driver_company))return res.status(409).json({error:'Complete the driver name and company before checking in.'});
-    const {data:existing,error:ee}=await db.from('driver_sms_arrivals').select('id').eq('conversation_id',id).is('departed_at',null).maybeSingle();
-    if(ee)throw ee;
-    arrivalId=existing?.id;
+    if(arrivalResult.error)throw arrivalResult.error;
+    arrivalId=arrivalResult.data?.id;
     if(!arrivalId){
      const {data:arrival,error:ae}=await db.from('driver_sms_arrivals').insert({phone_e164:c.sms_phone_e164,conversation_id:id,facility_id:c.facility_id,release_number:c.release_number,driver_name:contact.full_name,driver_company:contact.driver_company,visit_type:c.visit_type,added_by:staff.id}).select('id').single();
      if(ae)throw ae;arrivalId=arrival.id;
     }
    }
-   const {data:priorCheckin,error:priorError}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle();
    if(priorError)throw priorError;
    const alreadyChecked=require('./visit-session').currentCheckin(c,priorCheckin);
-   const {error:writeError}=alreadyChecked?{error:null}:await db.from('shipping_staff_checkins').upsert({conversation_id:id,checked_in_by:staff.id,checked_in_at:new Date().toISOString()},{onConflict:'conversation_id'});
+   const {data:verified,error:writeError}=alreadyChecked?{data:priorCheckin}:await db.from('shipping_staff_checkins').upsert({conversation_id:id,checked_in_by:staff.id,checked_in_at:new Date().toISOString()},{onConflict:'conversation_id'}).select('checked_in_at').single();
    if(writeError)throw writeError;
-   const {data:verified,error:ve}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).single();
-   if(ve)throw ve;
    require('./manual-reply-pause').clear(c);
    if(c.channel==='sms'){const {error:e}=await db.from('driver_sms_arrivals').update({checked_in_at:verified.checked_in_at}).eq('id',arrivalId);if(e)throw e;}
-   let warning=null;
-   try {await sendCheckinInstructions({...deps,conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type,preparedInstructions});}
+   let warning=null,instructionsJobId=null;
+   try {const payload={conversation:c,arrivalId,staffId:staff.id,visitType:c.visit_type,preparedInstructions};
+    if(deferred)instructionsJobId=await deps.enqueueInstructions(payload);else await sendCheckinInstructions({...deps,...payload});}
    catch(error){console.error('Staff check-in instructions:',error.message);warning='Check-in recorded, but instructions could not be confirmed. Review the conversation before sending them manually.';}
-   return res.json({ok:true,arrivalId,checkedInAt:verified.checked_in_at,warning});
+   return res.json({ok:true,arrivalId,checkedInAt:verified.checked_in_at,warning,instructionsJobId});
   } catch(error){console.error('Staff check-in:',error.message);return res.status(500).json({error:'Check-in could not be completed. Refresh and try again.'});}
  };
 }

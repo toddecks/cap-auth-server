@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createHandler}=require('./staff-checkin');
 const {dropoffReply,PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {sendCheckinInstructions}=require('./checkin-instructions');
-function harness(role='shipping',channel='app',visitType='pickup',loads=[{poRel:'12345',scheduleDate:'2026-11-11',location:'PROSPY',unloadingDoor:'MB'}],releaseHold=null,routingEnabled=undefined){
+function harness(role='shipping',channel='app',visitType='pickup',loads=[{poRel:'12345',scheduleDate:'2026-11-11',location:'PROSPY',unloadingDoor:'MB'}],releaseHold=null,routingEnabled=undefined,enqueueInstructions){
  const messages=[],checks=[],arrivals=[];let clock=0;
  const db={storage:{from:()=>({upload:async()=>({}),createSignedUrl:async()=>({data:{signedUrl:"https://example.invalid/test.png"}})})},auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){let op='read',value,singular=false;const q={select(){return q},ilike(){return q},in(){return q},or(){return q},not(){return q},neq(){return q},limit(){return q},eq(){return q},single(){singular=true;return q},maybeSingle(){singular=true;return q},is(){return q},update(v){op='update';value=v;return q},upsert(v){op='write';value=v;return q},insert(v){op='insert';value=v;return q},then(resolve){
   if(table==='driver_conversations'&&!singular)return Promise.resolve({data:[]}).then(resolve);
@@ -14,7 +14,7 @@ function harness(role='shipping',channel='app',visitType='pickup',loads=[{poRel:
   if(table==='driver_messages'){if(op==='update')return Promise.resolve({data:null}).then(resolve);if(op==='read')return Promise.resolve({data:[]}).then(resolve);if(messages.some(m=>m.client_message_id===value.client_message_id))return Promise.resolve({error:{code:'23505'}}).then(resolve);messages.push(value);return Promise.resolve({data:{id:1}}).then(resolve);}
   throw Error('Unexpected table '+table);
  }};return q;}};
- const handler=createHandler({routingEnabled,db,twilio:{messages:{create:async()=>({sid:'test',status:'sent'})}},messagingServiceSid:'test',publicBaseUrl:'https://example.invalid',chartDb:{from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:loads})};return q;}}});
+ const handler=createHandler({enqueueInstructions,routingEnabled,db,twilio:{messages:{create:async()=>({sid:'test',status:'sent'})}},messagingServiceSid:'test',publicBaseUrl:'https://example.invalid',chartDb:{from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:loads})};return q;}}});
  async function call(verified=true,dropOffComplete=false,loadingDoor=''){let status=200,payload;await handler({headers:{authorization:'Bearer token'},body:{conversationId:'12345678-1234-1234-1234-123456789abc',releaseVerified:verified,dropOffComplete,loadingDoor}},{set(){},status(n){status=n;return this},json(p){payload=p;return this}});return{status,payload};}
  return {call,messages,checks,arrivals};
 }
@@ -61,4 +61,15 @@ for(const channel of ['app','sms'])test(`${channel}: default check-in with an un
  assert.equal((await h.call(false)).status,200);assert.equal(h.checks.length,1);
  assert.equal(h.messages[0].body,require('./pickup-directions').UNKNOWN_CHECKIN);
  assert(!h.messages.some(m=>/LEFT|RIGHT|PPE/.test(m.body)));
+});
+
+test('saving Check In does not wait for routing, maps, translation or provider delivery',async()=>{
+ const jobs=[];
+ const h=harness('shipping','sms','pickup',[],null,undefined,async payload=>{jobs.push(payload);return 'job-id';});
+ const response=await h.call();assert.equal(response.status,200);assert.equal(h.checks.length,1);assert.equal(h.arrivals[0].checked_in_at,response.payload.checkedInAt);
+ assert.equal(response.payload.instructionsJobId,'job-id');assert.equal(jobs.length,1);assert.equal(jobs[0].preparedInstructions,undefined);assert.equal(h.messages.length,0);
+});
+test('instruction queue failure reports a warning without undoing the saved check-in',async()=>{
+ const h=harness('shipping','app','pickup',[],null,undefined,async()=>{throw Error('queue offline')});
+ const response=await h.call();assert.equal(response.status,200);assert.equal(h.checks.length,1);assert.match(response.payload.warning,/Check-in recorded/);
 });

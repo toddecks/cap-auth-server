@@ -62,7 +62,7 @@ test('office hours use Eastern time at exact boundaries and in winter',()=>{
 test('after-hours pickup gets one closed reply and no daytime reminders',async()=>{
  const f=fixture();f.advance(5*60*60*1000);f.tables.driver_conversations[0].created_at='2026-10-01T22:00:00Z';await f.worker.tick();f.advance(301000);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[CLOSED]);
 });
-function checkedFixture(){const f=fixture();f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:00:00Z'});f.tables.driver_messages.push({client_message_id:'staff-pickup-checkin:visit-1',conversation_id:'visit-1',sent_at:'2026-10-01T17:00:00Z',delivery_status:'sent',sender_user_id:'staff',direction:'shipping_to_driver'});return f;}
+function checkedFixture(){const f=fixture();f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:00:00Z'});f.tables.driver_messages.push({client_message_id:'staff-pickup-checkin:visit-1',conversation_id:'visit-1',sent_at:'2026-10-01T17:00:00Z',delivery_status:'sent',provider_message_id:'SM-checkin',sender_user_id:'staff',direction:'shipping_to_driver'});return f;}
 test('one-minute pickup followup stays active without timed checkout',async()=>{
  const f=checkedFixture();f.advance(59999);await f.worker.tick();assert.equal(f.sends.length,0);
  f.advance(1);await createWorker(f.options).tick();assert.deepEqual(f.sends.map(m=>m.body),[REMAIN]);
@@ -99,7 +99,7 @@ test('Both sends no pickup reminders until check-in; then one follow-up at sixty
  const f=fixture();f.tables.driver_conversations[0].visit_type='both';
  await f.worker.tick();f.advance(600000);await f.worker.tick();assert.equal(f.sends.length,0);
  f.tables.shipping_staff_checkins.push({conversation_id:'visit-1',checked_in_at:'2026-10-01T17:10:00Z'});
- f.tables.driver_messages.push({conversation_id:'visit-1',client_message_id:'staff-pickup-checkin:visit-1',sent_at:'2026-10-01T17:10:00Z',delivery_status:'sent',sender_user_id:'staff',direction:'shipping_to_driver'});
+ f.tables.driver_messages.push({conversation_id:'visit-1',client_message_id:'staff-pickup-checkin:visit-1',sent_at:'2026-10-01T17:10:00Z',delivery_status:'sent',provider_message_id:'SM-checkin',sender_user_id:'staff',direction:'shipping_to_driver'});
  f.advance(59999);await f.worker.tick();assert.equal(f.sends.length,0);
  f.advance(1);await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[REMAIN]);
  await createWorker(f.options).tick();assert.equal(f.sends.length,1);
@@ -444,7 +444,13 @@ for(const channel of ['sms','app'])test(`${channel}: verifying acknowledgement s
  f.advance(6*3600000);await createWorker(f.options).tick();
  assert.equal(f.tables.driver_messages.length,baseline+4);assert.equal(f.sends.length,0);
  const at=new Date(f.options.now()).toISOString();f.tables.shipping_staff_checkins.push({conversation_id:c.id,checked_in_at:at});
- f.tables.driver_messages.push({conversation_id:c.id,client_message_id:`staff-pickup-checkin:${c.id}`,direction:'shipping_to_driver',sender_user_id:'staff',body:require('./driver-visit-flow').PICKUP_CHECKIN,sent_at:at,delivery_status:'sent'});
+ f.tables.driver_messages.push({conversation_id:c.id,client_message_id:`staff-pickup-checkin:${c.id}`,direction:'shipping_to_driver',sender_user_id:'staff',body:require('./driver-visit-flow').PICKUP_CHECKIN,sent_at:at,delivery_status:'sent',provider_message_id:'SM-checkin'});
  f.advance(60000);await createWorker(f.options).tick();
  assert.equal(f.tables.driver_messages.at(-1).body,REMAIN);
+});
+
+test('one-minute reminder waits until queued check-in instructions have a provider acceptance',async()=>{
+ const f=checkedFixture();f.tables.driver_messages[0].delivery_status='queued';delete f.tables.driver_messages[0].provider_message_id;
+ f.advance(60000);await f.worker.tick();assert.equal(f.sends.length,0);
+ f.tables.driver_messages[0].provider_message_id='SM-accepted';await f.worker.tick();assert.equal(f.sends.length,1);
 });

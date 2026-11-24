@@ -45,7 +45,7 @@ function createHandler(deps) {
    const routing=appointment?.door&&appointment.status!=='ambiguous'?(String(appointment.door).trim().toUpperCase()==='COIL'?'COIL':'OTHER'):input.loadingDoor;
    if(!routing)return res.status(409).json({code:'LOADING_DOOR_REQUIRED',error:'Select COIL (RIGHT) or Other loading door (LEFT) so the driver receives the correct check-in instructions.'});
    preparedInstructions=await require('./pickup-directions').pickupInstructions(null,{},new Date(timestamp),routing,true);
-   }else preparedInstructions=deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:await require('./pickup-directions').automaticPickupInstructions(chartDb,{release_number:input.releaseNumber,facility_id:facilityId},new Date(timestamp));
+   }else preparedInstructions=deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:deps.enqueueInstructions?undefined:await require('./pickup-directions').automaticPickupInstructions(chartDb,{release_number:input.releaseNumber,facility_id:facilityId},new Date(timestamp));
    const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at,entered_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).order('entered_at',{ascending:false}).limit(50);
    if(active.error)throw active.error;
    const readConversation=async id=>{
@@ -83,9 +83,11 @@ function createHandler(deps) {
     const updated=await db.from('driver_conversations').update({release_number:input.releaseNumber,visit_type:'pickup'}).eq('id',conversationId);
     if(updated.error)throw updated.error;
    };
+   let instructionsJobId=null;
    const notify=async arrivalId=>{
     try{
-     await sendInstructions({...deps,conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions,alwaysSendPpe:true});
+     const payload={conversation:{...currentVisit,id:conversationId,channel:'sms',sms_phone_e164:input.phone,facility_id:facilityId,release_number:input.releaseNumber,visit_type:'pickup'},arrivalId,staffId:staff.id,visitType:'pickup',preparedInstructions};
+     if(deps.enqueueInstructions)instructionsJobId=await deps.enqueueInstructions(payload);else await sendInstructions({...deps,...payload});
      return null;
     }catch(error){console.error('Manual arrival instructions:',error.message);return 'Check-in recorded, but the automatic instructions could not be confirmed. Review the conversation for failed messages.';}
    };
@@ -93,7 +95,7 @@ function createHandler(deps) {
     const normalize=value=>String(value||'').normalize('NFKC').toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(normalize(existing.release_number)!==normalize(input.releaseNumber))return res.status(409).json({error:'This driver is already checked in with a different release. Edit their existing arrival card instead.',arrivalId:existing.id,conversationId});
     await reconcileConversation();
-    return res.json({ok:true,arrivalId:existing.id,conversationId,checkedInAt,appointment,alreadyAdded:true,warning:await notify(existing.id)});
+    return res.json({ok:true,arrivalId:existing.id,conversationId,checkedInAt,appointment,alreadyAdded:true,warning:await notify(existing.id),instructionsJobId});
    }
    const contact=await db.from('driver_sms_contacts').upsert({phone_e164:input.phone,full_name:input.driverName,driver_company:input.driverCompany,last_release_number:input.releaseNumber,visit_type:'pickup',onboarding_step:'ready',updated_at:timestamp},{onConflict:'phone_e164'});
    if(contact.error)throw contact.error;
@@ -111,7 +113,7 @@ function createHandler(deps) {
    // The shared sender provides first-visit images and per-visit message IDs.
    // Its check-in message also activates the existing one-minute follow-up.
    const warning=await notify(arrival.data.id);
-   return res.json({ok:true,arrivalId:arrival.data.id,conversationId,checkedInAt:timestamp,appointment,recovered:Boolean(existing),warning});
+   return res.json({ok:true,arrivalId:arrival.data.id,conversationId,checkedInAt:timestamp,appointment,recovered:Boolean(existing),warning,instructionsJobId});
 
   }catch(e){console.error('Manual arrival:',e.message);return res.status(500).json({error:'The driver could not be added. Refresh arrivals before trying again.'});}
   finally{if(locked)pending.delete(input.phone);}

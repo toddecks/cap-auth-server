@@ -2,18 +2,25 @@
 const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
 const {prepareMap}=require('./checkin-map');
-async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions,alwaysSendPpe=false}){
- if(!['pickup','both'].includes(visitType))return null;
+async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions,alwaysSendPpe=false,requireDeliveryConfirmation=false,isCurrent=async()=>true}){
+ if(!['pickup','both'].includes(visitType)||!await isCurrent())return null;
  const instructions=preparedInstructions||await require('./pickup-directions').automaticPickupInstructions(chartDb,conversation);
  const includeImages=await needsImages(db,conversation);
  async function sendOnce(id,body,attachment) {
   const {data:message,error}=await db.from('driver_messages').insert({...attachment?.fields,client_message_id:id,conversation_id:conversation.id,sender_user_id:staffId,direction:'shipping_to_driver',driver_phone:conversation.sms_phone_e164,body,original_body:body,original_language:'English',sent_at:new Date().toISOString(),delivery_status:conversation.channel==='sms'?'queued':'sent'}).select('id').single();
-  if(error?.code==='23505')return;
+  if(error?.code==='23505'){
+   if(!requireDeliveryConfirmation||conversation.channel!=='sms')return;
+   const prior=await db.from('driver_messages').select('provider_message_id,delivery_status').eq('client_message_id',id).maybeSingle();
+   if(prior.error)throw prior.error;
+   if(prior.data?.provider_message_id&&!['failed','undelivered'].includes(prior.data.delivery_status))return;
+   throw Error('A prior instruction message has no confirmed provider result. Review the conversation before sending manually.');
+  }
   if(error)throw error;
   if(conversation.channel!=='sms')return;
   try{
    if(!twilio||!messagingServiceSid)throw Error('Text messaging is not configured.');
    const delivery=await require('./sms-translation').prepareOutgoing(db,conversation,body);
+   if(!await isCurrent()){await db.from('driver_messages').update({delivery_status:'failed',provider_error_message:'Visit ended before instructions were sent.'}).eq('id',message.id);return;}
    const sent=await twilio.messages.create({to:conversation.sms_phone_e164,body:delivery.body,...(attachment?.mediaUrl ? {mediaUrl:[attachment.mediaUrl]} : {}),messagingServiceSid,statusCallback:`${publicBaseUrl}/api/twilio/message-status`});
    const result=await db.from('driver_messages').update({provider_message_id:sent.sid,provider_status:sent.status,delivery_status:['queued','sent','delivered','failed'].includes(sent.status)?sent.status:'queued',provider_status_updated_at:new Date().toISOString(),...delivery.patch}).eq('id',message.id);
    if(result.error)throw result.error;

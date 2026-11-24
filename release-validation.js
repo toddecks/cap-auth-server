@@ -69,7 +69,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     if(!c || c.status!=='open' || c.session_ended_at) return;
     const [checked,allMessages] = await Promise.all([
       result(db.from('shipping_staff_checkins').select('conversation_id,checked_in_at').eq('conversation_id',id).maybeSingle()),
-      result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,body,attachment_path').eq('conversation_id',id))
+      result(db.from('driver_messages').select('id,client_message_id,sender_user_id,direction,sent_at,delivery_status,provider_message_id,body,attachment_path').eq('conversation_id',id))
     ]);
     if(await isReturningDriver(db,c,checked))return;
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
@@ -79,6 +79,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
       if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
       const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
       if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
+        && (c.channel!=='sms'||Boolean(instructions.provider_message_id))
         && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
         && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
         const coil= /stay to the RIGHT\b/.test(instructions.body);

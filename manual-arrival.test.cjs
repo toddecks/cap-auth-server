@@ -3,7 +3,7 @@ const {parseInput,createHandler}=require('./manual-arrival');
 const at='2026-11-10T15:00:00.000Z';
 const body={driverName:'Test Driver',driverCompany:'Test Carrier',phone:'419-555-0123',releaseNumber:'968529'};
 const load={poRel:'968529/969082/969083-coil',location:'PROSPY',scheduleDate:'2026-11-10',scheduleTime:'11:00:00',unloadingDoor:'COIL',customerNo:'CENTER'};
-function setup({routingEnabled=true,role='shipping',active=null,checkin=null,loads=[load],lookupError=false,checkinError=false,ended=false,closed=false,sessionStarted=null,startAt=at,messageFailure=false}={}){
+function setup({enqueueInstructions,routingEnabled=true,role='shipping',active=null,checkin=null,loads=[load],lookupError=false,checkinError=false,ended=false,closed=false,sessionStarted=null,startAt=at,messageFailure=false}={}){
  const tables={driver_sms_arrivals:active?[{phone_e164:'+14195550123',facility_id:'csp-toledo-main',conversation_id:'conversation',departed_at:null,entered_at:at,...active}]:[],driver_conversations:[{id:'conversation',status:closed?'closed':'open',created_at:'2026-11-09T15:00:00Z',updated_at:'2026-11-09T16:00:00Z',session_started_at:sessionStarted,session_ended_at:ended?'2026-11-09T16:00:00Z':null}],driver_sms_contacts:[],shipping_staff_checkins:checkin?[{conversation_id:'conversation',checked_in_at:checkin}]:[]};
  const writes=[],reads=[],notifications=[];let found=0,command;
  const db={auth:{getUser:async()=>({data:{user:{id:'staff',app_metadata:{csp_role:role}}}})},from(table){reads.push(table);let op='read',value,one=false,limit=Infinity,filters=[];
@@ -19,7 +19,7 @@ function setup({routingEnabled=true,role='shipping',active=null,checkin=null,loa
    const rows=op==='insert'?[tables[table].at(-1)]:tables[table].filter(r=>filters.every(f=>f(r))).slice(0,limit);return {data:one?rows[0]||null:rows};
   }).then(resolve,reject)}};return q}};
  const chartDb={from(table){assert.equal(table,'psdata_loads_api');const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>lookupError?{error:{message:'Lookup offline'}}:{data:loads}};return q}};
- const handler=createHandler({routingEnabled,db,chartDb,now:()=>at,sendInstructions:async args=>{assert(tables.shipping_staff_checkins.some(r=>r.conversation_id===args.conversation.id),'Check-in must precede messages');notifications.push(args);if(messageFailure)throw Error('SMS provider unavailable');},findOrCreateConversation:async(phone,body)=>{found++;command=body;const previous=tables.driver_conversations[0];if(previous.status!=='open'){tables.driver_conversations.push({id:'new-conversation',status:'open',created_at:at,session_started_at:at,session_ended_at:null});return {id:'new-conversation'}}if(previous.session_ended_at){previous.session_started_at=startAt;previous.session_ended_at=null;}return {id:'conversation'}}});
+ const handler=createHandler({enqueueInstructions,routingEnabled,db,chartDb,now:()=>at,sendInstructions:async args=>{assert(tables.shipping_staff_checkins.some(r=>r.conversation_id===args.conversation.id),'Check-in must precede messages');notifications.push(args);if(messageFailure)throw Error('SMS provider unavailable');},findOrCreateConversation:async(phone,body)=>{found++;command=body;const previous=tables.driver_conversations[0];if(previous.status!=='open'){tables.driver_conversations.push({id:'new-conversation',status:'open',created_at:at,session_started_at:at,session_ended_at:null});return {id:'new-conversation'}}if(previous.session_ended_at){previous.session_started_at=startAt;previous.session_ended_at=null;}return {id:'conversation'}}});
  const call=async(input=body,headers={authorization:'Bearer token'})=>{const res={code:200,set(){return this},status(n){this.code=n;return this},json(v){this.body=v;return this}};await handler({headers,body:input},res);return res;};
  return {call,tables,writes,reads,notifications,get found(){return found},get command(){return command}};
 }
@@ -91,4 +91,10 @@ test('default manual popup uses the API COIL door without asking for a routing s
 test('default manual popup with an unknown release records check-in with neutral instructions',async()=>{
  const f=setup({routingEnabled:'auto',loads:[]});assert.equal((await f.call()).code,200);
  assert.equal(f.notifications[0].preparedInstructions,require('./pickup-directions').UNKNOWN_CHECKIN);
+});
+
+test('manual Check In queues delivery only after the official record exists',async()=>{
+ let queued;
+ const f=setup({routingEnabled:'auto',enqueueInstructions:async payload=>{assert.equal(f.tables.shipping_staff_checkins.length,1);queued=payload;return 'manual-job';}});
+ const result=await f.call();assert.equal(result.code,200);assert.equal(result.body.instructionsJobId,'manual-job');assert.equal(queued.preparedInstructions,undefined);assert.equal(f.notifications.length,0);
 });

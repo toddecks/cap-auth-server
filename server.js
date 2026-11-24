@@ -100,7 +100,8 @@ app.get("/api/deploy-status", (_req, res) => {
     shippingSmsTranslation: {...require('./sms-translation').health,configured:Boolean(getOpenAIClient())},
     shippingTranslation: driverTranslationWorker.health,
     shippingCheckinMediaMode: "map-only-no-ppe-v3",
-    shippingStaffCheckinMode: "coil-routing-v2",
+    shippingStaffCheckinMode: "saved-first-instructions-background-v3",
+    shippingCheckinInstructions:checkinJobs.health,
     shippingManualArrivalMode: "checked-in-returning-drivers-v5-auto-instructions",
     shippingArrivalEditMode: "name-company-release-v1",
     shippingSmsConfigured: Boolean(
@@ -1978,13 +1979,25 @@ app.post("/api/shipping/send-photo", async (req, res) => {
   }
 });
 
-const staffCheckinHandler = require('./staff-checkin').createHandler({db:driverSupabase,chartDb:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
+const checkinJobs=require('./checkin-jobs').createQueue({db:chartSupabase,send:async payload=>{
+  const isCurrent=async()=>{
+    const {data:c,error}=await driverSupabase.from('driver_conversations').select('*').eq('id',payload.conversation.id).maybeSingle();
+    if(error)throw error;
+    if(!c||c.status!=='open'||c.session_ended_at||require('./visit-session').key(c)!==require('./visit-session').key(payload.conversation))return false;
+    const checked=await driverSupabase.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',c.id).maybeSingle();
+    if(checked.error)throw checked.error;return Boolean(require('./visit-session').currentCheckin(c,checked.data));
+  };
+  await require('./checkin-instructions').sendCheckinInstructions({db:driverSupabase,chartDb:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync,...payload,requireDeliveryConfirmation:true,isCurrent});
+}});
+app.get('/api/shipping/check-in-instructions',require('./checkin-jobs').statusHandler({queue:checkinJobs,auth:driverSupabase}));
+
+const staffCheckinHandler = require('./staff-checkin').createHandler({enqueueInstructions:checkinJobs.enqueue,db:driverSupabase,chartDb:chartSupabase,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync});
 app.post('/api/shipping/staff-check-in', staffCheckinHandler);
 app.post('/api/shipping/add-sms-arrival', staffCheckinHandler);
 
 
 app.post('/api/shipping/driver-lookup', require('./manual-driver-lookup').createHandler({db:driverSupabase}));
-app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({db:driverSupabase,chartDb:chartSupabase,findOrCreateConversation:findOrCreateSmsConversation,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync}));
+app.post('/api/shipping/manual-arrival', require('./manual-arrival').createHandler({enqueueInstructions:checkinJobs.enqueue,db:driverSupabase,chartDb:chartSupabase,findOrCreateConversation:findOrCreateSmsConversation,twilio:twilioClient,messagingServiceSid:TWILIO_MESSAGING_SERVICE_SID,publicBaseUrl:TWILIO_PUBLIC_BASE_URL,scheduleStatusSync:scheduleTwilioStatusSync}));
 
 app.post("/api/shipping/edit-arrival", async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -7382,6 +7395,7 @@ const driverNameRepair=require('./repair-driver-names').createRepair(driverSupab
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Tableau Auth Server running on port ${PORT}`);
+  checkinJobs.start();
   releaseValidationWorker.start();
   psDepartureWorker.start();
   driverTranslationWorker.start();
