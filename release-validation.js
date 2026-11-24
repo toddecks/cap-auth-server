@@ -23,7 +23,7 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({isReturningDriver=require('./returning-driver').held,getOfficeOverride=async()=>null, db, chart, silentStore=chart?require('./release-review-store').createStore(chart):undefined, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v32-checkin-and-clerk-guards',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v33-hold-after-verifying',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
@@ -33,7 +33,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
       return require('./after-hours-reply').allowed(db,c.id);
     }
     if(kind!=='remain'&&require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride()))return false;
-    return !await require('./manual-reply-pause').load(db,c.id);
+    return !await require('./manual-reply-pause').load(db,c.id,`release-wait:${kind}:${session.key(c)}`);
   }
   async function send(c, kind, body, afterHours=false) {
     if(!await canSend(c,kind,body,afterHours))return;
@@ -86,6 +86,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
       }
       return;
     }
+    if(require('./verification-hold').held(c,messages,checked))return;
     const override=await getOfficeOverride();
     const afterHours=require('./after-hours-reply').plan(c,messages,now(),override,checked);
     if(afterHours){
@@ -156,13 +157,9 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
           contact={...contact,...carrier};
         }
       }
-      const missing=contact&&require('./pickup-detail-prompt').missingPrompt(contact);
-      if(missing){
-        const kind='details-'+require('crypto').createHash('sha256').update(missing).digest('hex').slice(0,12);
-        if(!messages.some(m=>m.client_message_id===`release-wait:${kind}:${session.key(c)}`))await send(c,kind,missing);
-        return;
-      }
+
     }
+    if(require('./verification-hold').held(c,messages,checked))return;
     const initial = verification.initial || messages.find(m => m.client_message_id === `release-wait:verify:${session.key(c)}`);
     const closed = messages.find(m => m.client_message_id === `release-wait:closed:${session.key(c)}`);
     if(closed) return;
@@ -189,7 +186,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     const messages=await result(db.from('driver_messages').select('client_message_id,sender_user_id,delivery_status,direction,sent_at,body').eq('conversation_id',id));
     const {data:checked,error:checkError}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle();
     if(checkError)throw checkError;
-    if(session.currentCheckin(c,checked)||require('./manual-reply-pause').staffPaused(c,messages))return true;
+    if(session.currentCheckin(c,checked)||require('./verification-hold').held(c,messages,checked)||require('./manual-reply-pause').staffPaused(c,messages))return true;
     if(await isReturningDriver(db,c,checked))return true;
     if(require('./after-hours-reply').hasNotice(c,messages))return true;
     const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride(),checked);

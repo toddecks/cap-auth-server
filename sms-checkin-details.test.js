@@ -96,3 +96,16 @@ test('Ace Doran supplied alone is a carrier, not a driver name',()=>{
 test('ordinary text around a number never becomes a carrier introduction',()=>{
  for(const body of ['Thanks 72967 Ace Doran','Josue 72967 where do I go','My trailer 72967 needs a door'])assert.equal(parseDetails(body).driver_company,undefined);
 });
+
+test('Rob supplies his name, two release numbers, and truck number in one message',()=>{
+ const body='Rob release 12075591 & 12075593 truck 1265';
+ for(const existing of [{},{full_name:'',driver_company:'O&I',visit_type:'pickup'}]){
+  const parsed=parseDetails(body,existing);assert.equal(parsed.full_name,'Rob');assert.equal(parsed.last_release_number,'12075591 & 12075593');assert.equal(parsed.driver_company,undefined);
+ }
+ const next=nextCheckin({existing:{full_name:'',driver_company:'O&I',visit_type:'pickup'},body});
+ assert.equal(next.contact.full_name,'Rob');assert.equal(next.contact.driver_company,'O&I');assert.equal(next.contact.onboarding_step,'ready');
+});
+
+test('possessive release labels are not mistaken for a driver name',()=>{
+ assert.equal(parseDetails('My release 12075591').full_name,undefined);
+});

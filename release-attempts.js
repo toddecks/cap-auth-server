@@ -32,6 +32,8 @@ async function lookupRelease(chart,release,c,at){
  return !match?'invalid':match.status==='ambiguous'?'ambiguous':'matched';
 }
 async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,lookup=lookupRelease,validationEnabled=true,silentStore}){
+ const acknowledged=require('./verification-hold').acknowledgement(c,messages);
+ if(acknowledged)return {state:acknowledged.client_message_id?.startsWith('release-wait:manual-')?'manual':'matched',initial:acknowledged};
  const key=session.key(c);
  const marker=(kind,id)=>`release-wait:${kind}-${id}:${key}`;
  // Temporary PS outage mode: record receipt for staff review without querying
@@ -60,6 +62,7 @@ async function processAttempts({chart,c,messages,pickupAt,send,now=Date.now,look
  for(const m of outcomes){if(m.client_message_id.startsWith('release-wait:manual-')){count=0;state='manual';initial=m;}else if(m.client_message_id.startsWith('release-wait:matched-')){count=0;state='matched';initial=m;}else if(m.client_message_id.startsWith('release-wait:ambiguous-')){state='ambiguous';}else{count++;state='invalid';}}
  const attempts=messages.filter(m=>m.id&&m.direction==='driver_to_shipping'&&Date.parse(m.sent_at)>=Math.max(ENABLED_AT,pickupAt)&&releaseFromMessage(m.body)).sort((a,b)=>Date.parse(a.sent_at)-Date.parse(b.sent_at)||String(a.id).localeCompare(String(b.id)));
  for(const m of attempts){
+  if(require('./verification-hold').acknowledgement(c,messages))break;
   // Do not replay responses already acknowledged during the API outage.
   const manual=messages.find(x=>x.client_message_id===marker('manual',m.id));
   if(manual)continue;

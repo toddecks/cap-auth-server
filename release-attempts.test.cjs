@@ -1,11 +1,11 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {processAttempts,lookupRelease,INVALID,ACCEPTED,AMBIGUOUS,ENABLED_AT}=require('./release-attempts');
 function fixture(){let clock=ENABLED_AT+60000;const messages=[],sent=[],c={id:'test',visit_type:'pickup',facility_id:'csp-toledo-main'};return {messages,sent,c,add(body){clock+=1000;messages.push({id:messages.length+1,body,sent_at:new Date(clock).toISOString(),direction:'driver_to_shipping'});},async run(lookup=async(_,release)=>release==='968751'?'matched':'invalid'){return processAttempts({c,messages,pickupAt:ENABLED_AT,now:()=>clock,lookup,send:async(_,kind,body)=>sent.push({kind,body})});}};}
-test('three invalid replies, repeat webhook safety, correct release recovery, and reset after success',async()=>{
+test('three invalid replies, repeat webhook safety, correct release recovery, and silence after acknowledgement',async()=>{
  const f=fixture();for(const value of ['1111','2222','3333']){f.add(value);await f.run();await f.run();}
  assert.deepEqual(f.sent.map(m=>m.body),INVALID);
  f.add('968751');assert.equal((await f.run()).state,'matched');assert.equal(f.sent[3].body,ACCEPTED);
- f.add('4444');assert.equal((await f.run()).state,'invalid');assert.equal(f.sent[4].body,INVALID[0]);
+ f.add('4444');assert.equal((await f.run()).state,'matched');assert.equal(f.sent.length,4);
 });
 test('same wrong number in a new message counts as another attempt',async()=>{const f=fixture();f.add('1111');await f.run();f.add('1111');await f.run();assert.deepEqual(f.sent.map(m=>m.body),INVALID.slice(0,2));});
 test('fourth invalid stays at assistance and a subsequent valid number remains accepted',async()=>{const f=fixture();for(let i=0;i<4;i++){f.add('1111');await f.run();}assert.equal(f.sent[3].body,INVALID[2]);f.add('968751');assert.equal((await f.run()).state,'matched')});
@@ -92,8 +92,8 @@ test('resuming validation does not replay responses to outage-acknowledged messa
  await processAttempts({c:f.c,messages:f.messages,pickupAt:ENABLED_AT,validationEnabled:false,now:()=>Date.parse(f.messages.at(-1).sent_at),send:async(_,kind,body)=>f.sent.push({kind,body})});
  await f.run(async()=>{throw Error('already acknowledged message must not be rechecked')});
  assert.equal(f.sent.length,1);
- f.add('11111');assert.equal((await f.run()).state,'invalid');assert.equal(f.sent.at(-1).body,INVALID[0]);
- assert.equal((await f.run()).state,'invalid','restart retains the latest validation outcome');
+ f.add('11111');assert.equal((await f.run()).state,'manual');assert.equal(f.sent.length,1);
+ assert.equal((await f.run()).state,'manual','restart retains the acknowledgement hold');
 });
 
 test('silent review survives restart without a transcript entry and later correction remains matched',async()=>{
@@ -111,4 +111,9 @@ test('silent review survives restart without a transcript entry and later correc
  f.messages.splice(0,f.messages.length,...f.messages.filter(m=>m.id||m.body===ACCEPTED));
  assert.equal((await run(async()=>{throw Error('already handled')})).state,'matched');
  assert.equal(f.sent.length,1);
+});
+
+test('two releases queued together stop processing after the first verifying message',async()=>{
+ const f=fixture();f.add('968751');f.add('11111');await f.run();await f.run();
+ assert.deepEqual(f.sent.map(m=>m.body),[ACCEPTED]);
 });

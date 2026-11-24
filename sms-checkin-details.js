@@ -6,11 +6,17 @@ const chatPattern=/\b(thanks?|thank you|hello|hi|ok(?:ay)?|yes|no|waiting|door|d
 function parseDetails(text, existing={}) {
  text=String(text||'').normalize('NFC');
  const found={},rest=[];
- const multiple=require('./release-list').extract(text);
+ const labeledList=text.match(/\b(?:releases?|tag)(?:\s+(?:numbers?|no\.?))?\s*(?:is|[:=#])?\s*(\d{4,12}(?:(?:\s*(?:&|and|\/|,|;)\s*|\s+)\d{4,12})+)/i);
+ const multiple=require('./release-list').extract(labeledList?.[1]||text);
  const multiRelease=multiple.releases.length>1?multiple.releases.join(' & '):'';
  // Separate a driver's natural introduction from delivery/customer commentary.
  // Only explicit with/from introductions establish a carrier boundary.
  let input=clean(text).replace(/([.!?])(?=my\s+release\b)/gi,'$1 ');
+ const namedRelease=input.match(/^([\p{L}\p{M}.'’-]+)\s+releases?(?:\s+(?:numbers?|no\.?))?\s*(?:[:=#]|is)?\s*\d{4,12}\b/iu);
+ if(namedRelease&&!/^(?:my|the|our|your|this|that|a|an|is|its|it|here|for|with|from)$/i.test(namedRelease[1])&&!chatPattern.test(namedRelease[1])&&!companyPattern.test(namedRelease[1])){
+  found.full_name=driverName(namedRelease[1]);input=input.slice(namedRelease[1].length).trim();
+ }
+ if(multiRelease)input=input.replace(/\b(?:releases?|tag)(?:\s+(?:numbers?|no\.?))?\s*(?:is|[:=#])?\s*(?=\d)/i,'');
  if(multiRelease)for(const segment of multiple.segments)input=input.replace(segment,'');
  const intro=input.match(/^(?:(?:this\s+is|is\s+this|my\s+name\s+is|i\s+am|i['’]m)\s+)?([\p{L}\p{M}.'’-]+(?:\s+[\p{L}\p{M}.'’-]+){0,3})\s+(?:with|from|driving for)\s+(.+?)(?=\s+(?:here\b|to\b|for\b|my\s+release\b|release\b|\d{4,}\b)|[.!?](?:\s|$)|$)/iu);
  if(intro&&!chatPattern.test(intro[1])&&!companyPattern.test(intro[1])){

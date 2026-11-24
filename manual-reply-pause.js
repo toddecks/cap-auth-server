@@ -17,10 +17,11 @@ function staffPaused(c,messages=[]){
 function paused(c,messages=[],checked){
  if(!c||c.status!=='open'||c.session_ended_at)return false;
  if(session.currentCheckin(c,checked))return false;
+ if(require('./verification-hold').held(c,messages,checked))return true;
  if(require('./after-hours-reply').hasNotice(c,messages))return true;
  return staffPaused(c,messages);
 }
-async function load(db,id){
+async function load(db,id,ignoreClientMessageId){
  const query=async q=>{const r=await q;if(r.error)throw r.error;return r.data;};
  const c=await query(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
  if(!c||c.status!=='open'||c.session_ended_at)return false;
@@ -28,7 +29,7 @@ async function load(db,id){
   query(db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle()),
   query(db.from('driver_messages').select('sender_user_id,direction,sent_at,delivery_status,client_message_id,body').eq('conversation_id',id))
  ]);
- return paused(c,messages||[],checked);
+ return paused(c,(messages||[]).filter(m=>!ignoreClientMessageId||m.client_message_id!==ignoreClientMessageId),checked);
 }
 function handler(db){return async(req,res)=>{
  res.set('Cache-Control','no-store');

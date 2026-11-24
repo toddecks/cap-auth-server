@@ -151,7 +151,7 @@ for(const channel of ['sms','app'])test(`${channel} old clerk hold cannot block 
  const replies=()=>f.tables.driver_messages.filter(m=>m.direction==='shipping_to_driver').map(m=>m.body);
  add('1111');await worker.tick();await worker.tick();assert.deepEqual(replies(),[require('./release-attempts').INVALID[0]]);
  f.advance(1000);add('968751');await createWorker(f.options).tick();await worker.tick();assert.deepEqual(replies(),[require('./release-attempts').INVALID[0],require('./release-attempts').ACCEPTED]);
- f.advance(180000);await worker.tick();assert.equal(replies().at(-1),SOON);assert.equal(worker.health.error,null);
+ f.advance(180000);await worker.tick();assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);assert.equal(worker.health.error,null);
 });
 
 for(const type of ['pickup','both'])test(`native ${type} validates initial/corrected release in same visit`,async()=>{
@@ -176,7 +176,7 @@ for(const type of ['pickup','both'])test(`native ${type} validates initial/corre
  assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
  assert.equal(c.release_number,'72037');assert.equal(f.tables.driver_arrivals[0].release_number,'72037');
  assert.equal(c.visit_type,type);assert.equal(c.arrival_id,480);assert.equal(f.sends.length,0);
- f.advance(180000);await worker.tick();assert.equal(replies().at(-1),SOON);
+ f.advance(180000);await worker.tick();assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
  assert.equal(worker.health.error,null);
 });
 
@@ -212,6 +212,7 @@ for(const type of ['pickup','both'])for(const scenario of ['timers','closed-hour
   if(scenario==='checkout'){c.status='closed';c.session_ended_at=new Date(f.options.now()).toISOString();}
   f.advance(180000);await worker.tick();f.advance(120000);await createWorker(f.options).tick();await worker.tick();
   if(['staff-reply','checkout','closed-hours'].includes(scenario))assert.equal(replies().length,1);
+  else if(scenario==='invalid-correction')assert.equal(replies().at(-1),require('./release-attempts').ACCEPTED);
   else assert.deepEqual(replies().slice(-2),[SOON,ASSIST]);
   assert.equal(worker.health.error,null);
   if(channel==='app')assert.equal(f.sends.length,0);
@@ -278,14 +279,14 @@ test('SMS with known name and carrier asks only for release number',async()=>{
  const f=fixture();f.tables.driver_sms_contacts.push({phone_e164:'+15555550100',full_name:'John',driver_company:'JLS',last_release_number:null});await f.worker.tick();assert.equal(f.sends[0].body,'Please send your release number for verification and further instructions.');
 });
 
-test('multiline two-load details ask only for missing name after verification, once',async()=>{
+test('multiline two-load details wait for staff after verification without asking for a name',async()=>{
  const f=fixture();f.advance(46*86400000);const c=f.tables.driver_conversations[0];c.created_at='2026-11-16T17:00:00Z';c.release_number='32381 & 32382';
  const contact={phone_e164:c.sms_phone_e164,full_name:'',driver_company:'Chase freight',last_release_number:c.release_number};f.tables.driver_sms_contacts.push(contact);
  f.tables.driver_messages.push({id:51,conversation_id:c.id,direction:'driver_to_shipping',body:'Pick up\n#32381 & 32382\nChase freight\nTruck 122',sent_at:c.created_at});
  f.options.chart={from(){const q={select(){return q},or(){return q},ilike(){return q},order(){return q},range:async()=>({data:['32381','32382'].map(poRel=>({poRel,scheduleDate:'2026-11-16',scheduleTime:'16:00:00',location:'PROSPY',unloadingDoor:'BD'}))})};return q}};
  c.facility_id='csp-toledo-main';const worker=createWorker(f.options);await worker.tick();await worker.tick();
- assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED,'Please send your name for verification and further instructions.']);
- contact.full_name='Shane';await worker.tick();assert.equal(f.sends.length,2);
+ assert.deepEqual(f.sends.map(m=>m.body),[require('./release-attempts').ACCEPTED]);
+ contact.full_name='Shane';await worker.tick();assert.equal(f.sends.length,1);
 });
 
 for(const channel of ['sms','app'])test(channel+' clerk takeover blocks verification, invalid-release replies, details, timers and media before Check In',async()=>{
@@ -430,4 +431,20 @@ test('turning off the shared early override cancels a call-office message awaiti
  f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Hello',sent_at:new Date(f.options.now()).toISOString()});
  const original=translator.prepareOutgoing;translator.prepareOutgoing=async()=>{override=null;return{body:require('./after-hours-reply').CALL_OFFICE,patch:{}}};
  try{await createWorker(f.options).tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
+});
+
+for(const channel of ['sms','app'])test(`${channel}: verifying acknowledgement suppresses every later bot reply until official Check In, including restart`,async()=>{
+ const f=fixture(channel),c=f.tables.driver_conversations[0],accepted=require('./release-attempts').ACCEPTED;
+ f.tables.driver_messages.push({conversation_id:c.id,client_message_id:`release-wait:matched-42:${c.id}`,direction:'shipping_to_driver',body:accepted,sent_at:new Date(f.options.now()).toISOString(),delivery_status:'sent'});
+ const baseline=f.tables.driver_messages.length;
+ for(const body of ['Rob','99999','Both','Where do I go?']){
+  f.advance(1000);f.tables.driver_messages.push({id:'in-'+body,conversation_id:c.id,direction:'driver_to_shipping',body,sent_at:new Date(f.options.now()).toISOString()});
+  const worker=createWorker(f.options);await worker.tick();assert.equal(await worker.respondAfterHours(c.id),true);
+ }
+ f.advance(6*3600000);await createWorker(f.options).tick();
+ assert.equal(f.tables.driver_messages.length,baseline+4);assert.equal(f.sends.length,0);
+ const at=new Date(f.options.now()).toISOString();f.tables.shipping_staff_checkins.push({conversation_id:c.id,checked_in_at:at});
+ f.tables.driver_messages.push({conversation_id:c.id,client_message_id:`staff-pickup-checkin:${c.id}`,direction:'shipping_to_driver',sender_user_id:'staff',body:require('./driver-visit-flow').PICKUP_CHECKIN,sent_at:at,delivery_status:'sent'});
+ f.advance(60000);await createWorker(f.options).tick();
+ assert.equal(f.tables.driver_messages.at(-1).body,REMAIN);
 });

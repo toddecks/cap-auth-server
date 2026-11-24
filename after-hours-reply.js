@@ -15,7 +15,7 @@ function hasNotice(c,messages){
   &&(/^release-wait:(?:after-hours-|closed:)/.test(m.client_message_id||'')||m.body===CALL_OFFICE||/^Our shipping office is (?:currently|now) closed\./.test(m.body||'')));
 }
 function plan(c,messages,now,override,checked){
- if(session.currentCheckin(c,checked)||require('./manual-reply-pause').staffPaused(c,messages))return null;
+ if(session.currentCheckin(c,checked)||require('./verification-hold').held(c,messages,checked)||require('./manual-reply-pause').staffPaused(c,messages))return null;
  const period=closedPeriod(now,override);
  if(!period||c.status!=='open'||c.session_ended_at)return null;
  const inbound=messages.filter(m=>m.direction==='driver_to_shipping'&&Number.isFinite(Date.parse(m.sent_at))&&(!c.session_started_at||Date.parse(m.sent_at)>=session.start(c))).sort((a,b)=>Date.parse(b.sent_at)-Date.parse(a.sent_at))[0];
@@ -32,8 +32,8 @@ async function allowed(db,id){
  if(!c||c.status!=='open'||c.session_ended_at)return false;
  const [checked,messages]=await Promise.all([
   read(db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle()),
-  read(db.from('driver_messages').select('sender_user_id,direction,sent_at,delivery_status,client_message_id').eq('conversation_id',id))
+  read(db.from('driver_messages').select('sender_user_id,direction,sent_at,delivery_status,client_message_id,body').eq('conversation_id',id))
  ]);
- return !session.currentCheckin(c,checked)&&!require('./manual-reply-pause').staffPaused(c,messages||[]);
+ return !session.currentCheckin(c,checked)&&!require('./verification-hold').held(c,messages||[],checked)&&!require('./manual-reply-pause').staffPaused(c,messages||[]);
 }
 module.exports={allowed,BODY,CALL_OFFICE,closedPeriod,plan,hasNotice};
