@@ -21,7 +21,7 @@ function createHandler(deps) {
    if(c.visit_type==='both'&&req.body?.dropOffComplete!==true)return res.status(409).json({error:'Confirm unloading is complete before checking this Both visit in for pickup.'});
    if(c.session_ended_at)return res.status(409).json({error:'This visit has ended. The driver must start a new visit before check-in.'});
    let preparedInstructions;
-   try {preparedInstructions=await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor,deps.routingEnabled===true);}
+   try {preparedInstructions=deps.routingEnabled===true?await require('./pickup-directions').pickupInstructions(deps.chartDb,c,new Date(),req.body?.loadingDoor,true):deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:await require('./pickup-directions').automaticPickupInstructions(deps.chartDb,c);}
    catch(error){return res.status(409).json({error:error.message,code:'LOADING_DOOR_REQUIRED'});}
    let arrivalId=c.arrival_id;
    if(c.channel==='sms'){

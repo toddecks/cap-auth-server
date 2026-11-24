@@ -4,7 +4,14 @@ function periodDay(now){const p=Object.fromEntries(formatter.formatToParts(new D
 function active(override,now){const parts=Object.fromEntries(formatter.formatToParts(new Date(now)).map(p=>[p.type,p.value]));const minutes=Number(parts.hour)*60+Number(parts.minute);return Boolean(minutes>=330&&minutes<1080&&override?.closed_on===periodDay(now)&&Date.parse(override.activated_at)<=now);}
 function createStore({db,auth,now=Date.now}){
  let cached=null,loadedAt=-Infinity;
- async function load(){if(now()-loadedAt<3000)return cached;const r=await db.from('shipping_office_override').select('closed_on,activated_at').eq('id',1).maybeSingle();if(r.error)throw r.error;cached=r.data;loadedAt=now();return cached;}
+ async function load(fresh=false){if(!fresh&&now()-loadedAt<3000)return cached;const r=await db.from('shipping_office_override').select('closed_on,activated_at').eq('id',1).maybeSingle();if(r.error)throw r.error;cached=r.data;loadedAt=now();return cached;}
+ async function cancelForStaffReply(staffId){
+  const value=await load(true);if(!active(value,now()))return false;
+  // Conditional update cannot erase a newer button activation from another clerk.
+  const r=await db.from('shipping_office_override').update({closed_on:null,activated_at:null,updated_at:new Date(now()).toISOString(),updated_by:staffId}).eq('id',1).eq('activated_at',value.activated_at);
+  if(r.error)throw r.error;
+  cached=null;loadedAt=-Infinity;return true;
+ }
  async function handler(req,res){
   res.set('Cache-Control','no-store');
   try{
@@ -22,6 +29,6 @@ function createStore({db,auth,now=Date.now}){
    const value=await load();return res.json({enabled:active(value,now()),closedOn:value?.closed_on||null,message:require('./after-hours-reply').BODY});
   }catch(error){console.error('Office closure setting:',error.message);return res.status(503).json({error:'The office closing setting could not be loaded or saved.'});}
  }
- return {load,handler};
+ return {load,handler,cancelForStaffReply};
 }
 module.exports={periodDay,active,createStore};

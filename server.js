@@ -1748,7 +1748,7 @@ app.post("/api/shipping/send-message", async (req, res) => {
       return res.status(404).json({ error: "This conversation is no longer open." });
     }
 
-    if(!reviewRequest)require('./manual-reply-pause').begin(conversation);
+    if(!reviewRequest){require('./manual-reply-pause').begin(conversation);await shippingOfficeClosure.cancelForStaffReply(staffUser.id);}
     const clientMessageId = reviewRequest ? `manual-review:${conversationId}` : /^[0-9a-f-]{36}$/i.test(requestedClientMessageId)
       ? requestedClientMessageId
       : crypto.randomUUID();
@@ -1877,6 +1877,7 @@ app.post("/api/shipping/send-photo", async (req, res) => {
     }
 
     require('./manual-reply-pause').begin(conversation);
+    await shippingOfficeClosure.cancelForStaffReply(staffUser.id);
     const isSms = conversation.channel === "sms";
     if (isSms && (bytes.length > 5 * 1024 * 1024 || mimeType === "image/webp")) {
       return res.status(400).json({ error: "Text-message photos must be JPG, PNG, or HEIC and 5 MB or smaller." });

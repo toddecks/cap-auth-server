@@ -36,3 +36,17 @@ test('no writes for unauthenticated, unauthorized or malformed requests',async()
  for(const role of ['driver','viewer']){const f=fixture(role);assert.equal((await f.call('POST',{enabled:true})).status,403);assert.equal(f.writes,0);}
  const f=fixture();assert.equal((await f.call('POST',{enabled:true},'')).status,401);assert.equal((await f.call('POST',{enabled:'true'})).status,400);assert.equal(f.writes,0);
 });
+
+test('a staff reply clears the shared early override and a fresh store sees Auto',async()=>{
+ let value={id:1,...override},updates=0;
+ const db={from(){let filters=[];const q={select(){return q},eq(k,v){filters.push([k,v]);return q},maybeSingle:async()=>({data:{...value}}),update(patch){q.then=resolve=>{if(filters.every(([k,v])=>value[k]===v)){Object.assign(value,patch);updates++;}return Promise.resolve({error:null}).then(resolve)};return q;}};return q;}};
+ const store=createStore({db,now:()=>now+1000});assert.equal(await store.cancelForStaffReply('clerk'),true);
+ assert.equal(updates,1);assert.equal(value.closed_on,null);assert.equal(value.updated_by,'clerk');
+ assert.equal(active(await createStore({db,now:()=>now+1000}).load(),now+1000),false);
+ assert.equal(await store.cancelForStaffReply('clerk'),false);assert.equal(updates,1);
+});
+test('staff cancellation cannot erase a newer activation that occurs during its update',async()=>{
+ let value={id:1,...override};const newer=new Date(now+500).toISOString();
+ const db={from(){let filters=[];const q={select(){return q},eq(k,v){filters.push([k,v]);return q},maybeSingle:async()=>({data:{...value}}),update(patch){value.activated_at=newer;q.then=resolve=>{if(filters.every(([k,v])=>value[k]===v))Object.assign(value,patch);return Promise.resolve({error:null}).then(resolve)};return q;}};return q;}};
+ await createStore({db,now:()=>now+1000}).cancelForStaffReply('clerk');assert.equal(value.activated_at,newer);assert.equal(value.closed_on,override.closed_on);
+});

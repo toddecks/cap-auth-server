@@ -8,14 +8,17 @@ function begin(c,now=Date.now()) {
  drafts.set(session.key(c),now);
 }
 function clear(c){drafts.delete(session.key(c));}
-function paused(c,messages=[],checked){
- if(!c||c.status!=='open'||c.session_ended_at)return false;
- if(require('./after-hours-reply').hasNotice(c,messages))return true;
- if(session.currentCheckin(c,checked))return false;
+function staffPaused(c,messages=[]){
  return drafts.has(session.key(c))||messages.some(m=>m.direction==='shipping_to_driver'&&m.sender_user_id
   &&(!c.session_started_at||Date.parse(m.sent_at)>=session.start(c))
   &&!String(m.client_message_id||'').startsWith('manual-review:')
   &&!['failed','undelivered'].includes(m.delivery_status));
+}
+function paused(c,messages=[],checked){
+ if(!c||c.status!=='open'||c.session_ended_at)return false;
+ if(session.currentCheckin(c,checked))return false;
+ if(require('./after-hours-reply').hasNotice(c,messages))return true;
+ return staffPaused(c,messages);
 }
 async function load(db,id){
  const query=async q=>{const r=await q;if(r.error)throw r.error;return r.data;};
@@ -44,4 +47,4 @@ function handler(db){return async(req,res)=>{
   begin(c);return res.json({ok:true});
  }catch(error){console.error('Clerk reply pause:',error.message);return res.status(500).json({error:'Could not pause automated replies.'});}
 };}
-module.exports={begin,clear,paused,load,handler};
+module.exports={staffPaused,begin,clear,paused,load,handler};

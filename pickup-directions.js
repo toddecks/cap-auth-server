@@ -1,7 +1,8 @@
 'use strict';
 const {doorMatches}=require('./release-doors');
-const {PICKUP_CHECKIN,PICKUP_PPE}=require('./driver-visit-flow');
-const COIL_CHECKIN='Please pull around back and stay to the RIGHT. '+PICKUP_PPE;
+const {PICKUP_CHECKIN}=require('./driver-visit-flow');
+const COIL_CHECKIN=PICKUP_CHECKIN.replace('LEFT','RIGHT');
+const UNKNOWN_CHECKIN='You have been successfully checked in. Please remain in your truck. A shipping team member will assist you shortly.';
 async function pickupInstructions(chartDb,conversation,now=new Date(),loadingDoor='',routingEnabled=false){
  if(!routingEnabled)return PICKUP_CHECKIN;
  const releases=require('./release-list').split(conversation.release_number);
@@ -24,4 +25,10 @@ async function pickupInstructions(chartDb,conversation,now=new Date(),loadingDoo
  }
  return String(match?.door||'').trim().toUpperCase()==='COIL'?COIL_CHECKIN:PICKUP_CHECKIN;
 }
-module.exports={pickupInstructions,COIL_CHECKIN};
+async function automaticPickupInstructions(chartDb,conversation,now=new Date()){
+ const release=require('./release-list').primary(conversation.release_number);
+ if(!release)return UNKNOWN_CHECKIN;
+ try{return await pickupInstructions(chartDb,{...conversation,release_number:release},now,'',true);}
+ catch(error){console.error('Automatic pickup routing unavailable:',error.message);return UNKNOWN_CHECKIN;}
+}
+module.exports={pickupInstructions,automaticPickupInstructions,COIL_CHECKIN,UNKNOWN_CHECKIN};

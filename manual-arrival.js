@@ -45,7 +45,7 @@ function createHandler(deps) {
    const routing=appointment?.door&&appointment.status!=='ambiguous'?(String(appointment.door).trim().toUpperCase()==='COIL'?'COIL':'OTHER'):input.loadingDoor;
    if(!routing)return res.status(409).json({code:'LOADING_DOOR_REQUIRED',error:'Select COIL (RIGHT) or Other loading door (LEFT) so the driver receives the correct check-in instructions.'});
    preparedInstructions=await require('./pickup-directions').pickupInstructions(null,{},new Date(timestamp),routing,true);
-   }else preparedInstructions=await require('./pickup-directions').pickupInstructions(null,{},new Date(timestamp));
+   }else preparedInstructions=deps.routingEnabled===false?require('./pickup-directions').UNKNOWN_CHECKIN:await require('./pickup-directions').automaticPickupInstructions(chartDb,{release_number:input.releaseNumber,facility_id:facilityId},new Date(timestamp));
    const active=await db.from('driver_sms_arrivals').select('id,conversation_id,release_number,checked_in_at,entered_at').eq('phone_e164',input.phone).eq('facility_id',facilityId).is('departed_at',null).order('entered_at',{ascending:false}).limit(50);
    if(active.error)throw active.error;
    const readConversation=async id=>{

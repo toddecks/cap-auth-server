@@ -23,12 +23,20 @@ const validPickup = c => c.status === 'open' && ['pickup','both'].includes(c.vis
   Boolean(String(c.release_number || '').trim()) && !/^(TEXT\s*\d*|drop[ -]?off|pick[ -]?up)$/i.test(String(c.release_number).trim());
 
 function createWorker({isReturningDriver=require('./returning-driver').held,getOfficeOverride=async()=>null, db, chart, silentStore=chart?require('./release-review-store').createStore(chart):undefined, twilio, messagingServiceSid, publicBaseUrl, scheduleStatusSync = () => {}, now = () => Date.now(), releaseValidationEnabled = RELEASE_VALIDATION_ENABLED, sendBothImages = require('./both-visit-images').sendBothImages, attachAppMap = require('./dropoff-map').attachAppMap}) {
-  const health = {mode:'pickup-followups-v31-silent-ambiguous',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
+  const health = {mode:'pickup-followups-v32-checkin-and-clerk-guards',releaseValidationEnabled,pollIntervalMs:5000,state:'idle',lastChecked:null,lastIngest:null,error:null};
   let running = false, timer;
   const mediaJobs=new Map();
   async function result(query) { const r = await query; if(r.error) throw r.error; return r.data; }
+  async function canSend(c,kind,body,afterHours){
+    if(afterHours){
+      if(body===require('./after-hours-reply').CALL_OFFICE&&!require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride(true)))return false;
+      return require('./after-hours-reply').allowed(db,c.id);
+    }
+    if(kind!=='remain'&&require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride()))return false;
+    return !await require('./manual-reply-pause').load(db,c.id);
+  }
   async function send(c, kind, body, afterHours=false) {
-    if(!afterHours&&(require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride())||await require('./manual-reply-pause').load(db,c.id)))return;
+    if(!await canSend(c,kind,body,afterHours))return;
     if(c.channel === 'sms' && (!twilio || !messagingServiceSid || !c.sms_phone_e164)) throw Error('Text messaging is not configured.');
     const r = await db.from('driver_messages').insert({
       client_message_id:`release-wait:${kind}:${session.key(c)}`, conversation_id:c.id,
@@ -41,7 +49,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     if(c.channel !== 'sms') return;
     try {
       const delivery=await require('./sms-translation').prepareOutgoing(db,c,body);
-      if(!afterHours&&(require('./after-hours-reply').closedPeriod(now(),await getOfficeOverride())||await require('./manual-reply-pause').load(db,c.id))){
+      if(!await canSend(c,kind,body,afterHours)){
         await result(db.from('driver_messages').update({delivery_status:'failed',provider_error_message:'Automatic reply paused because a clerk took over.'}).eq('id',r.data.id));
         return;
       }
@@ -65,12 +73,26 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     ]);
     if(await isReturningDriver(db,c,checked))return;
     const messages=allMessages.filter(m=>!c.session_started_at||Date.parse(m.sent_at)>=session.start(c));
+    if(session.currentCheckin(c,checked)) {
+      if(!['pickup','both'].includes(c.visit_type))return;
+      // Only new staff check-ins receive this automation; no retroactive messages.
+      if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
+      const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
+      if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
+        && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
+        && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
+        const coil= /stay to the RIGHT\b/.test(instructions.body);
+        await send(c,'remain',coil ? COIL_REMAIN : REMAIN);
+      }
+      return;
+    }
     const override=await getOfficeOverride();
-    const afterHours=require('./after-hours-reply').plan(c,messages,now(),override);
+    const afterHours=require('./after-hours-reply').plan(c,messages,now(),override,checked);
     if(afterHours){
       if(afterHours.send)await send(c,afterHours.kind,afterHours.body,true);
       return;
     }
+    if(require('./manual-reply-pause').paused(c,messages,checked))return;
     if(require('./after-hours-reply').hasNotice(c,messages))return;
     if(require('./after-hours-reply').closedPeriod(now(),override)){
       // Preserve the ordinary initial night-arrival notice; an early override
@@ -79,7 +101,6 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
         await send(c,'closed',CLOSED,true);
       return;
     }
-    if(require('./manual-reply-pause').paused(c,messages,checked))return;
     if(c.visit_type==='both' && session.start(c)>=Date.parse('2026-10-12T16:13:00Z') && now()-session.start(c)<24*60*60*1000) {
       const mediaKey=session.key(c);
       if(!mediaJobs.has(mediaKey)){
@@ -106,21 +127,7 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
     }
     const requestedAt=require('./both-pickup-phase').pickupRequestedAt(messages);
     if(!['pickup','both'].includes(c.visit_type)||(!validPickup(c)&&!requestedAt))return;
-    if(session.currentCheckin(c,checked)) {
-      // Only new staff check-ins receive this automation; no retroactive messages.
-      if(Date.parse(checked.checked_in_at) < Date.parse(AUTOMATION_ENABLED_AT)) return;
-      const instructions = messages.find(m => m.client_message_id === `staff-pickup-checkin:${session.key(c)}`);
-      if(instructions && !['failed','undelivered'].includes(instructions.delivery_status)
-        && now() - Date.parse(checked.checked_in_at) >= CHECKIN_FOLLOWUP_MS
-        && !messages.some(m => m.client_message_id === `release-wait:remain:${session.key(c)}`)) {
-        const coil= /stay to the RIGHT\b/.test(instructions.body);
-        await send(c,'remain',coil ? COIL_REMAIN : REMAIN);
-      }
-      return;
-    }
-    // The explicit pickup command starts the second leg without ending the visit.
-    // Native arrival messages carry the phone's arrival timestamp, which precedes
-    // the conversation insert. They belong to this arrival even before created_at.
+
     const nativeInitial=c.channel==='app'&&!c.session_started_at
       ? messages.find(m=>m.direction==='driver_to_shipping'&&m.client_message_id?.endsWith('-release')):null;
     const pickupAt=c.visit_type==='both'?requestedAt:(requestedAt||Math.min(session.start(c),nativeInitial?Date.parse(nativeInitial.sent_at):Infinity));
@@ -179,12 +186,13 @@ function createWorker({isReturningDriver=require('./returning-driver').held,getO
   async function respondAfterHours(id){
     const c=await result(db.from('driver_conversations').select('*').eq('id',id).maybeSingle());
     if(!c||c.status!=='open'||c.session_ended_at)return false;
-    const messages=await result(db.from('driver_messages').select('client_message_id,direction,sent_at,body').eq('conversation_id',id));
+    const messages=await result(db.from('driver_messages').select('client_message_id,sender_user_id,delivery_status,direction,sent_at,body').eq('conversation_id',id));
     const {data:checked,error:checkError}=await db.from('shipping_staff_checkins').select('checked_in_at').eq('conversation_id',id).maybeSingle();
     if(checkError)throw checkError;
+    if(session.currentCheckin(c,checked)||require('./manual-reply-pause').staffPaused(c,messages))return true;
     if(await isReturningDriver(db,c,checked))return true;
     if(require('./after-hours-reply').hasNotice(c,messages))return true;
-    const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride());
+    const reply=require('./after-hours-reply').plan(c,messages,now(),await getOfficeOverride(),checked);
     if(!reply)return false;
     if(reply.send)await send(c,reply.kind,reply.body,true);
     return true;

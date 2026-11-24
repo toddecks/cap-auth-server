@@ -1,11 +1,10 @@
 'use strict';
 const session=require('./visit-session');
 const {needsImages}=require('./first-visit-images');
-const {PICKUP_CHECKIN}=require('./driver-visit-flow');
 const {prepareMap}=require('./checkin-map');
 async function sendCheckinInstructions({db,twilio,messagingServiceSid,publicBaseUrl,scheduleStatusSync,chartDb,conversation,arrivalId,staffId,visitType,preparedInstructions,alwaysSendPpe=false}){
  if(!['pickup','both'].includes(visitType))return null;
- const instructions=PICKUP_CHECKIN;
+ const instructions=preparedInstructions||await require('./pickup-directions').automaticPickupInstructions(chartDb,conversation);
  const includeImages=await needsImages(db,conversation);
  async function sendOnce(id,body,attachment) {
   const {data:message,error}=await db.from('driver_messages').insert({...attachment?.fields,client_message_id:id,conversation_id:conversation.id,sender_user_id:staffId,direction:'shipping_to_driver',driver_phone:conversation.sms_phone_e164,body,original_body:body,original_language:'English',sent_at:new Date().toISOString(),delivery_status:conversation.channel==='sms'?'queued':'sent'}).select('id').single();

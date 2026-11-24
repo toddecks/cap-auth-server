@@ -314,22 +314,22 @@ test('typing holds an unclassified visit before any automated media or pickup fl
  assert.equal(await require('./manual-reply-pause').load(f.options.db,c.id),true);
  await f.worker.tick();assert.equal(f.sends.length,0);require('./manual-reply-pause').clear(c);
 });
-test('after-hours driver follow-up gets a closed notice despite manual takeover, once across worker restarts',async()=>{
+test('staff takeover suppresses closed notices across worker and webhook restarts',async()=>{
  const f=fixture();const c=f.tables.driver_conversations[0];f.advance(5*3600000+24*60000);
  f.tables.driver_messages.push({conversation_id:c.id,direction:'shipping_to_driver',sender_user_id:'clerk',body:'He will be out shortly',delivery_status:'sent',sent_at:'2026-10-01T22:01:00Z'});
  f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Are they still coming out?',sent_at:new Date(f.options.now()).toISOString()});
- assert.equal(await f.worker.respondAfterHours(c.id),true);assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY]);
- f.advance(60000);await createWorker(f.options).respondAfterHours(c.id);await f.worker.tick();assert.equal(f.sends.length,1);
- f.advance(10*60000);await createWorker(f.options).tick();assert.equal(f.sends.length,1);
+ assert.equal(await f.worker.respondAfterHours(c.id),true);assert.deepEqual(f.sends.map(m=>m.body),[]);
+ f.advance(60000);await createWorker(f.options).respondAfterHours(c.id);await f.worker.tick();assert.equal(f.sends.length,0);
+ f.advance(10*60000);await createWorker(f.options).tick();assert.equal(f.sends.length,0);
 });
 test('app after-hours follow-up records the same notice without sending an SMS',async()=>{
  const f=fixture('app');f.advance(6*3600000);f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Hello?',sent_at:new Date(f.options.now()).toISOString()});
  await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).body,require('./after-hours-reply').BODY);
 });
-test('after-hours notice stops the official Check In one-minute reminder',async()=>{
+test('official Check In suppresses the closed notice and retains the one-minute reminder',async()=>{
  const f=checkedFixture();f.advance(6*3600000);f.tables.shipping_staff_checkins[0].checked_in_at=new Date(f.options.now()-60000).toISOString();
  f.tables.driver_messages.push({conversation_id:'visit-1',direction:'driver_to_shipping',body:'Still waiting',sent_at:new Date(f.options.now()).toISOString()});
- await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[require('./after-hours-reply').BODY]);
+ await f.worker.tick();assert.deepEqual(f.sends.map(m=>m.body),[REMAIN]);
 });
 test('SMS reminder is translated before delivery while the clerk transcript keeps the English instructions',async()=>{
  const translator=require('./sms-translation'),f=checkedFixture(),c=f.tables.driver_conversations[0];
@@ -395,4 +395,39 @@ test('early override pauses pending reminders even without another incoming mess
  const f=fixture();await f.worker.tick();f.advance(3*60000);
  const at=f.options.now();f.options.getOfficeOverride=async()=>({closed_on:'2026-10-01',activated_at:new Date(at).toISOString()});
  await createWorker(f.options).tick();assert.equal(f.sends.length,1);
+});
+
+for(const channel of ['sms','app'])for(const early of [false,true])test(`${channel}: checked-in visit never gets office notice through polling or webhook, early=${early}`,async()=>{
+ const f=checkedFixture(),c=f.tables.driver_conversations[0];c.channel=channel;
+ if(!early)f.advance(6*3600000);
+ else f.options.getOfficeOverride=async()=>({closed_on:'2026-10-01',activated_at:new Date(f.options.now()-1000).toISOString()});
+ f.tables.shipping_staff_checkins[0].checked_in_at=new Date(f.options.now()).toISOString();
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Hello',sent_at:new Date(f.options.now()).toISOString()});
+ const worker=createWorker(f.options);assert.equal(await worker.respondAfterHours(c.id),true);await worker.tick();
+ assert.equal(f.sends.length,0);assert(!f.tables.driver_messages.some(m=>m.body===CLOSED||m.body===require('./after-hours-reply').CALL_OFFICE));
+ f.advance(60000);await createWorker(f.options).tick();await worker.respondAfterHours(c.id);
+ const replies=f.tables.driver_messages.filter(m=>m.client_message_id===`release-wait:remain:${c.id}`);assert.equal(replies.length,1);
+});
+test('check-in committed during translation cancels an already queued closed notice',async()=>{
+ const translator=require('./sms-translation'),f=fixture(),c=f.tables.driver_conversations[0];f.advance(6*3600000);
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Hello',sent_at:new Date(f.options.now()).toISOString()});
+ const original=translator.prepareOutgoing;
+ translator.prepareOutgoing=async()=>{f.tables.shipping_staff_checkins.push({conversation_id:c.id,checked_in_at:new Date(f.options.now()).toISOString()});return{body:CLOSED,patch:{}}};
+ try{await f.worker.tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
+});
+test('staff draft begun during translation cancels a queued call-office notice',async()=>{
+ const translator=require('./sms-translation'),pause=require('./manual-reply-pause'),f=fixture(),c=f.tables.driver_conversations[0];
+ f.options.getOfficeOverride=async()=>({closed_on:'2026-10-01',activated_at:new Date(f.options.now()-1000).toISOString()});
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Hello',sent_at:new Date(f.options.now()).toISOString()});
+ const original=translator.prepareOutgoing;translator.prepareOutgoing=async()=>{pause.begin(c);return{body:require('./after-hours-reply').CALL_OFFICE,patch:{}}};
+ try{await createWorker(f.options).tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).delivery_status,'failed');}finally{pause.clear(c);translator.prepareOutgoing=original;}
+});
+
+test('turning off the shared early override cancels a call-office message awaiting translation',async()=>{
+ const translator=require('./sms-translation'),f=fixture(),c=f.tables.driver_conversations[0];
+ let override={closed_on:'2026-10-01',activated_at:new Date(f.options.now()-1000).toISOString()};
+ f.options.getOfficeOverride=async()=>override;
+ f.tables.driver_messages.push({conversation_id:c.id,direction:'driver_to_shipping',body:'Hello',sent_at:new Date(f.options.now()).toISOString()});
+ const original=translator.prepareOutgoing;translator.prepareOutgoing=async()=>{override=null;return{body:require('./after-hours-reply').CALL_OFFICE,patch:{}}};
+ try{await createWorker(f.options).tick();assert.equal(f.sends.length,0);assert.equal(f.tables.driver_messages.at(-1).delivery_status,'failed');}finally{translator.prepareOutgoing=original;}
 });
